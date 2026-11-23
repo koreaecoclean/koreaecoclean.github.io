@@ -854,6 +854,16 @@ ul { margin: 0; padding: 0; list-style: none; }
 
 /* ---------------- Responsive ---------------- */
 
+@media (max-width: 1260px) {
+  .nav { gap: 21px; }
+  .nav a { font-size: 14.8px; }
+  .header-cta { padding: 10px 17px; font-size: 14.8px; }
+}
+
+@media (max-width: 1120px) {
+  .nav { display: none; }
+}
+
 @media (max-width: 1024px) {
   .nav { display: none; }
   .why-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
