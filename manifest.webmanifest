@@ -1,0 +1,14 @@
+{
+  "name": "코리아 에코크린",
+  "short_name": "코리아 에코크린",
+  "description": "사무실·병원·상가·헬스장 정기청소 전문",
+  "lang": "ko",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0e5537",
+  "icons": [
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
