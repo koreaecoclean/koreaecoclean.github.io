@@ -2378,6 +2378,13 @@ button { font-family: inherit; }
   gap: clamp(20px, 2.6vw, 30px);
   justify-items: start;
 }
+
+/* 영상 패널이 본문 영역을 침범하지 않도록 오른쪽 여백을 확보합니다 */
+@media (min-width: 981px) {
+  .hero-video .hero-shell {
+    padding-right: calc(28px + max(0px, min(44vw, 620px) - (100vw - 1180px) / 2));
+  }
+}
 .hero-video .hero-copy { max-width: 620px; }
 
 .hero-video .hero-badge {
@@ -2981,10 +2988,10 @@ button { font-family: inherit; }
   }
   .hero-media-scrim {
     background:
-      linear-gradient(180deg, rgba(4, 18, 12, .8) 0%, rgba(4, 18, 12, .34) 22%, rgba(4, 18, 12, .52) 50%, rgba(4, 18, 12, .9) 100%);
+      linear-gradient(180deg, rgba(4, 18, 12, .78) 0%, rgba(4, 18, 12, .42) 20%, rgba(4, 18, 12, .58) 42%, rgba(4, 18, 12, .88) 78%, rgba(4, 18, 12, .95) 100%);
   }
   .hero-video::after {
-    background: linear-gradient(180deg, rgba(4, 18, 12, .62) 0%, rgba(4, 18, 12, .1) 22%, rgba(4, 18, 12, .25) 48%, rgba(4, 18, 12, .72) 82%, rgba(4, 18, 12, .92) 100%);
+    background: linear-gradient(180deg, rgba(4, 18, 12, .5) 0%, rgba(4, 18, 12, .08) 20%, rgba(4, 18, 12, .42) 44%, rgba(4, 18, 12, .8) 74%, rgba(4, 18, 12, .95) 100%);
   }
   .hero-video-tag { top: 14px; left: 14px; bottom: auto; font-size: 11px; padding: 6px 10px; }
   .hero-controls { top: 12px; right: 12px; bottom: auto; }
