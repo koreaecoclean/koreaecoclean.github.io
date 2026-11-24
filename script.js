@@ -217,7 +217,14 @@
     var cap = shot.querySelector('figcaption');
     lbImage.src = img.getAttribute('src');
     lbImage.alt = img.getAttribute('alt') || '';
-    lbCaption.textContent = cap ? cap.textContent.replace(/\s+/g, ' ').trim() : '';
+    if (cap) {
+      var cat = cap.querySelector('span');
+      var catText = cat ? cat.textContent.trim() : '';
+      var restText = cap.textContent.replace(cat ? cat.textContent : '', '').trim();
+      lbCaption.textContent = catText && restText ? catText + ' · ' + restText : (restText || catText);
+    } else {
+      lbCaption.textContent = '';
+    }
   }
 
   function openLightbox(shot) {
@@ -390,10 +397,6 @@
         resultPanel.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
       }
 
-      if (submitBtn) {
-        var label = submitBtn.childNodes[0];
-        if (label && label.nodeType === 3) label.textContent = '내용 확인 완료 · 문자로 보내기 ';
-      }
     });
 
     if (copyBtn) {

@@ -1215,6 +1215,11 @@ button { font-family: inherit; }
   color: var(--muted);
 }
 
+/* 마지막 줄에 사진이 하나만 남을 때 가운데로 (3열 그리드) */
+@media (min-width: 981px) {
+  .gallery .shot:last-child:nth-child(3n + 1) { grid-column: 2; }
+}
+
 /* ---------------- Area ---------------- */
 
 .area-wrap {
