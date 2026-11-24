@@ -2999,10 +2999,10 @@ button { font-family: inherit; }
   }
   .hero-media-scrim {
     background:
-      linear-gradient(180deg, rgba(4, 18, 12, .78) 0%, rgba(4, 18, 12, .42) 20%, rgba(4, 18, 12, .58) 42%, rgba(4, 18, 12, .88) 78%, rgba(4, 18, 12, .95) 100%);
+      linear-gradient(180deg, rgba(4, 18, 12, .6) 0%, rgba(4, 18, 12, .26) 16%, rgba(4, 18, 12, .5) 32%, rgba(4, 18, 12, .88) 46%, rgba(4, 18, 12, .95) 68%, rgba(4, 18, 12, .97) 100%);
   }
   .hero-video::after {
-    background: linear-gradient(180deg, rgba(4, 18, 12, .5) 0%, rgba(4, 18, 12, .08) 20%, rgba(4, 18, 12, .42) 44%, rgba(4, 18, 12, .8) 74%, rgba(4, 18, 12, .95) 100%);
+    background: linear-gradient(180deg, rgba(4, 18, 12, .45) 0%, rgba(4, 18, 12, .05) 18%, rgba(4, 18, 12, .5) 42%, rgba(4, 18, 12, .86) 66%, rgba(4, 18, 12, .96) 100%);
   }
   .hero-video-tag { top: 14px; left: 14px; bottom: auto; font-size: 11px; padding: 6px 10px; }
   .hero-controls { top: 12px; right: 12px; bottom: auto; }
