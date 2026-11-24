@@ -1482,8 +1482,8 @@ button { font-family: inherit; }
 }
 
 .chips-radio {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 .chips-radio label { position: relative; cursor: pointer; }
@@ -1497,14 +1497,16 @@ button { font-family: inherit; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
   font-size: 14px;
   font-weight: 600;
   color: var(--ink-soft);
   background: var(--bg-soft);
   border: 1px solid var(--line);
   border-radius: 11px;
-  padding: 10px 16px;
+  padding: 10px 8px;
   transition: all .2s ease;
+  white-space: nowrap;
 }
 .chips-radio input:hover + span { border-color: var(--green-500); }
 .chips-radio input:checked + span {
@@ -2113,7 +2115,8 @@ button { font-family: inherit; }
 
   .booking-form { padding: 22px 18px; }
   .field-row { grid-template-columns: 1fr; gap: 0; }
-  .chips-radio span { font-size: 13.5px; padding: 9px 13px; }
+  .chips-radio { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .chips-radio span { font-size: 13.5px; padding: 9px 6px; }
 
   .lightbox { padding: 12px; grid-template-columns: 1fr; }
   .lb-nav {
