@@ -3046,7 +3046,7 @@ button { font-family: inherit; }
   .event-bar-tag { font-size: 9.5px; padding: 3px 8px; }
   .event-bar-more { display: none; }
 
-  .hero.hero-video { min-height: calc(100svh - 92px); padding: 84px 0 78px; }
+  .hero.hero-video { min-height: calc(100svh - 92px); padding: 84px 0 128px; }
   .hero-video h1 { font-size: clamp(1.95rem, 8.4vw, 2.5rem); }
   .hero-video .hero-badge { margin-bottom: 16px; font-size: 11.5px; padding: 6px 12px; }
   .hero-video .hero-actions .btn { flex: 1 1 0; padding: 14px 18px; font-size: 15px; }
