@@ -476,26 +476,27 @@
       });
     }
 
-    /* 화면 밖으로 나가면 잠시 멈춰 데이터·배터리를 아킵니다 */
+    /* 사용자가 직접 멈춘 영상은 화면에 돌아와도 저절로 다시 켜지 않습니다 */
+    var heroUserPaused = reduceMotion;
+
+    if (heroPlay) {
+      heroPlay.addEventListener('click', function () {
+        heroUserPaused = !heroVideo.paused;
+      });
+    }
+
+    /* 화면 밖으로 나가면 잠시 멈춰 데이터·배터리를 아낍니다 */
     if ('IntersectionObserver' in window && !reduceMotion) {
       var heroIO = new IntersectionObserver(function (entries) {
         entries.forEach(function (entry) {
           if (entry.isIntersecting) {
-            if (heroVideo.paused && !heroMedia.classList.contains('is-paused')) {
-              heroVideo.play().catch(function () {});
-            }
-          } else if (!heroVideo.paused && !heroMedia.classList.contains('is-paused')) {
+            if (!heroUserPaused) heroVideo.play().catch(function () {});
+          } else if (!heroVideo.paused) {
             heroVideo.pause();
           }
         });
       }, { threshold: 0.12 });
       heroIO.observe(heroVideo);
-      /* 사용자가 직접 멈춘 것은 화면에 돌아와도 다시 켜지 않습니다 */
-      if (heroPlay) {
-        heroPlay.addEventListener('click', function () {
-          if (heroVideo.paused) heroMedia.classList.remove('is-paused');
-        });
-      }
     }
   }
 
@@ -518,6 +519,7 @@
         }
       });
       frame.classList.add('is-playing');
+      video.controls = true;
       video.play().catch(function () {});
     });
   });
