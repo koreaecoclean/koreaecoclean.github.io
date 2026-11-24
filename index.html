@@ -8,7 +8,7 @@
 <meta name="keywords" content="코리아 에코크린, 사무실청소, 사무실 정기청소, 병원청소, 상가청소, 헬스장청소, 양천구 청소업체, 강서구 청소업체, 구로구 청소업체, 정기청소 전문">
 <meta name="author" content="코리아 에코크린">
 <meta name="robots" content="index, follow, max-image-preview:large">
-<meta name="theme-color" content="#0e5537">
+<meta name="theme-color" content="#0f5132">
 <link rel="canonical" href="https://koreaecoclean.github.io/">
 
 <!-- Open Graph -->
@@ -107,7 +107,7 @@
     {
       "@type": "Question",
       "name": "견적은 어떻게 받을 수 있나요?",
-      "acceptedAnswer": { "@type": "Answer", "text": "전화 0507-1317-8369로 공간의 종류와 규모, 원하시는 관리 주기를 알려 주시면 현장을 확인한 뒤 필요한 범위로 견적을 드립니다." }
+      "acceptedAnswer": { "@type": "Answer", "text": "전화 0507-1317-8369로 공간의 종류와 규모, 원하시는 관리 주기를 알려 주시면 현장을 확인한 뒤 필요한 범위로 견적을 드립니다. 홈페이지의 방문견적·예약 상담 신청서를 작성해 문자로 보내셔도 됩니다." }
     },
     {
       "@type": "Question",
@@ -118,6 +118,11 @@
       "@type": "Question",
       "name": "배상책임보험도 가입되어 있나요?",
       "acceptedAnswer": { "@type": "Answer", "text": "배상책임보험은 상담 후 가입 가능합니다. 필요하신 경우 상담 시 말씀해 주시면 안내해 드립니다." }
+    },
+    {
+      "@type": "Question",
+      "name": "정기 관리 주기는 어떻게 정하나요?",
+      "acceptedAnswer": { "@type": "Answer", "text": "공간의 사용 인원과 오염 정도를 보고 정합니다. 매일부터 주 1회, 격주 1회까지 현장에 맞춰 정하고, 업무·영업에 지장이 없는 시간대에 진행합니다." }
     }
   ]
 }
@@ -134,200 +139,433 @@
 <body>
 <a class="skip-link" href="#main">본문으로 바로가기</a>
 
-<header class="site-header">
-  <div class="container header-inner">
-    <a class="brand" href="#top" aria-label="코리아 에코크린 홈">
-      <img src="assets/logo.png" alt="코리아 에코크린 로고" width="42" height="42">
-      <span class="brand-text">
-        <span class="brand-name">코리아 에코크린</span>
-        <span class="brand-sub">Korea Eco Clean</span>
-      </span>
-    </a>
-    <nav class="nav" aria-label="주요 메뉴">
-      <a href="#services">서비스</a>
-      <a href="#why">왜 코리아 에코크린</a>
-      <a href="#gallery">작업 현장</a>
-      <a href="#area">서비스 지역</a>
-      <a href="#faq">자주 묻는 질문</a>
-      <a href="#contact">상담 안내</a>
-    </nav>
-    <a class="header-cta" href="tel:0507-1317-8369">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-      <span>전화 상담<span class="label-full"> 0507-1317-8369</span></span>
-    </a>
+<div class="progress" aria-hidden="true"><span class="progress-bar" id="progressBar"></span></div>
+
+<header class="site-header" id="siteHeader">
+  <div class="header-shell" id="headerShell">
+    <div class="header-inner">
+      <a class="brand" href="#top" aria-label="코리아 에코크린 홈">
+        <img src="assets/logo.png" alt="코리아 에코크린 로고" width="44" height="44">
+        <span class="brand-text">
+          <span class="brand-name">코리아 에코크린</span>
+          <span class="brand-sub">Korea Eco Clean</span>
+        </span>
+      </a>
+
+      <nav class="nav" id="primaryNav" aria-label="주요 메뉴">
+        <a href="#about">회사 소개</a>
+        <a href="#services">서비스</a>
+        <a href="#special">차별성</a>
+        <a href="#gallery">작업 현장</a>
+        <a href="#area">서비스 지역</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+
+      <div class="header-actions">
+        <a class="header-call" href="tel:0507-1317-8369">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          <span>0507-1317-8369</span>
+        </a>
+        <a class="header-cta" href="#booking">전화 · 예약 상담</a>
+        <button class="nav-toggle" id="navToggle" type="button" aria-expanded="false" aria-controls="mobileNav" aria-label="메뉴 열기">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+
+    <div class="mobile-nav" id="mobileNav" hidden>
+      <nav aria-label="모바일 메뉴">
+        <a href="#about">회사 소개</a>
+        <a href="#services">서비스</a>
+        <a href="#special">차별성</a>
+        <a href="#gallery">작업 현장</a>
+        <a href="#area">서비스 지역</a>
+        <a href="#faq">자주 묻는 질문</a>
+        <a href="#booking">예약 상담</a>
+        <a class="mobile-nav-call" href="tel:0507-1317-8369">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          0507-1317-8369 전화 상담
+        </a>
+      </nav>
+    </div>
   </div>
 </header>
 
 <main id="main">
   <!-- ===== HERO ===== -->
   <section class="hero" id="top">
+    <div class="hero-glow" aria-hidden="true"></div>
     <div class="container hero-inner">
-      <span class="hero-badge"><span class="dot"></span>17년 현장 경력 · 친환경 청소업체</span>
-      <h1>사무실·병원·상가<br>정기청소의 기준,<br><em>코리아 에코크린</em></h1>
-      <p class="lead">
-        17년간 현장에서 쌓아 온 경력과 청소 관련 4개 분야 1급 자격으로
-        사무실·병원·상가·헬스장의 정기청소를 책임집니다.
-        친환경 약품으로 정직하게 시공하고, 체계적으로 관리합니다.
-      </p>
-      <div class="hero-actions">
-        <a class="btn btn-primary" href="tel:0507-1317-8369">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-          0507-1317-8369 전화 상담
-        </a>
-        <a class="btn btn-ghost" href="#services">서비스 살펴보기</a>
+      <div class="hero-copy">
+        <span class="hero-badge"><span class="dot"></span>사무실 · 병원 · 상가 정기청소 전문</span>
+        <h1>매일의 공간을,<br><em>17년의 기준</em>으로.</h1>
+        <p class="lead">
+          사무실과 병원, 상가와 헬스장. 사람이 하루의 대부분을 보내는 공간을
+          정기적으로 관리합니다. 현장을 먼저 살피고, 그 공간에 맞는 순서와 약품을 정합니다.
+        </p>
+
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="tel:0507-1317-8369">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            전화 상담
+          </a>
+          <a class="btn btn-outline" href="#booking">
+            방문견적 · 예약 상담
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </a>
+        </div>
+
+        <ul class="hero-meta">
+          <li><strong class="count" data-count="17" data-suffix="년">17년</strong><span>현장 경력</span></li>
+          <li><strong class="count" data-count="4" data-suffix="개 분야">4개 분야</strong><span>1급 자격 보유</span></li>
+          <li><strong class="count" data-count="100" data-suffix="%">100%</strong><span>친환경 약품</span></li>
+        </ul>
       </div>
-      <ul class="hero-points">
-        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>17년 현장 경력</li>
-        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>청소 4개 분야 1급 자격</li>
-        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>친환경 약품 사용</li>
+
+      <div class="hero-visual reveal" data-reveal>
+        <div class="hero-photo">
+          <img src="assets/hero.jpg" alt="코리아 에코크린이 관리하는 병원·클리닉 대기 라운지의 깨끗한 바닥과 소파" width="1240" height="1563" fetchpriority="high" decoding="async">
+          <span class="photo-tag">현장 · 병원 클리닉 대기 라운지</span>
+        </div>
+        <div class="hero-float reveal" data-reveal style="--d:3">
+          <span class="hero-float-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+          </span>
+          <span class="hero-float-text">
+            <strong>부부팀 · 전문팀이 직접 관리</strong>
+            <span>중간에 사람이 바뀌어도 같은 기준으로</span>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="container">
+      <ul class="hero-strip reveal" data-reveal style="--d:2">
+        <li>사무실</li>
+        <li>병원 · 클리닉</li>
+        <li>상가 · 매장</li>
+        <li>헬스장 · 사우나</li>
+        <li>건물 공용부</li>
       </ul>
     </div>
   </section>
 
+  <!-- ===== ABOUT ===== -->
+  <section class="section" id="about">
+    <div class="container about-grid">
+      <div class="about-main">
+        <span class="eyebrow reveal" data-reveal>About us</span>
+        <h2 class="section-title reveal" data-reveal style="--d:1">17년, 같은 자리에서<br>쌓아 온 기준</h2>
+        <div class="about-body reveal" data-reveal style="--d:2">
+          <p>
+            청소는 한 번 잘하고 끝나는 일이 아니라, 매일 같은 수준으로 반복하는 일이라고 생각합니다.
+            그래서 현장마다 작업 순서와 쓰는 약품을 정해 두고, 같은 팀이 꾸준히 관리합니다.
+          </p>
+          <p>
+            대표가 직접 현장을 보고 견적을 냅니다. 부부팀과 전문팀이 함께 움직이고,
+            관리 항목은 문서로 남겨 두어 담당자가 바뀌어도 기준이 흔들리지 않게 합니다.
+          </p>
+        </div>
+
+        <blockquote class="about-quote reveal" data-reveal style="--d:3">
+          <p>“보이지 않는 곳까지 같은 기준으로.<br>그게 17년을 이어 온 이유입니다.”</p>
+          <footer>코리아 에코크린 대표 <strong>채종병</strong></footer>
+        </blockquote>
+
+        <ul class="cred-list reveal" data-reveal style="--d:4">
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            청소 관련 <strong>4개 분야 1급 자격</strong>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            <strong>2급 방화관리사</strong> 보유
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            <strong>친환경 약품</strong> 사용 · 잔여물·냄새까지 마무리
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            <strong>부부팀 · 전문팀</strong> 직접 관리
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            배상책임보험 <strong>상담 후 가능</strong>
+          </li>
+        </ul>
+      </div>
+
+      <div class="about-side">
+        <figure class="about-photo reveal" data-reveal style="--d:1">
+          <img src="assets/about.jpg" alt="코리아 에코크린이 정기 관리하는 헬스장 운동기구 존과 우드 바닥" width="1100" height="1282" loading="lazy" decoding="async">
+          <figcaption>헬스장 · 운동기구 존과 바닥 관리</figcaption>
+        </figure>
+
+        <div class="stats reveal" data-reveal style="--d:2">
+          <div class="stat">
+            <strong><span class="count" data-count="17" data-suffix="년">17</span><span class="plus">+</span></strong>
+            <span>현장 경력</span>
+          </div>
+          <div class="stat">
+            <strong><span class="count" data-count="4" data-suffix="개">4</span></strong>
+            <span>분야 1급 자격</span>
+          </div>
+          <div class="stat">
+            <strong><span class="count" data-count="100" data-suffix="%">100</span></strong>
+            <span>친환경 약품</span>
+          </div>
+          <div class="stat">
+            <strong><span class="count" data-count="7" data-suffix="개">7</span></strong>
+            <span>관리 지역</span>
+          </div>
+        </div>
+
+        <div class="biz-card reveal" data-reveal style="--d:3">
+          <h3>사업장 안내</h3>
+          <dl>
+            <div><dt>상호</dt><dd>코리아 에코크린</dd></div>
+            <div><dt>대표</dt><dd>채종병</dd></div>
+            <div><dt>사업자등록번호</dt><dd>281-46-00169</dd></div>
+            <div><dt>주소</dt><dd>서울 양천구 오목로11길 17-5 401호</dd></div>
+            <div><dt>전화</dt><dd><a href="tel:0507-1317-8369">0507-1317-8369</a></dd></div>
+          </dl>
+          <a class="map-link" href="https://map.naver.com/p/entry/place/1278820141" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            네이버 지도에서 보기
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ===== SERVICES ===== -->
-  <section class="section" id="services">
+  <section class="section section-soft" id="services">
     <div class="container">
-      <div class="section-head center">
-        <span class="eyebrow">Services</span>
-        <h2 class="section-title">업종에 맞춘 4가지 정기청소</h2>
-        <p class="section-desc">공간의 쓰임이 다르면 청소의 순서와 약품도 달라야 합니다. 현장을 먼저 살피고 그 공간에 맞는 관리 방법을 제안합니다.</p>
+      <div class="section-head">
+        <span class="eyebrow reveal" data-reveal>Services</span>
+        <h2 class="section-title reveal" data-reveal style="--d:1">업종에 맞춘 네 가지 정기청소</h2>
+        <p class="section-desc reveal" data-reveal style="--d:2">공간의 쓰임이 다르면 청소의 순서와 약품도 달라야 합니다. 카드의 <b>+</b> 를 누르면 실제 작업 범위를 확인하실 수 있습니다.</p>
       </div>
 
       <div class="services-grid">
-        <article class="service-card">
-          <div class="service-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><path d="M2 13h20"/></svg>
+        <article class="service-card reveal" data-reveal style="--d:1">
+          <div class="service-head">
+            <span class="service-num">01</span>
+            <div class="service-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><path d="M2 13h20"/></svg>
+            </div>
           </div>
           <h3>사무실 정기청소</h3>
           <p>업무 시간에 지장이 없도록 동선을 고려해 관리합니다. 매일 쌓이는 먼지와 공용 공간의 위생을 꾸준히 잡아 줍니다.</p>
-          <ul class="service-list">
-            <li>책상·모니터 주변</li>
+          <ul class="service-chips">
+            <li>책상 · 모니터 주변</li>
             <li>회의실</li>
             <li>탕비실</li>
-            <li>공용화장실</li>
-            <li>바닥 관리</li>
           </ul>
+          <button class="service-toggle" type="button" aria-expanded="false" aria-controls="svc-1">
+            <span>상세 보기</span>
+            <span class="toggle-plus" aria-hidden="true"></span>
+          </button>
+          <div class="service-detail" id="svc-1">
+            <div>
+              <dl>
+                <dt>작업 범위</dt>
+                <dd>책상·모니터 주변 먼지, 회의실·교육장, 탕비실·정수기 주변, 공용화장실, 바닥·카펫·계단</dd>
+                <dt>추천 주기</dt>
+                <dd>매일 ~ 주 1회 (사용 인원과 오염도에 맞춰 조정)</dd>
+                <dt>진행 방식</dt>
+                <dd>출근 전이나 퇴근 후, 업무에 방해가 없는 시간대에 진행합니다.</dd>
+              </dl>
+            </div>
+          </div>
         </article>
 
-        <article class="service-card">
-          <div class="service-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 8h14"/><path d="M8 3h8"/><rect x="3" y="12" width="18" height="6" rx="2"/></svg>
+        <article class="service-card reveal" data-reveal style="--d:2">
+          <div class="service-head">
+            <span class="service-num">02</span>
+            <div class="service-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 8h14"/><path d="M8 3h8"/><rect x="3" y="12" width="18" height="6" rx="2"/></svg>
+            </div>
           </div>
-          <h3>병원·클리닉 청소</h3>
+          <h3>병원 · 클리닉 청소</h3>
           <p>환자가 머무는 공간인 만큼 위생 기준을 높여 관리합니다. 눈에 보이는 곳뿐 아니라 손이 닿는 곳까지 챙깁니다.</p>
-          <ul class="service-list">
-            <li>진료실</li>
-            <li>시술실</li>
+          <ul class="service-chips">
+            <li>진료실 · 시술실</li>
+            <li>대기 라운지</li>
             <li>파우더룸</li>
-            <li>로비 위생 관리</li>
           </ul>
+          <button class="service-toggle" type="button" aria-expanded="false" aria-controls="svc-2">
+            <span>상세 보기</span>
+            <span class="toggle-plus" aria-hidden="true"></span>
+          </button>
+          <div class="service-detail" id="svc-2">
+            <div>
+              <dl>
+                <dt>작업 범위</dt>
+                <dd>진료실·시술실, 대기 라운지, 파우더룸·화장실, 손잡이·스위치·문고리 등 접촉부, 바닥 소독</dd>
+                <dt>추천 주기</dt>
+                <dd>매일 ~ 주 2회 (진료 일정에 맞춰 조정)</dd>
+                <dt>진행 방식</dt>
+                <dd>진료 시작 전 마무리하고, 사용 중인 공간은 동선을 피해 순차적으로 진행합니다.</dd>
+              </dl>
+            </div>
+          </div>
         </article>
 
-        <article class="service-card">
-          <div class="service-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-6 9 6v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 21V12h6v9"/></svg>
+        <article class="service-card reveal" data-reveal style="--d:3">
+          <div class="service-head">
+            <span class="service-num">03</span>
+            <div class="service-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-6 9 6v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 21V12h6v9"/></svg>
+            </div>
           </div>
-          <h3>상가·매장·식당 청소</h3>
+          <h3>상가 · 매장 · 식당 청소</h3>
           <p>고객이 처음 마주하는 홀과 바닥, 기름때가 쌓이는 주방까지 함께 관리합니다. 영업 전후 시간에 맞춰 진행합니다.</p>
-          <ul class="service-list">
-            <li>홀</li>
-            <li>바닥</li>
-            <li>유리</li>
+          <ul class="service-chips">
+            <li>홀 · 바닥</li>
+            <li>유리 · 거울</li>
             <li>주방 트렌치</li>
-            <li>화장실</li>
           </ul>
+          <button class="service-toggle" type="button" aria-expanded="false" aria-controls="svc-3">
+            <span>상세 보기</span>
+            <span class="toggle-plus" aria-hidden="true"></span>
+          </button>
+          <div class="service-detail" id="svc-3">
+            <div>
+              <dl>
+                <dt>작업 범위</dt>
+                <dd>홀·바닥(타일 박리 세척 포함), 유리·거울, 주방 트렌치·그리스트랩, 화장실, 테이블·의자</dd>
+                <dt>추천 주기</dt>
+                <dd>매일 ~ 주 2회, 바닥 박리 세척은 상태를 보고 별도 제안</dd>
+                <dt>진행 방식</dt>
+                <dd>영업 전이나 마감 후에 진행하고, 냄새와 잔여물이 남지 않도록 마무리합니다.</dd>
+              </dl>
+            </div>
+          </div>
         </article>
 
-        <article class="service-card">
-          <div class="service-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 6.5v11"/><path d="M3 9.5v5"/><path d="M17.5 6.5v11"/><path d="M21 9.5v5"/><path d="M6.5 12h11"/></svg>
+        <article class="service-card reveal" data-reveal style="--d:4">
+          <div class="service-head">
+            <span class="service-num">04</span>
+            <div class="service-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 6.5v11"/><path d="M3 9.5v5"/><path d="M17.5 6.5v11"/><path d="M21 9.5v5"/><path d="M6.5 12h11"/></svg>
+            </div>
           </div>
-          <h3>헬스장·사우나·공용부</h3>
+          <h3>헬스장 · 사우나 · 공용부</h3>
           <p>땀과 습기가 많은 공간은 냄새와 곰팡이가 관건입니다. 배수구와 매트까지 관리해 쾌적함을 유지합니다.</p>
-          <ul class="service-list">
+          <ul class="service-chips">
             <li>운동기구 존</li>
-            <li>매트</li>
+            <li>매트 · 거울</li>
             <li>샤워실 배수구</li>
-            <li>건물 계단</li>
           </ul>
+          <button class="service-toggle" type="button" aria-expanded="false" aria-controls="svc-4">
+            <span>상세 보기</span>
+            <span class="toggle-plus" aria-hidden="true"></span>
+          </button>
+          <div class="service-detail" id="svc-4">
+            <div>
+              <dl>
+                <dt>작업 범위</dt>
+                <dd>운동기구 존과 매트, 거울, 샤워실·배수구, 탈의실·사물함, 건물 계단·엘리베이터·주차장</dd>
+                <dt>추천 주기</dt>
+                <dd>매일 ~ 주 2회 (이용 인원에 맞춰 조정)</dd>
+                <dt>진행 방식</dt>
+                <dd>이용객이 적은 시간대에 진행하고, 물때와 냄새가 남지 않도록 배수구까지 확인합니다.</dd>
+              </dl>
+            </div>
+          </div>
         </article>
       </div>
     </div>
   </section>
 
-  <!-- ===== WHY ===== -->
-  <section class="section section-dark" id="why">
+  <!-- ===== SPECIAL ===== -->
+  <section class="section special" id="special">
     <div class="container">
-      <div class="section-head">
-        <span class="eyebrow">Why Korea Eco Clean</span>
-        <h2 class="section-title">믿고 맡길 수 있는 이유</h2>
-        <p class="section-desc">청소는 한 번의 시공이 아니라 매일의 반복입니다. 그래서 경력과 자격, 그리고 약속을 지키는 태도를 봅니다.</p>
+      <div class="special-head">
+        <div>
+          <span class="eyebrow reveal" data-reveal>Special</span>
+          <h2 class="section-title reveal" data-reveal style="--d:1">코리아 에코크린만의 차별성</h2>
+        </div>
+        <p class="special-desc reveal" data-reveal style="--d:2">
+          청소는 결국 <b>누가, 어떤 기준으로 하느냐</b>의 문제입니다.
+          견적부터 마무리 점검까지 대표가 직접 챙기는 세 가지를 지킵니다.
+        </p>
       </div>
 
-      <div class="why-grid">
-        <div class="why-item">
-          <div class="why-num">01</div>
-          <h3>17년 현장 경력</h3>
-          <p>사무실부터 병원·상가·헬스장까지 17년간 현장에서 직접 일해 온 경험으로 공간에 맞는 방법을 압니다.</p>
-        </div>
-        <div class="why-item">
-          <div class="why-num">02</div>
-          <h3>청소 4개 분야 1급 자격</h3>
-          <p>청소 관련 4개 분야에서 1급 자격을 보유하고 있습니다. 2급 방화관리사 자격도 함께 갖추고 있습니다.</p>
-        </div>
-        <div class="why-item">
-          <div class="why-num">03</div>
-          <h3>친환경 약품 사용</h3>
-          <p>사람이 오래 머무는 공간인 만큼 친환경 약품을 사용합니다. 잔여물과 냄새까지 신경 씁니다.</p>
-        </div>
-        <div class="why-item">
-          <div class="why-num">04</div>
-          <h3>정직한 시공</h3>
-          <p>보이지 않는 곳까지 같은 기준으로 일합니다. 시간을 채우기 위한 시공이 아니라 결과로 보여 드립니다.</p>
-        </div>
-        <div class="why-item">
-          <div class="why-num">05</div>
-          <h3>체계적인 정기 관리</h3>
-          <p>한 번 깨끗하게 하고 끝내는 것이 아니라, 정해진 주기와 항목으로 꾸준히 관리해 상태를 유지합니다.</p>
-        </div>
-        <div class="why-item">
-          <div class="why-num">06</div>
-          <h3>상담 후 견적</h3>
-          <p>공간과 규모, 관리 주기를 확인한 뒤 견적을 드립니다. 필요한 범위를 먼저 정확히 안내해 드립니다.</p>
-        </div>
-      </div>
+      <ol class="special-grid">
+        <li class="special-card reveal" data-reveal style="--d:1">
+          <div class="special-top">
+            <span class="special-tag">Special 1</span>
+            <span class="special-mark" aria-hidden="true">01</span>
+          </div>
+          <h3>하청 없는<br>대표 직접 관리</h3>
+          <p>오픈채팅방으로 일을 넘기거나 다른 업체에 다시 맡기지 않습니다. 대표가 현장을 직접 보고, 부부팀·전문팀이 그 공간을 계속 관리합니다.</p>
+          <ul class="special-points">
+            <li>견적·현장 확인을 대표가 직접</li>
+            <li>중간에 사람이 바뀌지 않는 관리</li>
+          </ul>
+        </li>
 
-      <p class="why-note">배상책임보험은 상담 후 가입 가능합니다. 필요하신 경우 상담 시 말씀해 주세요.</p>
+        <li class="special-card reveal" data-reveal style="--d:2">
+          <div class="special-top">
+            <span class="special-tag">Special 2</span>
+            <span class="special-mark" aria-hidden="true">02</span>
+          </div>
+          <h3>17년 현장 경력과<br>자격으로 증명</h3>
+          <p>사무실·병원·상가·헬스장에서 17년간 직접 일해 왔습니다. 청소 관련 4개 분야 1급 자격과 2급 방화관리사를 함께 보유하고 있습니다.</p>
+          <ul class="special-points">
+            <li>청소 4개 분야 1급 자격</li>
+            <li>2급 방화관리사 보유</li>
+          </ul>
+        </li>
+
+        <li class="special-card reveal" data-reveal style="--d:3">
+          <div class="special-top">
+            <span class="special-tag">Special 3</span>
+            <span class="special-mark" aria-hidden="true">03</span>
+          </div>
+          <h3>친환경 약품<br>정직한 시공과 정기 관리</h3>
+          <p>사람이 오래 머무는 공간인 만큼 친환경 약품을 사용하고, 잔여물과 냄새까지 마무리합니다. 정해진 항목과 주기로 꾸준히 관리합니다.</p>
+          <ul class="special-points">
+            <li>친환경 약품 · 잔여물 마무리</li>
+            <li>정기 관리 항목 문서화</li>
+          </ul>
+        </li>
+      </ol>
     </div>
   </section>
 
   <!-- ===== PROCESS ===== -->
-  <section class="section section-tint" id="process">
+  <section class="section section-soft" id="process">
     <div class="container">
       <div class="section-head center">
-        <span class="eyebrow">Process</span>
-        <h2 class="section-title">상담부터 관리까지 이렇게 진행합니다</h2>
+        <span class="eyebrow reveal" data-reveal>Process</span>
+        <h2 class="section-title reveal" data-reveal style="--d:1">상담부터 관리까지 이렇게 진행합니다</h2>
+        <p class="section-desc reveal" data-reveal style="--d:2">처음 한 번의 시공이 아니라, 오래 이어지는 관리입니다. 순서를 정하고 시작합니다.</p>
       </div>
+
       <ol class="process">
-        <li>
+        <li class="reveal" data-reveal style="--d:1">
           <span class="step-num">1</span>
-          <h3>전화 상담</h3>
+          <h3>전화 · 예약 상담</h3>
           <p>공간의 종류와 규모, 원하시는 관리를 먼저 듣습니다.</p>
         </li>
-        <li>
+        <li class="reveal" data-reveal style="--d:2">
           <span class="step-num">2</span>
-          <h3>현장 확인·견적</h3>
-          <p>현장을 직접 확인하고 필요한 범위로 견적을 드립니다.</p>
+          <h3>현장 확인 · 견적</h3>
+          <p>직접 확인한 뒤 필요한 범위로 정확한 견적을 드립니다.</p>
         </li>
-        <li>
+        <li class="reveal" data-reveal style="--d:3">
           <span class="step-num">3</span>
           <h3>관리 계획 수립</h3>
           <p>업무·영업 시간에 지장이 없도록 주기와 시간을 정합니다.</p>
         </li>
-        <li>
+        <li class="reveal" data-reveal style="--d:4">
           <span class="step-num">4</span>
-          <h3>정기 관리</h3>
-          <p>정해진 항목과 주기로 꾸준히 관리하며 상태를 유지합니다.</p>
+          <h3>정기 관리 · 점검</h3>
+          <p>정해진 항목과 주기로 관리하고, 상태를 계속 확인합니다.</p>
         </li>
       </ol>
     </div>
@@ -337,49 +575,75 @@
   <section class="section" id="gallery">
     <div class="container">
       <div class="section-head center">
-        <span class="eyebrow">Work</span>
-        <h2 class="section-title">직접 관리한 현장</h2>
-        <p class="section-desc">말보다 사진이 정확합니다. 실제로 관리하고 있는 사무실·병원·헬스장·라운지의 모습입니다.</p>
+        <span class="eyebrow reveal" data-reveal>Work</span>
+        <h2 class="section-title reveal" data-reveal style="--d:1">직접 관리한 현장</h2>
+        <p class="section-desc reveal" data-reveal style="--d:2">말보다 사진이 정확합니다. 실제로 관리하고 있는 공간을 업종별로 모았습니다. 사진을 누르면 크게 볼 수 있습니다.</p>
       </div>
 
-      <div class="gallery">
-        <figure>
-          <img src="assets/photos/photo-1-office.jpg" alt="사무실 책상과 바닥을 정리한 사무실 정기청소 현장" width="1141" height="1400" loading="lazy" decoding="async">
-          <figcaption>사무실 정기청소 · 책상과 바닥</figcaption>
+      <div class="filters reveal" data-reveal role="group" aria-label="현장 사진 업종 필터">
+        <button type="button" class="filter is-active" data-filter="all" aria-pressed="true">전체</button>
+        <button type="button" class="filter" data-filter="office" aria-pressed="false">사무실</button>
+        <button type="button" class="filter" data-filter="clinic" aria-pressed="false">병원</button>
+        <button type="button" class="filter" data-filter="lounge" aria-pressed="false">라운지 · 상가</button>
+        <button type="button" class="filter" data-filter="gym" aria-pressed="false">헬스장</button>
+      </div>
+
+      <div class="gallery" id="galleryGrid">
+        <figure class="shot" data-cat="office">
+          <button type="button" class="shot-btn" aria-label="사무실 정기청소 현장 크게 보기">
+            <img src="assets/photos/photo-1-office.jpg" alt="사무실 책상과 바닥을 정리한 사무실 정기청소 현장" width="1141" height="1400" loading="lazy" decoding="async">
+          </button>
+          <figcaption><span>사무실</span>책상과 바닥</figcaption>
         </figure>
-        <figure>
-          <img src="assets/photos/photo-2-meeting.jpg" alt="회의실과 교육장 바닥까지 관리한 사무공간 청소 현장" width="1141" height="1400" loading="lazy" decoding="async">
-          <figcaption>사무공간 · 회의실·교육장</figcaption>
+        <figure class="shot" data-cat="office">
+          <button type="button" class="shot-btn" aria-label="사무공간 회의실 청소 현장 크게 보기">
+            <img src="assets/photos/photo-2-meeting.jpg" alt="회의실과 교육장 바닥까지 관리한 사무공간 청소 현장" width="1141" height="1400" loading="lazy" decoding="async">
+          </button>
+          <figcaption><span>사무실</span>회의실 · 교육장</figcaption>
         </figure>
-        <figure>
-          <img src="assets/photos/photo-3-clinic.jpg" alt="진료용 베드와 바닥을 관리한 병원 클리닉 청소 현장" width="1141" height="1400" loading="lazy" decoding="async">
-          <figcaption>병원·클리닉 · 진료실</figcaption>
+        <figure class="shot" data-cat="clinic">
+          <button type="button" class="shot-btn" aria-label="병원 진료실 청소 현장 크게 보기">
+            <img src="assets/photos/photo-3-clinic.jpg" alt="진료용 베드와 바닥을 관리한 병원 클리닉 청소 현장" width="1141" height="1400" loading="lazy" decoding="async">
+          </button>
+          <figcaption><span>병원 · 클리닉</span>진료실</figcaption>
         </figure>
-        <figure>
-          <img src="assets/photos/photo-4-clinic-lounge.jpg" alt="대기 라운지 소파와 바닥을 관리한 클리닉 청소 현장" width="1141" height="1400" loading="lazy" decoding="async">
-          <figcaption>병원·클리닉 · 대기 라운지</figcaption>
+        <figure class="shot" data-cat="clinic">
+          <button type="button" class="shot-btn" aria-label="병원 대기 라운지 청소 현장 크게 보기">
+            <img src="assets/photos/photo-4-clinic-lounge.jpg" alt="대기 라운지 소파와 바닥을 관리한 클리닉 청소 현장" width="1141" height="1400" loading="lazy" decoding="async">
+          </button>
+          <figcaption><span>병원 · 클리닉</span>대기 라운지</figcaption>
         </figure>
-        <figure>
-          <img src="assets/photos/photo-5-gym.jpg" alt="운동기구와 바닥을 관리한 헬스장 청소 현장" width="1141" height="1400" loading="lazy" decoding="async">
-          <figcaption>헬스장 · 운동기구 존과 바닥</figcaption>
+        <figure class="shot" data-cat="lounge">
+          <button type="button" class="shot-btn" aria-label="라운지 부스 좌석 청소 현장 크게 보기">
+            <img src="assets/photos/photo-6-lounge.jpg" alt="부스 좌석과 원목 바닥을 관리한 라운지·상가 청소 현장" width="1141" height="1400" loading="lazy" decoding="async">
+          </button>
+          <figcaption><span>라운지 · 상가</span>부스 좌석과 바닥</figcaption>
         </figure>
-        <figure>
-          <img src="assets/photos/photo-6-lounge.jpg" alt="부스 좌석과 원목 바닥을 관리한 라운지·상가 청소 현장" width="1141" height="1400" loading="lazy" decoding="async">
-          <figcaption>라운지·상가 · 좌석과 바닥</figcaption>
+        <figure class="shot" data-cat="lounge">
+          <button type="button" class="shot-btn" aria-label="라운지 홀 전체 청소 현장 크게 보기">
+            <img src="assets/photos/photo-7-lounge.jpg" alt="우드 마루와 원형 소파, 테이블을 관리한 라운지 홀 청소 현장" width="1208" height="1400" loading="lazy" decoding="async">
+          </button>
+          <figcaption><span>라운지 · 상가</span>홀 바닥과 가구</figcaption>
+        </figure>
+        <figure class="shot" data-cat="gym">
+          <button type="button" class="shot-btn" aria-label="헬스장 운동기구 존 청소 현장 크게 보기">
+            <img src="assets/photos/photo-5-gym.jpg" alt="운동기구와 바닥을 관리한 헬스장 청소 현장" width="1141" height="1400" loading="lazy" decoding="async">
+          </button>
+          <figcaption><span>헬스장</span>운동기구 존과 바닥</figcaption>
         </figure>
       </div>
-      <p class="gallery-caption-note">※ 현장의 요청에 따라 촬영한 실제 작업 사진입니다.</p>
+      <p class="gallery-note">※ 현장의 요청에 따라 촬영한 실제 작업 사진입니다.</p>
     </div>
   </section>
 
   <!-- ===== AREA ===== -->
-  <section class="section section-tint" id="area">
+  <section class="section section-soft" id="area">
     <div class="container area-wrap">
-      <div>
-        <span class="eyebrow">Service Area</span>
-        <h2 class="section-title">서울 서남권과 수도권을 관리합니다</h2>
-        <p class="section-desc">양천구를 중심으로 서울 서남권과 경기 광명 등 수도권 현장을 관리합니다. 목록에 없는 지역도 상담해 보세요.</p>
-        <ul class="area-tags">
+      <div class="area-text">
+        <span class="eyebrow reveal" data-reveal>Service Area</span>
+        <h2 class="section-title reveal" data-reveal style="--d:1">서울 서남권과 수도권을 관리합니다</h2>
+        <p class="section-desc reveal" data-reveal style="--d:2">양천구를 중심으로 서울 서남권과 경기 광명 등 수도권 현장을 관리합니다. 목록에 없는 지역도 상담해 보세요.</p>
+        <ul class="area-tags reveal" data-reveal style="--d:3">
           <li>서울 양천구</li>
           <li>서울 강서구</li>
           <li>서울 구로구</li>
@@ -387,22 +651,42 @@
           <li>서울 금천구 (가산·독산)</li>
           <li>서울 영등포구</li>
           <li>경기 광명 (철산)</li>
-          <li>수도권 협의 가능</li>
+          <li class="is-muted">수도권 협의 가능</li>
         </ul>
+
+        <div class="area-actions reveal" data-reveal style="--d:4">
+          <a class="btn btn-primary" href="#booking">방문견적 신청</a>
+          <a class="btn btn-ghost-green" href="tel:0507-1317-8369">전화로 문의</a>
+        </div>
       </div>
 
-      <aside class="area-card">
-        <h3>사업장 안내</h3>
-        <dl>
-          <dt>상호</dt><dd>코리아 에코크린</dd>
-          <dt>대표</dt><dd>채종병</dd>
-          <dt>사업자등록번호</dt><dd>281-46-00169</dd>
-          <dt>주소</dt><dd>서울 양천구 오목로11길 17-5 401호</dd>
-          <dt>전화</dt><dd><a href="tel:0507-1317-8369">0507-1317-8369</a></dd>
-        </dl>
-        <a class="map-link" href="https://map.naver.com/p/entry/place/1278820141" target="_blank" rel="noopener">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-          네이버 지도에서 보기
+      <aside class="area-map reveal" data-reveal style="--d:2">
+        <div class="area-map-head">
+          <h3>코리아 에코크린</h3>
+          <p>서울 양천구 오목로11길 17-5 401호</p>
+        </div>
+        <div class="area-map-art" aria-hidden="true">
+          <svg viewBox="0 0 400 220" role="presentation">
+            <defs>
+              <linearGradient id="mapG" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#eef5f0"/>
+                <stop offset="1" stop-color="#e2efe7"/>
+              </linearGradient>
+            </defs>
+            <rect width="400" height="220" fill="url(#mapG)"/>
+            <path d="M-10 150 L120 120 L210 160 L330 130 L410 150" stroke="#cfe4d8" stroke-width="10" fill="none"/>
+            <path d="M60 -10 L90 90 L70 230" stroke="#d9eae1" stroke-width="8" fill="none"/>
+            <path d="M260 -10 L240 100 L300 230" stroke="#d9eae1" stroke-width="8" fill="none"/>
+            <path d="M-10 60 L160 50 L290 70 L410 55" stroke="#d9eae1" stroke-width="6" fill="none"/>
+          </svg>
+          <span class="map-pin">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          </span>
+          <span class="map-label">양천구 오목로11길</span>
+        </div>
+        <a class="map-cta" href="https://map.naver.com/p/entry/place/1278820141" target="_blank" rel="noopener">
+          네이버 지도에서 길찾기
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
         </a>
       </aside>
     </div>
@@ -412,47 +696,152 @@
   <section class="section" id="faq">
     <div class="container">
       <div class="section-head center">
-        <span class="eyebrow">FAQ</span>
-        <h2 class="section-title">자주 묻는 질문</h2>
+        <span class="eyebrow reveal" data-reveal>FAQ</span>
+        <h2 class="section-title reveal" data-reveal style="--d:1">자주 묻는 질문</h2>
       </div>
-      <div class="faq">
+      <div class="faq reveal" data-reveal style="--d:2">
         <details>
           <summary>어떤 공간을 관리하시나요?</summary>
-          <p>사무실, 병원·클리닉, 상가·매장·식당, 헬스장·사우나와 건물 공용부를 정기적으로 관리합니다. 책상·회의실·탕비실·화장실부터 진료실, 주방 트렌치, 운동기구 존과 샤워실 배수구까지 공간에 맞춰 범위를 정합니다.</p>
+          <div class="faq-body"><p>사무실, 병원·클리닉, 상가·매장·식당, 헬스장·사우나와 건물 공용부를 정기적으로 관리합니다. 책상·회의실·탕비실·화장실부터 진료실, 주방 트렌치, 운동기구 존과 샤워실 배수구까지 공간에 맞춰 범위를 정합니다.</p></div>
         </details>
         <details>
           <summary>서비스 지역은 어디까지인가요?</summary>
-          <p>서울 양천구를 중심으로 강서구·구로구·마포구·금천구(가산·독산)·영등포구와 경기 광명(철산) 등 수도권을 관리합니다. 목록에 없는 지역도 상담 시 확인해 드립니다.</p>
+          <div class="faq-body"><p>서울 양천구를 중심으로 강서구·구로구·마포구·금천구(가산·독산)·영등포구와 경기 광명(철산) 등 수도권을 관리합니다. 목록에 없는 지역도 상담 시 확인해 드립니다.</p></div>
         </details>
         <details>
           <summary>견적은 어떻게 받을 수 있나요?</summary>
-          <p>전화(0507-1317-8369)로 공간의 종류와 규모, 원하시는 관리 주기를 알려 주시면, 현장을 확인한 뒤 필요한 범위로 견적을 드립니다.</p>
+          <div class="faq-body"><p>전화(0507-1317-8369)로 공간의 종류와 규모, 원하시는 관리 주기를 알려 주시면 현장을 확인한 뒤 필요한 범위로 견적을 드립니다. 아래 <a href="#booking">방문견적·예약 상담</a>에 내용을 적어 문자로 보내셔도 됩니다.</p></div>
+        </details>
+        <details>
+          <summary>정기 관리 주기는 어떻게 정하나요?</summary>
+          <div class="faq-body"><p>공간의 사용 인원과 오염 정도를 보고 정합니다. 매일 관리부터 주 1회, 격주 1회까지 현장에 맞춰 정하고, 업무·영업에 지장이 없는 시간대에 진행합니다.</p></div>
         </details>
         <details>
           <summary>친환경 약품을 사용하나요?</summary>
-          <p>네. 사람이 오래 머무는 공간인 만큼 친환경 약품을 사용하며, 잔여물과 냄새까지 신경 써서 마무리합니다.</p>
+          <div class="faq-body"><p>네. 사람이 오래 머무는 공간인 만큼 친환경 약품을 사용하며, 잔여물과 냄새까지 신경 써서 마무리합니다.</p></div>
         </details>
         <details>
           <summary>배상책임보험도 가입되어 있나요?</summary>
-          <p>배상책임보험은 상담 후 가입 가능합니다. 필요하신 경우 상담 시 말씀해 주시면 안내해 드립니다.</p>
+          <div class="faq-body"><p>배상책임보험은 상담 후 가입 가능합니다. 필요하신 경우 상담 시 말씀해 주시면 안내해 드립니다.</p></div>
         </details>
       </div>
     </div>
   </section>
 
-  <!-- ===== CONTACT ===== -->
-  <section class="cta-section" id="contact">
+  <!-- ===== BOOKING ===== -->
+  <section class="section booking" id="booking">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow reveal" data-reveal>Booking</span>
+        <h2 class="section-title reveal" data-reveal style="--d:1">방문견적 · 예약 상담</h2>
+        <p class="section-desc reveal" data-reveal style="--d:2">아래 내용을 적고 <b>문자로 보내기</b>를 누르면, 적으신 내용이 그대로 문자에 담겨 대표 번호(0507-1317-8369)로 전송됩니다. 전화가 편하시면 바로 걸어 주세요.</p>
+      </div>
+
+      <div class="booking-grid">
+        <form class="booking-form reveal" data-reveal id="bookingForm" novalidate>
+          <fieldset class="field">
+            <legend>공간 유형 <span class="req">필수</span></legend>
+            <div class="chips-radio">
+              <label><input type="radio" name="space" value="사무실" checked><span>사무실</span></label>
+              <label><input type="radio" name="space" value="병원·클리닉"><span>병원 · 클리닉</span></label>
+              <label><input type="radio" name="space" value="상가·매장·식당"><span>상가 · 매장</span></label>
+              <label><input type="radio" name="space" value="헬스장·사우나"><span>헬스장 · 사우나</span></label>
+              <label><input type="radio" name="space" value="건물 공용부"><span>공용부</span></label>
+              <label><input type="radio" name="space" value="기타"><span>기타</span></label>
+            </div>
+          </fieldset>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="areaInput">지역 <span class="req">필수</span></label>
+              <input type="text" id="areaInput" name="area" placeholder="예: 양천구 목동" autocomplete="address-level2" required>
+              <p class="field-error" data-error-for="areaInput" hidden>지역을 적어 주세요.</p>
+            </div>
+            <div class="field">
+              <label for="cycleInput">희망 주기</label>
+              <select id="cycleInput" name="cycle">
+                <option value="매일">매일</option>
+                <option value="주 2~3회">주 2~3회</option>
+                <option value="주 1회" selected>주 1회</option>
+                <option value="격주 1회">격주 1회</option>
+                <option value="월 1회">월 1회</option>
+                <option value="상담 후 결정">상담 후 결정</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="telInput">연락처 <span class="req">필수</span></label>
+            <input type="tel" id="telInput" name="tel" placeholder="예: 010-1234-5678" inputmode="tel" autocomplete="tel" required>
+            <p class="field-hint">연락 가능한 번호를 적어 주시면 상담 시간을 정해 연락드립니다.</p>
+            <p class="field-error" data-error-for="telInput" hidden>연락처를 숫자로 적어 주세요.</p>
+          </div>
+
+          <div class="field">
+            <label for="memoInput">메모 <span class="opt">선택</span></label>
+            <textarea id="memoInput" name="memo" rows="3" placeholder="예: 30평 사무실, 화장실 2개, 평일 저녁 7시 이후 희망"></textarea>
+          </div>
+
+          <button class="btn btn-primary btn-block" type="submit" id="submitBtn">
+            상담 내용 확인하기
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </button>
+          <p class="form-note">적으신 내용은 홈페이지에 저장되지 않습니다. 문자·전화로만 전달됩니다.</p>
+        </form>
+
+        <aside class="booking-result reveal" data-reveal style="--d:2" aria-live="polite">
+          <div class="result-top">
+            <span class="result-badge" id="resultBadge">신청 내용</span>
+            <h3 id="resultTitle">적으신 내용이 여기에 정리됩니다</h3>
+          </div>
+
+          <div class="result-body">
+            <pre class="result-text" id="resultText">공간 유형: 사무실
+지역: -
+희망 주기: 주 1회
+연락처: -
+메모: -</pre>
+            <p class="result-empty" id="resultEmpty">왼쪽에 내용을 적으면 실시간으로 정리됩니다. 확인 후 아래 버튼으로 바로 보내실 수 있습니다.</p>
+          </div>
+
+          <div class="result-actions">
+            <a class="action-btn action-sms is-disabled" id="smsBtn" href="sms:0507-1317-8369" aria-disabled="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>
+              <span>문자로 보내기</span>
+            </a>
+            <button class="action-btn action-copy is-disabled" type="button" id="copyBtn" aria-disabled="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <span>내용 복사</span>
+            </button>
+            <a class="action-btn action-call" href="tel:0507-1317-8369">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+              <span>바로 전화 걸기</span>
+            </a>
+          </div>
+          <p class="result-help" id="resultHelp">‘상담 내용 확인하기’를 누르면 문자·복사 버튼이 활성화됩니다.</p>
+
+          <div class="result-callout">
+            <strong>0507-1317-8369</strong>
+            <span>상담 가능 시간에 맞춰 연락드립니다.</span>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== CTA ===== -->
+  <section class="cta-band">
     <div class="container cta-inner">
-      <div class="cta-text">
+      <div class="cta-text reveal" data-reveal>
         <h2>지금 관리 중인 공간,<br>한 번 점검받아 보세요</h2>
         <p>공간과 규모, 원하시는 관리 주기를 알려 주시면 현장을 확인한 뒤 정확한 견적을 드립니다.</p>
       </div>
-      <div class="cta-actions">
+      <div class="cta-actions reveal" data-reveal style="--d:2">
         <a class="cta-phone" href="tel:0507-1317-8369">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
           0507-1317-8369
         </a>
-        <span class="cta-hours">버튼을 누르면 바로 전화가 연결됩니다.</span>
+        <a class="cta-ghost" href="#booking">예약 상담 신청서 작성</a>
       </div>
     </div>
   </section>
@@ -462,7 +851,7 @@
   <div class="container">
     <div class="footer-top">
       <div class="footer-brand">
-        <img src="assets/logo.png" alt="코리아 에코크린 로고" width="52" height="52" loading="lazy">
+        <img src="assets/logo.png" alt="코리아 에코크린 로고" width="56" height="56" loading="lazy">
         <div>
           <strong>코리아 에코크린</strong>
           <p>17년 현장 경력의 친환경 청소업체.<br>사무실·병원·상가·헬스장 정기청소를 체계적으로 관리합니다.</p>
@@ -470,12 +859,12 @@
       </div>
 
       <div class="footer-info">
-        <h4>사업자 정보</h4>
+        <h4>사업장 정보</h4>
         <dl>
-          <dt>대표</dt><dd>채종병</dd>
-          <dt>사업자등록번호</dt><dd>281-46-00169</dd>
-          <dt>주소</dt><dd>서울 양천구 오목로11길 17-5 401호</dd>
-          <dt>전화</dt><dd><a href="tel:0507-1317-8369">0507-1317-8369</a></dd>
+          <div><dt>대표</dt><dd>채종병</dd></div>
+          <div><dt>사업자등록번호</dt><dd>281-46-00169</dd></div>
+          <div><dt>주소</dt><dd>서울 양천구 오목로11길 17-5 401호</dd></div>
+          <div><dt>전화</dt><dd><a href="tel:0507-1317-8369">0507-1317-8369</a></dd></div>
         </dl>
       </div>
 
@@ -511,20 +900,59 @@
   </div>
 </footer>
 
-<!-- 모바일 하단 고정 상담 바 -->
+<!-- PC 퀵 바 (우측 하단 원형 버튼) -->
+<div class="quick-bar" id="quickBar">
+  <a class="q-btn q-blog" href="https://blog.naver.com/chaejb1986" target="_blank" rel="noopener" aria-label="네이버 블로그 새 창으로 열기">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4.5 5.5A1.5 1.5 0 0 0 3 7v10a1.5 1.5 0 0 0 1.5 1.5h15A1.5 1.5 0 0 0 21 17V7a1.5 1.5 0 0 0-1.5-1.5zm2.2 2.6h2.1l3.9 5.1V8.1h2.1v7.8h-2L8.8 10.7v5.2H6.7z"/></svg>
+    <span class="q-label">네이버 블로그</span>
+  </a>
+  <a class="q-btn q-insta" href="https://www.instagram.com/koreaecoclean/" target="_blank" rel="noopener" aria-label="인스타그램 새 창으로 열기">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.2" cy="6.8" r="1"/></svg>
+    <span class="q-label">인스타그램</span>
+  </a>
+  <a class="q-btn q-book" href="#booking" aria-label="예약 상담 신청서로 이동">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+    <span class="q-label">예약 상담</span>
+  </a>
+  <a class="q-btn q-call" href="tel:0507-1317-8369" aria-label="0507-1317-8369로 전화 상담">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+    <span class="q-label">전화 상담</span>
+  </a>
+  <button class="q-btn q-top" type="button" id="topBtn" aria-label="맨 위로 이동">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+    <span class="q-label">맨 위로</span>
+  </button>
+</div>
+
+<!-- 모바일 하단 고정 바 -->
 <div class="mobile-bar" role="navigation" aria-label="빠른 상담">
   <a class="call" href="tel:0507-1317-8369">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
     전화 상담
   </a>
-  <a class="map" href="https://map.naver.com/p/entry/place/1278820141" target="_blank" rel="noopener">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-    네이버 지도
+  <a class="book" href="#booking">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+    예약 상담
   </a>
 </div>
 
-<script>
-  document.getElementById('year').textContent = new Date().getFullYear();
-</script>
+<!-- 라이트박스 -->
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="현장 사진 크게 보기" hidden>
+  <button class="lb-close" type="button" id="lbClose" aria-label="닫기">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </button>
+  <button class="lb-nav lb-prev" type="button" id="lbPrev" aria-label="이전 사진">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+  </button>
+  <figure class="lb-figure">
+    <img id="lbImage" src="" alt="">
+    <figcaption id="lbCaption"></figcaption>
+  </figure>
+  <button class="lb-nav lb-next" type="button" id="lbNext" aria-label="다음 사진">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+  </button>
+</div>
+
+<script src="script.js" defer></script>
 </body>
 </html>
