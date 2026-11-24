@@ -395,9 +395,9 @@ button { font-family: inherit; }
   position: absolute;
   left: 0;
   right: 0;
-  bottom: .06em;
-  height: .18em;
-  background: linear-gradient(90deg, rgba(26, 160, 95, .22), rgba(26, 160, 95, .05));
+  bottom: .02em;
+  height: .13em;
+  background: linear-gradient(90deg, rgba(26, 160, 95, .2), rgba(26, 160, 95, .04));
   border-radius: 4px;
   z-index: -1;
 }
@@ -691,10 +691,11 @@ button { font-family: inherit; }
   overflow: hidden;
   background: var(--bg-tint);
   box-shadow: var(--shadow-md);
+  aspect-ratio: 1 / 1.02;
 }
 .about-photo img {
   width: 100%;
-  aspect-ratio: 1 / 1.08;
+  height: 100%;
   object-fit: cover;
   transition: transform 1s var(--ease);
 }
@@ -1130,6 +1131,7 @@ button { font-family: inherit; }
   overflow: hidden;
   background: #e9f0ec;
   box-shadow: var(--shadow-sm);
+  aspect-ratio: 4 / 4.6;
   transition: transform .4s var(--ease), box-shadow .4s ease, opacity .3s ease;
 }
 .shot.is-hidden {
@@ -1140,15 +1142,17 @@ button { font-family: inherit; }
 .shot-btn {
   display: block;
   width: 100%;
+  height: 100%;
   padding: 0;
   border: 0;
   background: none;
   cursor: zoom-in;
-  position: relative;
+  position: absolute;
+  inset: 0;
 }
 .shot-btn img {
   width: 100%;
-  aspect-ratio: 4 / 4.6;
+  height: 100%;
   object-fit: cover;
   transition: transform .7s var(--ease);
 }
@@ -2088,7 +2092,7 @@ button { font-family: inherit; }
   .process { grid-template-columns: 1fr; gap: 12px; }
 
   .gallery { gap: 11px; }
-  .shot-btn img { aspect-ratio: 4 / 4.8; }
+  .shot { aspect-ratio: 4 / 4.8; }
   .shot figcaption { font-size: 12.5px; padding: 26px 12px 11px; }
   .shot figcaption span { font-size: 10.5px; }
   .filter { font-size: 13px; padding: 8px 14px; }
@@ -2129,7 +2133,7 @@ button { font-family: inherit; }
 @media (max-width: 430px) {
   .hero-strip li:nth-child(n+4) { display: none; }
   .gallery { grid-template-columns: 1fr; }
-  .shot-btn img { aspect-ratio: 4 / 4.2; }
+  .shot { aspect-ratio: 4 / 4.2; }
 }
 
 /* ---------------- Reduced motion ---------------- */
