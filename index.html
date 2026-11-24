@@ -36,8 +36,8 @@
 
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-<link rel="preload" as="image" href="assets/hero.jpg">
-<link rel="stylesheet" href="styles.css?v=20261124e">
+<link rel="preload" as="image" href="assets/videos/poster-hero.jpg">
+<link rel="stylesheet" href="styles.css?v=20261124f">
 
 <!-- 구조화 데이터: LocalBusiness -->
 <script type="application/ld+json">
@@ -52,10 +52,13 @@
   "logo": "https://koreaecoclean.github.io/assets/logo.png",
   "image": "https://koreaecoclean.github.io/assets/og-image.jpg",
   "telephone": "+82-507-1317-8369",
-  "founder": { "@type": "Person", "name": "채종병" },
+  "faxNumber": "+82-504-037-8369",
+  "email": "koreaecoclean@naver.com",
+  "foundingDate": "2016-03-03",
+  "founder": { "@type": "Person", "name": "채종병", "jobTitle": "대표" },
   "address": {
     "@type": "PostalAddress",
-    "streetAddress": "오목로11길 17-5 401호",
+    "streetAddress": "남부순환로36길 30, 1층 B01호 상가",
     "addressLocality": "양천구",
     "addressRegion": "서울특별시",
     "addressCountry": "KR"
@@ -141,6 +144,17 @@
 
 <div class="progress" aria-hidden="true"><span class="progress-bar" id="progressBar"></span></div>
 
+<!-- SPECIAL EVENT 띠배너 -->
+<div class="event-bar" role="region" aria-label="특별 이벤트 안내">
+  <a href="#booking">
+    <span class="event-bar-tag">SPECIAL EVENT</span>
+    <span class="event-bar-text">무료 상담 후 <b>1년 정기청소 계약</b> 체결 시 <strong>대청소 무료 진행</strong></span>
+    <span class="event-bar-more">예약 상담하기
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+    </span>
+  </a>
+</div>
+
 <header class="site-header" id="siteHeader">
   <div class="header-shell" id="headerShell">
     <div class="header-inner">
@@ -156,7 +170,7 @@
         <a href="#about">회사 소개</a>
         <a href="#services">서비스</a>
         <a href="#special">차별성</a>
-        <a href="#gallery">작업 현장</a>
+        <a href="#videos">현장 영상</a>
         <a href="#area">서비스 지역</a>
         <a href="#faq">FAQ</a>
       </nav>
@@ -178,7 +192,8 @@
         <a href="#about">회사 소개</a>
         <a href="#services">서비스</a>
         <a href="#special">차별성</a>
-        <a href="#gallery">작업 현장</a>
+        <a href="#videos">현장 영상</a>
+        <a href="#gallery">작업 사진</a>
         <a href="#area">서비스 지역</a>
         <a href="#faq">자주 묻는 질문</a>
         <a href="#booking">예약 상담</a>
@@ -192,61 +207,73 @@
 </header>
 
 <main id="main">
-  <!-- ===== HERO ===== -->
-  <section class="hero" id="top">
-    <div class="hero-glow" aria-hidden="true"></div>
-    <div class="container hero-inner">
+  <!-- ===== HERO (full-bleed 현장 영상) ===== -->
+  <section class="hero hero-video" id="top">
+    <div class="hero-bg" aria-hidden="true">
+      <img src="assets/videos/poster-hero.jpg" alt="" width="406" height="720" fetchpriority="high" decoding="async">
+    </div>
+
+    <div class="hero-media" id="heroMedia">
+      <video id="heroVideo" class="hero-video-el"
+             src="assets/videos/field-hero.mp4"
+             poster="assets/videos/poster-hero.jpg"
+             autoplay muted loop playsinline preload="auto"
+             aria-label="코리아 에코크린 사무실 정기청소 현장 영상"></video>
+      <div class="hero-media-scrim" aria-hidden="true"></div>
+
+      <p class="hero-video-tag"><span class="rec-dot" aria-hidden="true"></span>사무실 정기청소 · 실제 작업 영상</p>
+
+      <div class="hero-controls">
+        <button type="button" class="hero-ctrl" id="heroPlay" aria-label="현장 영상 일시정지" aria-pressed="false">
+          <svg class="i-pause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="5" width="3.6" height="14" rx="1"/><rect x="13.4" y="5" width="3.6" height="14" rx="1"/></svg>
+          <svg class="i-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+        </button>
+        <button type="button" class="hero-ctrl" id="heroFull" aria-label="현장 영상 전체화면으로 보기">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="container hero-shell">
       <div class="hero-copy">
         <span class="hero-badge"><span class="dot"></span>사무실 · 병원 · 상가 정기청소 전문</span>
         <h1>매일의 공간을,<br><em>17년의 기준</em>으로.</h1>
         <p class="lead">
-          사무실과 병원, 상가와 헬스장. 사람이 하루의 대부분을 보내는 공간을
-          정기적으로 관리합니다. 현장을 먼저 살피고, 그 공간에 맞는 순서와 약품을 정합니다.
+          사무실과 병원, 상가와 헬스장. 사람이 하루의 대부분을 보내는 공간을 정기적으로 관리합니다.
+          현장을 먼저 살피고, 그 공간에 맞는 순서와 약품을 정합니다.
         </p>
 
         <div class="hero-actions">
-          <a class="btn btn-primary" href="tel:0507-1317-8369">
+          <a class="btn btn-hero-call" href="tel:0507-1317-8369">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
             전화 상담
           </a>
-          <a class="btn btn-outline" href="#booking">
+          <a class="btn btn-hero-glass" href="#booking">
             방문견적 · 예약 상담
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
           </a>
         </div>
 
-        <ul class="hero-meta">
-          <li><strong class="count" data-count="17" data-suffix="년">17년</strong><span>현장 경력</span></li>
-          <li><strong class="count" data-count="4" data-suffix="개 분야">4개 분야</strong><span>1급 자격 보유</span></li>
-          <li><strong class="count" data-count="100" data-suffix="%">100%</strong><span>친환경 약품</span></li>
+        <ul class="hero-chips">
+          <li>4개 분야 1급 자격</li>
+          <li>2급 방화관리사</li>
+          <li>대표 직접 관리</li>
+          <li>친환경 약품</li>
         </ul>
       </div>
 
-      <div class="hero-visual reveal" data-reveal>
-        <div class="hero-photo">
-          <img src="assets/hero.jpg" alt="코리아 에코크린이 관리하는 병원·클리닉 대기 라운지의 깨끗한 바닥과 소파" width="1240" height="1563" fetchpriority="high" decoding="async">
-          <span class="photo-tag">현장 · 병원 클리닉 대기 라운지</span>
-        </div>
-        <div class="hero-float reveal" data-reveal style="--d:3">
-          <span class="hero-float-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
-          </span>
-          <span class="hero-float-text">
-            <strong>부부팀 · 전문팀이 직접 관리</strong>
-            <span>중간에 사람이 바뀌어도 같은 기준으로</span>
-          </span>
-        </div>
+      <div class="hero-foot">
+        <ul class="hero-stats">
+          <li><strong class="count" data-count="17" data-suffix="년">17년</strong><span>현장 경력</span></li>
+          <li><strong class="count" data-count="4" data-suffix="개 분야">4개 분야</strong><span>1급 자격 보유</span></li>
+          <li><strong class="count" data-count="5" data-suffix="종">5종</strong><span>보유 자격증</span></li>
+          <li><strong>100%</strong><span>친환경 약품</span></li>
+        </ul>
+        <a class="hero-scroll" href="#about">
+          <span>회사 소개 보기</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="5 12 12 19 19 12"/></svg>
+        </a>
       </div>
-    </div>
-
-    <div class="container">
-      <ul class="hero-strip reveal" data-reveal style="--d:2">
-        <li>사무실</li>
-        <li>병원 · 클리닉</li>
-        <li>상가 · 매장</li>
-        <li>헬스장 · 사우나</li>
-        <li>건물 공용부</li>
-      </ul>
     </div>
   </section>
 
@@ -297,9 +324,15 @@
       </div>
 
       <div class="about-side">
-        <figure class="about-photo reveal" data-reveal style="--d:1">
-          <img src="assets/about.jpg" alt="코리아 에코크린이 정기 관리하는 헬스장 운동기구 존과 우드 바닥" width="1100" height="1282" loading="lazy" decoding="async">
-          <figcaption>헬스장 · 운동기구 존과 바닥 관리</figcaption>
+        <figure class="ceo-card reveal" data-reveal style="--d:1">
+          <img src="assets/ceo-profile.jpg" alt="코리아 에코크린 채종병 대표 프로필 사진" width="800" height="1200" loading="lazy" decoding="async">
+          <span class="ceo-seal">SINCE<br><b>2016</b></span>
+          <figcaption>
+            <span class="ceo-role">대표 · CEO</span>
+            <strong>채종병</strong>
+            <span class="ceo-meta">前 (주)건물반장 대표 · 청소 현장 경력 17년</span>
+            <span class="ceo-certs">집합건물관리사 1급 · 청소전문관리사 1급 · 냉난방기유지보수관리사 1급<br>부동산자산관리사 1급 · 방화관리사 2급</span>
+          </figcaption>
         </figure>
 
         <div class="stats reveal" data-reveal style="--d:2">
@@ -327,15 +360,123 @@
             <div><dt>상호</dt><dd>코리아 에코크린</dd></div>
             <div><dt>대표</dt><dd>채종병</dd></div>
             <div><dt>사업자등록번호</dt><dd>281-46-00169</dd></div>
-            <div><dt>주소</dt><dd>서울 양천구 오목로11길 17-5 401호</dd></div>
+            <div><dt>개업일</dt><dd>2016년 3월 3일</dd></div>
+            <div><dt>주소</dt><dd>서울특별시 양천구 남부순환로36길 30, 1층 B01호 상가(신월동)</dd></div>
             <div><dt>전화</dt><dd><a href="tel:0507-1317-8369">0507-1317-8369</a></dd></div>
+            <div><dt>팩스</dt><dd>0504-037-8369</dd></div>
+            <div><dt>이메일</dt><dd><a href="mailto:koreaecoclean@naver.com">koreaecoclean@naver.com</a></dd></div>
           </dl>
-          <a class="map-link" href="https://map.naver.com/p/entry/place/1278820141" target="_blank" rel="noopener">
+          <a class="map-link" href="https://map.naver.com/p/search/%EC%84%9C%EC%9A%B8%20%EC%96%91%EC%B2%9C%EA%B5%AC%20%EB%82%A8%EB%B6%80%EC%88%9C%ED%99%98%EB%A1%9C36%EA%B8%B8%2030" target="_blank" rel="noopener">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
             네이버 지도에서 보기
           </a>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- ===== HISTORY ===== -->
+  <section class="section section-dark" id="history">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow reveal" data-reveal>History</span>
+        <h2 class="section-title reveal" data-reveal style="--d:1">2005년부터, 오늘까지</h2>
+        <p class="section-desc reveal" data-reveal style="--d:2">한 사람이 현장에서 시작해 지금의 팀이 되기까지. 청소 한 길만 걸어왔습니다.</p>
+      </div>
+
+      <ol class="timeline">
+        <li class="reveal" data-reveal style="--d:1">
+          <span class="tl-dot" aria-hidden="true"></span>
+          <span class="tl-year">2005.09</span>
+          <h3>청소 실무 경험 시작</h3>
+          <p>청소 현장에서 실무 경험을 시작했습니다.</p>
+        </li>
+        <li class="reveal" data-reveal style="--d:2">
+          <span class="tl-dot" aria-hidden="true"></span>
+          <span class="tl-year">2006 – 2010</span>
+          <h3>1세대 청소업체 근무</h3>
+          <p>현장관리 · 직원교육 · 1회성 작업을 전담했습니다.</p>
+        </li>
+        <li class="reveal" data-reveal style="--d:3">
+          <span class="tl-dot" aria-hidden="true"></span>
+          <span class="tl-year">2010 – 2015</span>
+          <h3>전문 청소 서비스 경험 축적</h3>
+          <p>입주청소 · 준공청소 · 사무실 정기관리를 맡았습니다.</p>
+        </li>
+        <li class="reveal is-key" data-reveal style="--d:4">
+          <span class="tl-dot" aria-hidden="true"></span>
+          <span class="tl-year">2016.03.03</span>
+          <h3>코리아에코크린 설립</h3>
+          <p>체계적인 서비스와 고객 중심 관리 시스템을 세웠습니다.</p>
+        </li>
+        <li class="reveal" data-reveal style="--d:5">
+          <span class="tl-dot" aria-hidden="true"></span>
+          <span class="tl-year">2024</span>
+          <h3>주식회사 건물반장 설립</h3>
+          <p>기업 · 건물관리 서비스로 확장해 토탈 공간관리 솔루션을 제공합니다.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- ===== CREDENTIALS ===== -->
+  <section class="section" id="credentials">
+    <div class="container">
+      <div class="section-head center">
+        <span class="eyebrow reveal" data-reveal>Credentials</span>
+        <h2 class="section-title reveal" data-reveal style="--d:1">자격으로 증명합니다</h2>
+        <p class="section-desc reveal" data-reveal style="--d:2">청소 4개 분야 1급 자격과 2급 방화관리사. 카드를 누르면 자격증 원본을 크게 볼 수 있습니다.</p>
+      </div>
+
+      <ul class="cred-grid">
+        <li class="cred-card reveal" data-reveal style="--d:1">
+          <span class="cred-kind">1급</span>
+          <h3>집합건물관리사</h3>
+          <p class="cred-num">등록번호 2025-003186</p>
+          <p class="cred-org">한국교육검정원</p>
+          <button type="button" class="cred-view" data-cert="assets/certs/cert-building.jpg" data-cert-title="집합건물관리사 1급 (등록번호 2025-003186)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            자격증 보기
+          </button>
+        </li>
+        <li class="cred-card reveal" data-reveal style="--d:2">
+          <span class="cred-kind">1급</span>
+          <h3>청소전문관리사</h3>
+          <p class="cred-num">등록번호 2024-006059</p>
+          <p class="cred-org">한국교육검정원</p>
+          <button type="button" class="cred-view" data-cert="assets/certs/cert-cleaning.jpg" data-cert-title="청소전문관리사 1급 (등록번호 2024-006059)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            자격증 보기
+          </button>
+        </li>
+        <li class="cred-card reveal" data-reveal style="--d:3">
+          <span class="cred-kind">1급</span>
+          <h3>냉난방기유지보수관리사</h3>
+          <p class="cred-num">등록번호 2026-002680</p>
+          <p class="cred-org">한국교육검정원</p>
+          <button type="button" class="cred-view" data-cert="assets/certs/cert-hvac.jpg" data-cert-title="냉난방기유지보수관리사 1급 (등록번호 2026-002680)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            자격증 보기
+          </button>
+        </li>
+        <li class="cred-card reveal" data-reveal style="--d:4">
+          <span class="cred-kind">1급</span>
+          <h3>부동산자산관리사</h3>
+          <p class="cred-num">등록번호 2026-000862</p>
+          <p class="cred-org">한국교육검정원</p>
+          <button type="button" class="cred-view" data-cert="assets/certs/cert-realty.jpg" data-cert-title="부동산자산관리사 1급 (등록번호 2026-000862)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            자격증 보기
+          </button>
+        </li>
+        <li class="cred-card reveal is-plain" data-reveal style="--d:5">
+          <span class="cred-kind cred-kind-2">2급</span>
+          <h3>방화관리사</h3>
+          <p class="cred-num">자격 보유</p>
+          <p class="cred-org">건물 안전관리</p>
+        </li>
+      </ul>
+      <p class="cred-note">※ 자격증 이미지의 생년월일 등 개인정보는 가림 처리했습니다.</p>
     </div>
   </section>
 
@@ -571,6 +712,61 @@
     </div>
   </section>
 
+  <!-- ===== FIELD VIDEO ===== -->
+  <section class="section section-soft" id="videos">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow reveal" data-reveal>Field video</span>
+        <h2 class="section-title reveal" data-reveal style="--d:1">작업 현장 영상</h2>
+        <p class="section-desc reveal" data-reveal style="--d:2">촬영한 실제 작업 장면입니다. 카드를 누르면 바로 재생됩니다.</p>
+      </div>
+
+      <div class="video-grid">
+        <article class="video-card reveal" data-reveal style="--d:1">
+          <div class="video-frame">
+            <video class="video-el" src="assets/videos/field-1.mp4" poster="assets/videos/poster-1.jpg"
+                   preload="none" playsinline controls muted loop
+                   aria-label="사무실 보티 청소 현장 영상"></video>
+            <button class="video-play" type="button" aria-label="사무실 정기청소 현장 영상 재생">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+            </button>
+            <span class="video-dur">18초</span>
+          </div>
+          <h3>사무실 정기청소</h3>
+          <p>책상과 공용 공간을 순서대로 관리하는 현장입니다.</p>
+        </article>
+
+        <article class="video-card reveal" data-reveal style="--d:2">
+          <div class="video-frame">
+            <video class="video-el" src="assets/videos/field-2.mp4" poster="assets/videos/poster-2.jpg"
+                   preload="none" playsinline controls muted loop
+                   aria-label="사무실 책상·서랍 청소 현장 영상"></video>
+            <button class="video-play" type="button" aria-label="사무실 책상·서랍 청소 현장 영상 재생">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+            </button>
+            <span class="video-dur">21초</span>
+          </div>
+          <h3>책상 · 서랍 내부까지</h3>
+          <p>손이 닿는 곳을 놓치지 않고 꼼꼼하게 마무리합니다.</p>
+        </article>
+
+        <article class="video-card reveal" data-reveal style="--d:3">
+          <div class="video-frame">
+            <video class="video-el" src="assets/videos/field-3.mp4" poster="assets/videos/poster-3.jpg"
+                   preload="none" playsinline controls muted loop
+                   aria-label="사무실 청소 전문팀 작업 현장 영상"></video>
+            <button class="video-play" type="button" aria-label="사무실 청소 전문팀 작업 현장 영상 재생">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+            </button>
+            <span class="video-dur">19초</span>
+          </div>
+          <h3>전문팀의 작업 순서</h3>
+          <p>바닥부터 집기까지, 정해진 순서로 관리합니다.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
   <!-- ===== GALLERY ===== -->
   <section class="section" id="gallery">
     <div class="container">
@@ -663,7 +859,7 @@
       <aside class="area-map reveal" data-reveal style="--d:2">
         <div class="area-map-head">
           <h3>코리아 에코크린</h3>
-          <p>서울 양천구 오목로11길 17-5 401호</p>
+          <p>서울특별시 양천구 남부순환로36길 30, 1층 B01호 상가(신월동)</p>
         </div>
         <div class="area-map-art" aria-hidden="true">
           <svg viewBox="0 0 400 220" role="presentation">
@@ -682,9 +878,9 @@
           <span class="map-pin">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
           </span>
-          <span class="map-label">양천구 오목로11길</span>
+          <span class="map-label">신월동 남부순환로36길</span>
         </div>
-        <a class="map-cta" href="https://map.naver.com/p/entry/place/1278820141" target="_blank" rel="noopener">
+        <a class="map-cta" href="https://map.naver.com/p/search/%EC%84%9C%EC%9A%B8%20%EC%96%91%EC%B2%9C%EA%B5%AC%20%EB%82%A8%EB%B6%80%EC%88%9C%ED%99%98%EB%A1%9C36%EA%B8%B8%2030" target="_blank" rel="noopener">
           네이버 지도에서 길찾기
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
         </a>
@@ -735,6 +931,21 @@
         <span class="eyebrow reveal" data-reveal>Booking</span>
         <h2 class="section-title reveal" data-reveal style="--d:1">방문견적 · 예약 상담</h2>
         <p class="section-desc reveal" data-reveal style="--d:2">아래 내용을 적고 <b>문자로 보내기</b>를 누르면, 적으신 내용이 그대로 문자에 담겨 대표 번호(0507-1317-8369)로 전송됩니다. 전화가 편하시면 바로 걸어 주세요.</p>
+      </div>
+
+      <div class="event-card reveal" data-reveal style="--d:1">
+        <div class="event-card-main">
+          <span class="event-card-tag">SPECIAL EVENT</span>
+          <h3>무료 상담 후 <em>1년 정기청소 계약</em> 체결 시<br><strong>대청소 무료 진행</strong></h3>
+          <p>방문견적 상담은 무료입니다. 상담 후 1년 정기청소 계약을 체결하시면 대청소를 무료로 진행해 드립니다.</p>
+        </div>
+        <div class="event-card-side">
+          <a class="btn btn-event" href="#bookingForm">이벤트 상담 신청
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </a>
+          <a class="event-card-call" href="tel:0507-1317-8369">전화 0507-1317-8369</a>
+          <span class="event-card-note">이벤트 기간과 세부 조건은 상담 시 안내드립니다.</span>
+        </div>
       </div>
 
       <div class="booking-grid">
@@ -861,19 +1072,23 @@
       <div class="footer-info">
         <h4>사업장 정보</h4>
         <dl>
+          <div><dt>상호</dt><dd>코리아 에코크린</dd></div>
           <div><dt>대표</dt><dd>채종병</dd></div>
           <div><dt>사업자등록번호</dt><dd>281-46-00169</dd></div>
-          <div><dt>주소</dt><dd>서울 양천구 오목로11길 17-5 401호</dd></div>
+          <div><dt>개업일</dt><dd>2016년 3월 3일</dd></div>
+          <div><dt>주소</dt><dd>서울특별시 양천구 남부순환로36길 30, 1층 B01호 상가(신월동, 행운연립)</dd></div>
           <div><dt>전화</dt><dd><a href="tel:0507-1317-8369">0507-1317-8369</a></dd></div>
+          <div><dt>팩스</dt><dd>0504-037-8369</dd></div>
+          <div><dt>이메일</dt><dd><a href="mailto:koreaecoclean@naver.com">koreaecoclean@naver.com</a></dd></div>
         </dl>
       </div>
 
       <div class="footer-links">
         <h4>공식 채널</h4>
         <ul>
-          <li><a href="https://map.naver.com/p/entry/place/1278820141" target="_blank" rel="noopener">
+          <li><a href="https://map.naver.com/p/search/%EC%84%9C%EC%9A%B8%20%EC%96%91%EC%B2%9C%EA%B5%AC%20%EB%82%A8%EB%B6%80%EC%88%9C%ED%99%98%EB%A1%9C36%EA%B8%B8%2030" target="_blank" rel="noopener">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-            네이버 지도 (양천점)</a></li>
+            네이버 지도 (신월동 본사)</a></li>
           <li><a href="https://blog.naver.com/chaejb1986" target="_blank" rel="noopener">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
             네이버 블로그 (본사)</a></li>
@@ -936,6 +1151,17 @@
   </a>
 </div>
 
+<!-- 자격증 확대 보기 -->
+<div class="cert-modal" id="certModal" role="dialog" aria-modal="true" aria-labelledby="certTitle" hidden>
+  <button class="cert-close" type="button" id="certClose" aria-label="닫기">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </button>
+  <figure class="cert-figure">
+    <img id="certImage" src="" alt="">
+    <figcaption id="certTitle"></figcaption>
+  </figure>
+</div>
+
 <!-- 라이트박스 -->
 <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="현장 사진 크게 보기" hidden>
   <button class="lb-close" type="button" id="lbClose" aria-label="닫기">
@@ -953,6 +1179,6 @@
   </button>
 </div>
 
-<script src="script.js?v=20261124c" defer></script>
+<script src="script.js?v=20261124d" defer></script>
 </body>
 </html>

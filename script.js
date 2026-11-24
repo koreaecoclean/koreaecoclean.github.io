@@ -435,6 +435,134 @@
     renderPreview();
   }
 
+  /* ---------- 히어로 현장 영상 ---------- */
+  var heroVideo = doc.getElementById('heroVideo');
+  var heroMedia = doc.getElementById('heroMedia');
+  var heroPlay = doc.getElementById('heroPlay');
+  var heroFull = doc.getElementById('heroFull');
+
+  function syncHeroState() {
+    if (!heroVideo || !heroMedia) return;
+    var paused = heroVideo.paused;
+    heroMedia.classList.toggle('is-paused', paused);
+    if (heroPlay) {
+      heroPlay.setAttribute('aria-pressed', paused ? 'true' : 'false');
+      heroPlay.setAttribute('aria-label', paused ? '현장 영상 재생' : '현장 영상 일시정지');
+    }
+  }
+
+  if (heroVideo) {
+    ['play', 'pause', 'loadeddata'].forEach(function (ev) {
+      heroVideo.addEventListener(ev, syncHeroState);
+    });
+
+    if (reduceMotion) {
+      heroVideo.pause();
+      heroVideo.removeAttribute('autoplay');
+      syncHeroState();
+    }
+
+    if (heroPlay) {
+      heroPlay.addEventListener('click', function () {
+        if (heroVideo.paused) heroVideo.play().catch(function () {});
+        else heroVideo.pause();
+      });
+    }
+
+    if (heroFull) {
+      heroFull.addEventListener('click', function () {
+        if (heroVideo.requestFullscreen) heroVideo.requestFullscreen().catch(function () {});
+        else if (heroVideo.webkitEnterFullscreen) heroVideo.webkitEnterFullscreen();
+      });
+    }
+
+    /* 화면 밖으로 나가면 잠시 멈춰 데이터·배터리를 아킵니다 */
+    if ('IntersectionObserver' in window && !reduceMotion) {
+      var heroIO = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            if (heroVideo.paused && !heroMedia.classList.contains('is-paused')) {
+              heroVideo.play().catch(function () {});
+            }
+          } else if (!heroVideo.paused && !heroMedia.classList.contains('is-paused')) {
+            heroVideo.pause();
+          }
+        });
+      }, { threshold: 0.12 });
+      heroIO.observe(heroVideo);
+      /* 사용자가 직접 멈춘 것은 화면에 돌아와도 다시 켜지 않습니다 */
+      if (heroPlay) {
+        heroPlay.addEventListener('click', function () {
+          if (heroVideo.paused) heroMedia.classList.remove('is-paused');
+        });
+      }
+    }
+  }
+
+  /* ---------- 현장 영상 카드 ---------- */
+  var videoCards = Array.prototype.slice.call(doc.querySelectorAll('.video-card'));
+
+  videoCards.forEach(function (card) {
+    var video = card.querySelector('video');
+    var playBtn = card.querySelector('.video-play');
+    var frame = card.querySelector('.video-frame');
+    if (!video || !playBtn || !frame) return;
+
+    playBtn.addEventListener('click', function () {
+      videoCards.forEach(function (other) {
+        var v = other.querySelector('video');
+        if (v && v !== video) {
+          v.pause();
+          var of = other.querySelector('.video-frame');
+          if (of) of.classList.remove('is-playing');
+        }
+      });
+      frame.classList.add('is-playing');
+      video.play().catch(function () {});
+    });
+  });
+
+  /* ---------- 자격증 확대 보기 ---------- */
+  var certModal = doc.getElementById('certModal');
+  var certImage = doc.getElementById('certImage');
+  var certTitle = doc.getElementById('certTitle');
+  var certClose = doc.getElementById('certClose');
+  var certFocus = null;
+
+  function openCert(btn) {
+    if (!certModal || !certImage) return;
+    certFocus = btn;
+    var src = btn.getAttribute('data-cert');
+    var title = btn.getAttribute('data-cert-title') || '';
+    certImage.src = src;
+    certImage.alt = title + ' 자격증 원본';
+    certTitle.textContent = title;
+    certModal.hidden = false;
+    doc.body.style.overflow = 'hidden';
+    certClose.focus();
+  }
+
+  function closeCert() {
+    if (!certModal) return;
+    certModal.hidden = true;
+    doc.body.style.overflow = '';
+    if (certFocus && certFocus.focus) certFocus.focus();
+  }
+
+  Array.prototype.forEach.call(doc.querySelectorAll('.cred-view'), function (btn) {
+    btn.addEventListener('click', function () { openCert(btn); });
+  });
+
+  if (certModal) {
+    certClose.addEventListener('click', closeCert);
+    certModal.addEventListener('click', function (e) {
+      if (e.target === certModal) closeCert();
+    });
+    doc.addEventListener('keydown', function (e) {
+      if (!certModal.hidden && e.key === 'Escape') closeCert();
+    });
+  }
+
   /* ---------- 부드러운 앵커 이동(헤더 높이 보정은 CSS scroll-padding 사용) ---------- */
   doc.addEventListener('click', function (e) {
     var link = e.target.closest('a[href^="#"]');
