@@ -22,15 +22,24 @@
   f.height = h;
   f.addEventListener('load', function () {
     try {
+      var d = f.contentDocument;
+      if (q.get('nosb') === '1') {
+        d.documentElement.style.scrollbarWidth = 'none';
+      }
       if (q.get('full') === '1') {
-        var d = f.contentDocument;
         var H = Math.max(d.documentElement.scrollHeight, d.body.scrollHeight);
         f.style.height = H + 'px';
         f.height = H;
-        document.title = 'ready w=' + w + ' h=' + H;
-      } else {
-        document.title = 'ready w=' + w + ' h=' + h;
       }
+      if (q.get('eager') === '1') {
+        d.querySelectorAll('img[loading="lazy"]').forEach(function (i) {
+          var s = i.getAttribute('src');
+          i.removeAttribute('loading');
+          i.setAttribute('src', '');
+          i.setAttribute('src', s);
+        });
+      }
+      document.title = 'ready w=' + w + ' h=' + f.height + ' wd=' + d.documentElement.clientWidth;
     } catch (e) {
       document.title = 'iframe-error';
     }
