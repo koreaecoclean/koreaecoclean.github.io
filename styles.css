@@ -2263,10 +2263,21 @@ button { font-family: inherit; }
   filter: blur(46px) saturate(1.25) brightness(.52);
   transform: scale(1.32);
 }
+.hero-video .hero-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    radial-gradient(46% 54% at 14% 76%, rgba(26, 160, 95, .22), transparent 72%),
+    radial-gradient(40% 46% at 62% 4%, rgba(242, 201, 107, .1), transparent 70%);
+  pointer-events: none;
+}
 .hero-video .hero-bg::after {
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 2;
   background:
     radial-gradient(125% 120% at 6% 38%, rgba(3, 17, 11, .94) 0%, rgba(4, 23, 14, .82) 36%, rgba(5, 30, 19, .55) 64%, rgba(4, 17, 11, .7) 100%);
 }
