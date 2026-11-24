@@ -2277,7 +2277,7 @@ button { font-family: inherit; }
   right: 0;
   bottom: 0;
   z-index: 1;
-  width: min(47vw, 660px);
+  width: min(44vw, 620px);
   overflow: hidden;
   background: #06150f;
 }
@@ -2292,16 +2292,26 @@ button { font-family: inherit; }
   position: absolute;
   inset: 0;
   pointer-events: none;
+  background: linear-gradient(180deg, rgba(4, 18, 12, .45) 0%, rgba(4, 18, 12, 0) 20%, rgba(4, 18, 12, 0) 72%, rgba(4, 18, 12, .62) 100%);
+}
+
+/* 히어로 전체를 덮는 그러데이션 — 영상과 배경이 이어지도록 */
+.hero-video::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
   background:
-    linear-gradient(90deg, #04120c 0%, rgba(4, 18, 12, .88) 5%, rgba(4, 18, 12, .5) 20%, rgba(4, 18, 12, .1) 40%, rgba(4, 18, 12, 0) 58%),
-    linear-gradient(180deg, rgba(4, 18, 12, .5) 0%, rgba(4, 18, 12, 0) 22%, rgba(4, 18, 12, 0) 66%, rgba(4, 18, 12, .72) 100%);
+    linear-gradient(90deg, #04120c 0%, rgba(4, 18, 12, .985) 24%, rgba(4, 18, 12, .92) 40%, rgba(4, 18, 12, .72) 52%, rgba(4, 18, 12, .44) 63%, rgba(4, 18, 12, .16) 75%, rgba(4, 18, 12, 0) 86%),
+    linear-gradient(180deg, rgba(4, 18, 12, .4) 0%, rgba(4, 18, 12, 0) 16%, rgba(4, 18, 12, 0) 76%, rgba(4, 18, 12, .5) 100%);
 }
 
 .hero-video-tag {
   position: absolute;
   left: 16px;
   bottom: 16px;
-  z-index: 3;
+  z-index: 4;
   margin: 0;
   display: inline-flex;
   align-items: center;
@@ -2334,7 +2344,7 @@ button { font-family: inherit; }
   position: absolute;
   right: 16px;
   bottom: 16px;
-  z-index: 3;
+  z-index: 4;
   display: flex;
   gap: 8px;
 }
@@ -2462,9 +2472,9 @@ button { font-family: inherit; }
 
 .hero-foot {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 16px 22px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
   width: 100%;
 }
 .hero-stats {
@@ -2965,7 +2975,10 @@ button { font-family: inherit; }
   .hero-media video { object-position: center 38%; }
   .hero-media-scrim {
     background:
-      linear-gradient(180deg, rgba(4, 18, 12, .82) 0%, rgba(4, 18, 12, .38) 24%, rgba(4, 18, 12, .58) 52%, rgba(4, 18, 12, .94) 100%);
+      linear-gradient(180deg, rgba(4, 18, 12, .8) 0%, rgba(4, 18, 12, .34) 22%, rgba(4, 18, 12, .52) 50%, rgba(4, 18, 12, .9) 100%);
+  }
+  .hero-video::after {
+    background: linear-gradient(180deg, rgba(4, 18, 12, .55) 0%, rgba(4, 18, 12, .1) 22%, rgba(4, 18, 12, .25) 48%, rgba(4, 18, 12, .72) 82%, rgba(4, 18, 12, .92) 100%);
   }
   .hero-video-tag { top: 14px; left: 14px; bottom: auto; font-size: 11px; padding: 6px 10px; }
   .hero-controls { top: 12px; right: 12px; bottom: auto; }
