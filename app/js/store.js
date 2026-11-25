@@ -381,6 +381,33 @@ export class Store {
         for (const code of roomCodes) await this.adapter.put('roomCodes', code);
       }
     }
+    await this._migrateAdminPhone(accounts);
+  }
+
+  /**
+   * The 대표(최고관리자) login number changed 010-4400-8369 → 010-9900-8369.
+   * Devices that already stored the old demo seed keep every existing record;
+   * only the admin account's number is moved to the new value.
+   */
+  async _migrateAdminPhone(accounts) {
+    const LEGACY_PHONE = '01044008369';
+    const NEW_PHONE = '01099008369';
+    const NEW_PHONE_PRETTY = '010-9900-8369';
+    const rows = accounts || (await this.adapter.getAll('accounts'));
+    if (!rows.length) return;
+    const taken = new Set(rows.map((row) => normalizePhone(row.phone)));
+    for (const row of rows) {
+      if (normalizePhone(row.phone) !== LEGACY_PHONE) continue;
+      if (row.role !== 'admin' && row.id !== 'acc_admin_ceo') continue;
+      if (taken.has(NEW_PHONE)) continue;
+      await this.adapter.put('accounts', {
+        ...row,
+        phone: NEW_PHONE,
+        phonePretty: NEW_PHONE_PRETTY,
+        updatedAt: new Date().toISOString(),
+      });
+      taken.add(NEW_PHONE);
+    }
   }
 
   async _seedIfEmpty() {

@@ -9,7 +9,7 @@
  * "데모 계정" panel.
  */
 
-export const SEED_VERSION = 2;
+export const SEED_VERSION = 3;
 
 /** The three required photo categories for every site report. */
 export const PHOTO_GROUPS = [
@@ -292,8 +292,8 @@ export const DEMO_ACCOUNTS = [
     role: 'admin',
     name: '채종병',
     title: '대표',
-    phone: '01044008369',
-    phonePretty: '010-4400-8369',
+    phone: '01099008369',
+    phonePretty: '010-9900-8369',
     password: 'ceo2016',
     leaderCode: 'TL-2016',
     assignedSiteIds: ['site_hangwoon_tower', 'site_haneul_clinic', 'site_bodycamp'],
