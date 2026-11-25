@@ -259,6 +259,46 @@ export function createLeaderView(container) {
     `;
   }
 
+  function baselinePanelTemplate(site) {
+    const baseline = site.baseline || {};
+    const row = (key, num, label, hint, record) => {
+      const photos = (record && record.photos) || [];
+      return `
+        <div class="baseline-row">
+          <div class="baseline-row__who">
+            <strong>${num} ${esc(label)}</strong>
+            <span>${record && record.date ? esc(fmtDateLong(record.date)) : '날짜 미등록'} · ${photos.length}장</span>
+          </div>
+          <div class="baseline-row__thumbs">
+            ${photos
+              .slice(0, 4)
+              .map((photo) => `<img src="${esc(store.photoThumbUrl(photo))}" alt="${esc(photo.caption || label)}" loading="lazy" decoding="async">`)
+              .join('')}
+          </div>
+          <label class="btn btn--quiet btn--sm baseline-row__add">
+            사진 추가
+            <input type="file" accept="image/*" capture="environment" multiple hidden
+                   data-leader-baseline="${key}" data-site-id="${esc(site.id)}">
+          </label>
+          <p class="hint" style="margin:0">${esc(hint)}</p>
+        </div>`;
+    };
+
+    return `
+      <section class="panel">
+        <div class="section-head">
+          <h2>처음 상태 사진</h2>
+          <p>첫 견적 · 대청소</p>
+        </div>
+        <p class="tiny muted" style="margin:-6px 0 10px">
+          고객이 “예전 상태”와 비교할 수 있도록, 첫 견적(오염 상태)과 첫 대청소 후 사진을 현장에 남깁니다.
+        </p>
+        ${row('quote', '①', '첫 견적 · 오염 상태', '방문 견적 시점의 오염 상태를 남겨 주세요.', baseline.quote)}
+        ${row('deepClean', '②', '첫 청소 · 대청소', '첫 대청소를 마친 뒤 결과 사진을 남겨 주세요.', baseline.deepClean)}
+      </section>
+    `;
+  }
+
   function formTemplate(session, site) {
     const draft = ensureDraft(session, site);
     const meta = CATEGORY_META[site.category] || {};
@@ -266,6 +306,8 @@ export function createLeaderView(container) {
     return `
       ${leaderBarTemplate(session)}
       ${state.sent ? sentTemplate(state.sent) : ''}
+
+      ${baselinePanelTemplate(site)}
 
       <section class="panel">
         <div class="section-head">
@@ -527,6 +569,41 @@ export function createLeaderView(container) {
 
   /* ---------------- photos ---------------- */
 
+  async function addBaselinePhotos(siteId, stage, files) {
+    const site = await store.getSite(siteId);
+    if (!site) return;
+    const record = (site.baseline && site.baseline[stage]) || { date: '', note: '', photos: [] };
+    const added = [];
+    for (const file of Array.from(files || [])) {
+      try {
+        toast('사진 처리 중…', { duration: 1200 });
+        const prepared = await preparePhoto(file);
+        added.push(
+          await store.savePhoto({
+            dataUrl: prepared.dataUrl,
+            thumb: prepared.thumb,
+            width: prepared.width,
+            height: prepared.height,
+            caption: stage === 'quote' ? '첫 견적 · 오염 상태' : '첫 청소 · 대청소',
+          }),
+        );
+      } catch (error) {
+        console.warn('[leader] baseline photo failed', error);
+      }
+    }
+    if (!added.length) {
+      toast('사진을 추가하지 못했습니다. 다른 사진으로 시도해 주세요.', { tone: 'error' });
+      return;
+    }
+    await store.saveSiteBaseline(siteId, stage, {
+      photos: (record.photos || []).concat(added),
+      date: record.date || toISODate(),
+      note: record.note || (stage === 'quote' ? '첫 견적 방문 · 오염 상태 기록' : '첫 청소(대청소) 완료 기록'),
+    });
+    toast(`${stage === 'quote' ? '첫 견적(오염)' : '첫 청소(대청소)'} 사진 ${added.length}장을 현장에 저장했습니다.`);
+    await render();
+  }
+
   async function addFiles(groupKey, files) {
     const draft = state.draft;
     if (!draft || !files || !files.length) return;
@@ -719,6 +796,14 @@ export function createLeaderView(container) {
   async function onChange(event) {
     const target = event.target;
     const draft = state.draft;
+
+    const baselineInput = target.closest('[data-leader-baseline]');
+    if (baselineInput) {
+      const files = Array.from(baselineInput.files || []);
+      baselineInput.value = '';
+      await addBaselinePhotos(baselineInput.dataset.siteId, baselineInput.dataset.leaderBaseline, files);
+      return;
+    }
 
     const photoInput = target.closest('[data-photo-input]');
     if (photoInput) {

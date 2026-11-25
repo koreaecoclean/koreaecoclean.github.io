@@ -9,10 +9,18 @@
 import { $, esc, icons, toast, confirmDialog, copyText, setBusy } from '../ui.js';
 import { store } from '../store.js';
 import { CATEGORY_META } from '../seed.js';
+import { preparePhoto } from '../photos.js';
 import { getSession, loginAdmin, logout, demoAccounts } from '../auth.js';
 
 export function createAdminView(container) {
-  const state = { session: null, loginError: '', busy: false };
+  const state = {
+    session: null,
+    loginError: '',
+    busy: false,
+    newSiteOpen: false,
+    newSiteError: '',
+    newSite: { quote: [], deepClean: [] },
+  };
   let mounted = false;
   let renderToken = 0;
 
@@ -76,7 +84,117 @@ export function createAdminView(container) {
     `;
   }
 
+  function newSitePanelTemplate(leaders) {
+    const newSite = state.newSite || { quote: [], deepClean: [] };
+    const photoRow = (key, label, hint) => `
+      <div class="field">
+        <label>${label}</label>
+        <div class="new-site-photos" data-new-photos="${key}">
+          ${(newSite[key] || [])
+            .map((photo) => `<img src="${esc(photo.thumb || photo.dataUrl || '')}" alt="${esc(label)}" decoding="async">`)
+            .join('')}
+          <label class="new-site-photos__add">
+            <span>+</span>
+            <input type="file" accept="image/*" capture="environment" multiple hidden data-new-baseline="${key}">
+          </label>
+        </div>
+        <span class="field__hint">${hint}</span>
+      </div>`;
+
+    const categoryOptions = Object.entries(CATEGORY_META)
+      .map(([key, meta]) => `<option value="${esc(key)}">${esc(meta.label)}</option>`)
+      .join('');
+
+    return `
+      <details class="settings new-site" ${state.newSiteOpen ? 'open' : ''}>
+        <summary>+ 새 현장 등록</summary>
+        <div class="settings__body">
+          <form class="form" id="new-site-form" novalidate>
+            <div class="field">
+              <label for="ns-name">현장명 · 상호 <span class="req">*</span></label>
+              <input class="input" id="ns-name" type="text" placeholder="예: (주) 라이트하우스코스메틱" maxlength="60">
+            </div>
+            <div class="field">
+              <label for="ns-category">업종</label>
+              <select class="select" id="ns-category">${categoryOptions}</select>
+            </div>
+            <div class="field">
+              <label for="ns-address">주소</label>
+              <input class="input" id="ns-address" type="text" placeholder="서울특별시 마포구 양화로 108, 7층" maxlength="120">
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="ns-biz">사업자번호</label>
+                <input class="input" id="ns-biz" type="text" inputmode="numeric" placeholder="000-00-00000" maxlength="20">
+              </div>
+              <div class="field">
+                <label for="ns-ceo">대표자</label>
+                <input class="input" id="ns-ceo" type="text" placeholder="예: 신성민, 윤한수" maxlength="40">
+              </div>
+            </div>
+            <div class="field">
+              <label for="ns-tax">세금계산서 이메일</label>
+              <input class="input" id="ns-tax" type="email" inputmode="email" placeholder="예: skltm0518@gmail.com" maxlength="60">
+            </div>
+            <div class="field">
+              <label for="ns-contact">담당자명</label>
+              <input class="input" id="ns-contact" type="text" placeholder="예: 신성민 대표" maxlength="40">
+            </div>
+            <div class="field">
+              <label>담당 팀장</label>
+              <div class="check-list check-list--compact">
+                ${
+                  leaders.length
+                    ? leaders
+                        .map(
+                          (leader) => `
+                          <label class="check-item">
+                            <input type="checkbox" data-new-leader="${esc(leader.id)}">
+                            <span>${esc(leader.name)} ${esc(leader.title || '팀장')}</span>
+                          </label>`,
+                        )
+                        .join('')
+                    : '<p class="tiny muted">등록된 팀장이 없습니다.</p>'
+                }
+              </div>
+            </div>
+            ${photoRow('quote', '① 첫 견적 사진 (오염 상태)', '지금 상태 그대로를 남깁니다. 나중에 고객이 비교해 볼 수 있습니다.')}
+            ${photoRow('deepClean', '② 첫 청소 사진 (대청소)', '첫 대청소 완료 후 사진입니다.')}
+            ${state.newSiteError ? `<p class="field__error">${esc(state.newSiteError)}</p>` : ''}
+            <button class="btn btn--primary btn--block" type="submit">현장 저장</button>
+            <p class="hint">저장하면 현장 카드가 생기고 바로 1회용 청소코드를 발급할 수 있습니다.</p>
+          </form>
+        </div>
+      </details>`;
+  }
+
   /* ---------------- dashboard ---------------- */
+
+  function baselineAdminTemplate(site) {
+    const baseline = site.baseline || {};
+    const stage = (key, label, record) => `
+      <div class="baseline-row">
+        <div class="baseline-row__who">
+          <strong>${label}</strong>
+          <span>${record && record.date ? formatStamp(record.date) : '날짜 미등록'} · ${(record && record.photos ? record.photos.length : 0)}장</span>
+        </div>
+        <div class="baseline-row__thumbs">
+          ${((record && record.photos) || [])
+            .slice(0, 3)
+            .map((photo) => `<img src="${esc(store.photoThumbUrl(photo))}" alt="${esc(photo.caption || label)}" loading="lazy" decoding="async">`)
+            .join('')}
+        </div>
+        <label class="link-btn baseline-row__add">
+          사진 추가
+          <input type="file" accept="image/*" multiple hidden data-baseline-input="${key}" data-site-id="${esc(site.id)}">
+        </label>
+      </div>`;
+    return `
+      <div class="baseline-admin">
+        ${stage('quote', '① 첫 견적 · 오염 상태', baseline.quote)}
+        ${stage('deepClean', '② 첫 청소 · 대청소', baseline.deepClean)}
+      </div>`;
+  }
 
   function siteCodeCardTemplate(site, codes) {
     const unused = codes.filter((code) => !code.usedAt);
@@ -92,6 +210,14 @@ export function createAdminView(container) {
           </div>
           <span class="badge ${unused.length ? 'badge--done' : 'badge--wait'}">미사용 ${unused.length}</span>
         </div>
+
+        ${
+          site.bizNumber || site.ceoName || site.taxEmail
+            ? `<p class="site-biz">사업자 ${esc(site.bizNumber || '-')} · 대표 ${esc(site.ceoName || '-')}${site.taxEmail ? ` · 세금계산서 ${esc(site.taxEmail)}` : ''}</p>`
+            : ''
+        }
+
+        ${baselineAdminTemplate(site)}
 
         <ul class="code-list">
           ${codes.length
@@ -180,6 +306,14 @@ export function createAdminView(container) {
 
       <section>
         <div class="section-head">
+          <h2>현장</h2>
+          <p>${sites.length}곳</p>
+        </div>
+        ${newSitePanelTemplate(leaders)}
+      </section>
+
+      <section>
+        <div class="section-head">
           <h2>1회용 청소코드</h2>
           <p>현장별 발급 · 사용 확인</p>
         </div>
@@ -263,7 +397,160 @@ export function createAdminView(container) {
 
   /* ---------------- events ---------------- */
 
+  /* ---------------- new site ---------------- */
+
+  async function appendBaselinePhotos(siteId, stage, files) {
+    const site = await store.getSite(siteId);
+    if (!site) return;
+    const existing = (site.baseline && site.baseline[stage] && site.baseline[stage].photos) || [];
+    const added = [];
+    for (const file of Array.from(files || [])) {
+      try {
+        toast('사진 처리 중…', { duration: 1200 });
+        const prepared = await preparePhoto(file);
+        const ref = await store.savePhoto({
+          dataUrl: prepared.dataUrl,
+          thumb: prepared.thumb,
+          width: prepared.width,
+          height: prepared.height,
+          caption: stage === 'quote' ? '첫 견적 · 오염 상태' : '첫 청소 · 대청소',
+        });
+        added.push(ref);
+      } catch (error) {
+        console.warn('[admin] baseline photo failed', error);
+      }
+    }
+    if (!added.length) {
+      toast('사진을 추가하지 못했습니다. 다른 사진으로 시도해 주세요.', { tone: 'error' });
+      return;
+    }
+    const today = new Date();
+    const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    await store.saveSiteBaseline(siteId, stage, {
+      photos: existing.concat(added),
+      date: (site.baseline && site.baseline[stage] && site.baseline[stage].date) || date,
+      note:
+        (site.baseline && site.baseline[stage] && site.baseline[stage].note) ||
+        (stage === 'quote' ? '첫 견적 방문 · 오염 상태 기록' : '첫 청소(대청소) 완료 기록'),
+    });
+    await render();
+    toast(`${stage === 'quote' ? '첫 견적(오염)' : '첫 청소(대청소)'} 사진 ${added.length}장을 저장했습니다.`);
+  }
+
+  async function addNewSitePhotos(stage, files) {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    const box = $(`[data-new-photos="${stage}"]`, container);
+    for (const file of list) {
+      try {
+        toast('사진 처리 중…', { duration: 1200 });
+        const prepared = await preparePhoto(file);
+        state.newSite[stage].push(prepared);
+        state.newSiteOpen = true;
+        if (box) {
+          const img = document.createElement('img');
+          img.src = prepared.thumb;
+          img.alt = stage === 'quote' ? '첫 견적 사진' : '첫 청소 사진';
+          img.decoding = 'async';
+          const addButton = $('.new-site-photos__add', box);
+          if (addButton) box.insertBefore(img, addButton);
+          else box.appendChild(img);
+        }
+      } catch (error) {
+        console.warn('[admin] new site photo failed', error);
+      }
+    }
+    toast('사진을 추가했습니다. 현장 저장을 누르면 함께 저장됩니다.');
+  }
+
+  async function submitNewSite(event) {
+    event.preventDefault();
+    state.newSiteError = '';
+    state.newSiteOpen = true;
+
+    const name = $('#ns-name', container)?.value.trim() || '';
+    if (!name) {
+      state.newSiteError = '현장명(상호)을 입력해 주세요.';
+      await render();
+      return;
+    }
+
+    const leaderIds = Array.from(container.querySelectorAll('[data-new-leader]'))
+      .filter((input) => input.checked)
+      .map((input) => input.dataset.newLeader);
+
+    const today = new Date();
+    const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+    try {
+      const site = await store.addSite({
+        name,
+        category: $('#ns-category', container)?.value || 'office',
+        address: $('#ns-address', container)?.value || '',
+        bizNumber: $('#ns-biz', container)?.value || '',
+        ceoName: $('#ns-ceo', container)?.value || '',
+        taxEmail: $('#ns-tax', container)?.value || '',
+        contactName: $('#ns-contact', container)?.value || '',
+        leaderIds,
+      });
+
+      for (const stage of ['quote', 'deepClean']) {
+        const prepared = state.newSite[stage] || [];
+        if (!prepared.length) continue;
+        const refs = [];
+        for (const photo of prepared) {
+          refs.push(
+            await store.savePhoto({
+              dataUrl: photo.dataUrl,
+              thumb: photo.thumb,
+              width: photo.width,
+              height: photo.height,
+              caption: stage === 'quote' ? '첫 견적 · 오염 상태' : '첫 청소 · 대청소',
+            }),
+          );
+        }
+        await store.saveSiteBaseline(site.id, stage, {
+          photos: refs,
+          date: todayISO,
+          note: stage === 'quote' ? '첫 견적 방문 · 오염 상태 기록' : '첫 청소(대청소) 완료 기록',
+        });
+      }
+
+      state.newSite = { quote: [], deepClean: [] };
+      state.newSiteOpen = false;
+      await render();
+      toast(`${site.name} 현장을 등록했습니다. 아래에서 1회용 코드를 발급하세요.`);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (error) {
+      state.newSiteError = error.message || '현장을 등록하지 못했습니다.';
+      await render();
+    }
+  }
+
+  async function onChange(event) {
+    const newPhoto = event.target.closest('[data-new-baseline]');
+    if (newPhoto) {
+      const files = Array.from(newPhoto.files || []);
+      newPhoto.value = '';
+      await addNewSitePhotos(newPhoto.dataset.newBaseline, files);
+      return;
+    }
+
+    const baselinePhoto = event.target.closest('[data-baseline-input]');
+    if (baselinePhoto) {
+      const files = Array.from(baselinePhoto.files || []);
+      baselinePhoto.value = '';
+      await appendBaselinePhotos(baselinePhoto.dataset.siteId, baselinePhoto.dataset.baselineInput, files);
+    }
+  }
+
+  /* ---------------- events ---------------- */
+
   async function onSubmit(event) {
+    if (event.target.id === 'new-site-form') {
+      await submitNewSite(event);
+      return;
+    }
     if (event.target.id !== 'admin-login') return;
     event.preventDefault();
     state.loginError = '';
@@ -382,6 +669,7 @@ export function createAdminView(container) {
     if (mounted) return;
     container.addEventListener('submit', onSubmit);
     container.addEventListener('click', onClick);
+    container.addEventListener('change', onChange);
     mounted = true;
   }
 

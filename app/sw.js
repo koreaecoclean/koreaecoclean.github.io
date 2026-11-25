@@ -7,7 +7,7 @@
    Bump CACHE_VERSION whenever shell files change.
    ============================================================ */
 
-const CACHE_VERSION = 'v2.0.5';
+const CACHE_VERSION = 'v2.1.0';
 const CACHE_NAME = `kec-shell-${CACHE_VERSION}`;
 
 const PRECACHE = [
@@ -41,6 +41,9 @@ const PRECACHE = [
   './assets/samples/photo-7-lounge.jpg',
   './assets/samples/photo-lock.jpg',
   './assets/samples/photo-issue.jpg',
+  './assets/samples/photo-quote-office.jpg',
+  './assets/samples/photo-quote-clinic.jpg',
+  './assets/samples/photo-quote-fitness.jpg',
   './assets/samples/thumbs/photo-1-office.jpg',
   './assets/samples/thumbs/photo-2-meeting.jpg',
   './assets/samples/thumbs/photo-3-clinic.jpg',
@@ -50,6 +53,9 @@ const PRECACHE = [
   './assets/samples/thumbs/photo-7-lounge.jpg',
   './assets/samples/thumbs/photo-lock.jpg',
   './assets/samples/thumbs/photo-issue.jpg',
+  './assets/samples/thumbs/photo-quote-office.jpg',
+  './assets/samples/thumbs/photo-quote-clinic.jpg',
+  './assets/samples/thumbs/photo-quote-fitness.jpg',
 ];
 
 self.addEventListener('install', (event) => {

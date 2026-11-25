@@ -9,7 +9,7 @@
  * "데모 계정" panel.
  */
 
-export const SEED_VERSION = 4;
+export const SEED_VERSION = 5;
 
 /** The three required photo categories for every site report. */
 export const PHOTO_GROUPS = [
@@ -160,11 +160,19 @@ const P = {
   clinic: () => photo('photo-3-clinic', '진료실 · 시술 베드'),
   clinicLounge: () => photo('photo-4-clinic-lounge', '대기 라운지'),
   gym: () => photo('photo-5-gym', '운동기구 존 · 바닥'),
+  dirtyOffice: (caption = '첫 견적 · 바닥 오염 상태') => photo('photo-quote-office', caption),
+  dirtyClinic: (caption = '첫 견적 · 대기실 오염 상태') => photo('photo-quote-clinic', caption),
+  dirtyGym: (caption = '첫 견적 · 기구 · 바닥 오염 상태') => photo('photo-quote-fitness', caption),
 };
 
 /* ------------------------------------------------------------------ */
 /* sites                                                               */
 /* ------------------------------------------------------------------ */
+
+/** 첫 상태 기록: ① 견적 시점(오염) → ② 대청소 직후. */
+function baselineStage(date, note, photos) {
+  return { date: date || '', note, photos: photos || [] };
+}
 
 export function buildSites() {
   return [
@@ -185,6 +193,15 @@ export function buildSites() {
       contactName: '정하윤 총무',
       checklist: DEFAULT_CHECKLISTS.office,
       locked: true,
+      baseline: {
+        quote: baselineStage('2024-03-04', '첫 견적 방문 · 바닥 먼지와 사무용품 잡동사니가 쌓여 있었습니다.', [
+          P.dirtyOffice('첫 견적 · 바닥 오염과 적치물'),
+        ]),
+        deepClean: baselineStage('2024-03-11', '첫 청소(대청소) 완료 · 책상·의자·바닥까지 정리했습니다.', [
+          P.office(),
+          P.meeting(),
+        ]),
+      },
     },
     {
       id: 'site_haneul_clinic',
@@ -203,6 +220,15 @@ export function buildSites() {
       contactName: '김소연 실장',
       checklist: DEFAULT_CHECKLISTS.clinic,
       locked: true,
+      baseline: {
+        quote: baselineStage('2023-08-28', '첫 견적 · 대기실 바닥 얼룩과 먼지가 많았습니다.', [
+          P.dirtyClinic('첫 견적 · 대기실 바닥 오염'),
+        ]),
+        deepClean: baselineStage('2023-09-04', '첫 청소(대청소) 완료 · 진료실·대기실 바닥 소독까지 마쳤습니다.', [
+          P.clinic(),
+          P.clinicLounge(),
+        ]),
+      },
     },
     {
       id: 'site_bodycamp',
@@ -221,6 +247,38 @@ export function buildSites() {
       contactName: '박준호 관장',
       checklist: DEFAULT_CHECKLISTS.fitness,
       locked: true,
+      baseline: {
+        quote: baselineStage('2024-12-30', '첫 견적 · 매트 먼지와 기구 주변 때가 누적되어 있었습니다.', [
+          P.dirtyGym('첫 견적 · 기구 주변 오염'),
+        ]),
+        deepClean: baselineStage('2025-01-06', '첫 청소(대청소) 완료 · 매트·기구·배수구까지 정리했습니다.', [P.gym()]),
+      },
+    },
+    {
+      // 실제 고객사 — 사업자등록증(195-81-00480) 기준으로 등록한 현장.
+      id: 'site_lighthouse',
+      code: 'EC-4108',
+      name: '(주) 라이트하우스코스메틱',
+      clientName: '(주) 라이트하우스코스메틱',
+      category: 'office',
+      address: '서울특별시 마포구 양화로 108, 7층(서교동, 비금빌딩)',
+      area: '',
+      frequency: '주 1회 (일정 협의)',
+      intervalDays: 7,
+      startDate: daysAgo(0),
+      manager: '박희승',
+      managerRole: '본부장',
+      accessNote: '첫 방문 일정 협의 중 · 7층 사무실',
+      contactName: '신성민 대표',
+      bizNumber: '195-81-00480',
+      ceoName: '신성민, 윤한수',
+      taxEmail: 'skltm0518@gmail.com',
+      checklist: DEFAULT_CHECKLISTS.office,
+      locked: true,
+      baseline: {
+        quote: baselineStage('', '현장 방문 후 첫 견적 사진(오염 상태)을 등록해 주세요.', []),
+        deepClean: baselineStage('', '첫 대청소 후 사진을 등록해 주세요.', []),
+      },
     },
   ];
 }
@@ -296,7 +354,7 @@ export const DEMO_ACCOUNTS = [
     phonePretty: '010-4994-1638',
     password: 'team1234',
     leaderCode: 'TL-1638',
-    assignedSiteIds: ['site_hangwoon_tower', 'site_haneul_clinic', 'site_bodycamp'],
+    assignedSiteIds: ['site_hangwoon_tower', 'site_haneul_clinic', 'site_bodycamp', 'site_lighthouse'],
     active: true,
   },
   {
@@ -308,7 +366,7 @@ export const DEMO_ACCOUNTS = [
     phonePretty: '010-9900-8369',
     password: 'ceo2016',
     leaderCode: 'TL-2016',
-    assignedSiteIds: ['site_hangwoon_tower', 'site_haneul_clinic', 'site_bodycamp'],
+    assignedSiteIds: ['site_hangwoon_tower', 'site_haneul_clinic', 'site_bodycamp', 'site_lighthouse'],
     active: true,
   },
 ];
@@ -377,6 +435,15 @@ export function buildRoomCodes() {
       usedAt: null,
       usedBy: null,
       note: '데모용 미사용 코드',
+    },
+    {
+      id: 'rc_lighthouse_unused',
+      siteId: 'site_lighthouse',
+      code: 'C-9K4M2P',
+      issuedAt: daysAgoISO(0),
+      usedAt: null,
+      usedBy: null,
+      note: '라이트하우스코스메틱 첫 입장 코드',
     },
   ];
 }

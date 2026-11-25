@@ -343,6 +343,100 @@ export function createCustomerView(container) {
 
   /* ---------------- room markup ---------------- */
 
+  /* ---------------- 처음부터 지금까지 (3단계 비교) ---------------- */
+
+  function baselinePhotoGrid(stage, stageRecord) {
+    const photos = stageRecord.photos || [];
+    if (!photos.length) {
+      return `<div class="compare__empty">${stage === 'quote' ? '첫 견적 사진 준비 중' : '대청소 사진 준비 중'}</div>`;
+    }
+    return `
+      <div class="compare__photos">
+        ${photos
+          .slice(0, 4)
+          .map(
+            (photo, index) => `
+              <button class="photo-btn" type="button" data-baseline-stage="${esc(stage)}" data-baseline-index="${index}"
+                      aria-label="${esc(photo.caption || '첫 상태 사진')} 크게 보기">
+                <img src="${esc(store.photoThumbUrl(photo))}" alt="${esc(photo.caption || '첫 상태 사진')}" loading="lazy" decoding="async">
+              </button>`,
+          )
+          .join('')}
+      </div>
+    `;
+  }
+
+  function regularStageBody(stats) {
+    const latest = stats.last;
+    if (!latest) return '<div class="compare__empty">정기 관리 기록 준비 중</div>';
+    const photos = [];
+    for (const group of PHOTO_GROUPS) {
+      (latest.photos?.[group.key] || []).forEach((photo, index) => {
+        photos.push({ photo, group: group.key, index });
+      });
+    }
+    const visible = photos.slice(0, 4);
+    if (!visible.length) return '<div class="compare__empty">정기 관리 사진 준비 중</div>';
+    return `
+      <div class="compare__photos">
+        ${visible
+          .map(
+            ({ photo, group, index }) => `
+              <button class="photo-btn" type="button" data-photo-report="${esc(latest.id)}"
+                      data-photo-group="${esc(group)}" data-photo-index="${index}"
+                      aria-label="${esc(photo.caption || '정기 관리 사진')} 크게 보기">
+                <img src="${esc(store.photoThumbUrl(photo))}" alt="${esc(photo.caption || '정기 관리 사진')}" loading="lazy" decoding="async">
+              </button>`,
+          )
+          .join('')}
+      </div>
+    `;
+  }
+
+  function compareTemplate(site, stats) {
+    const baseline = site.baseline || {};
+    const quote = baseline.quote || { date: '', note: '', photos: [] };
+    const deepClean = baseline.deepClean || { date: '', note: '', photos: [] };
+    const latest = stats.last;
+
+    const stageCard = (key, num, title, tag, record, body) => `
+      <article class="compare__stage compare__stage--${key}">
+        <header class="compare__head">
+          <span class="compare__num" aria-hidden="true">${num}</span>
+          <strong>${esc(title)}</strong>
+          <span class="compare__tag">${esc(tag)}</span>
+        </header>
+        <p class="compare__date">${record && record.date ? esc(fmtDateLong(record.date)) : '날짜 미등록'}</p>
+        ${body}
+        ${record && record.note ? `<p class="compare__note">${esc(record.note)}</p>` : ''}
+      </article>
+    `;
+
+    return `
+      <section class="compare">
+        <div class="section-head">
+          <h2>처음부터 지금까지</h2>
+          <p>상태 비교</p>
+        </div>
+        <p class="tiny muted" style="margin:-4px 0 12px">
+          처음 견적 때의 상태와 대청소 후, 그리고 지금 관리되고 있는 모습을 사진으로 비교할 수 있습니다. 사진을 누르면 크게 보입니다.
+        </p>
+        <div class="compare__stages">
+          ${stageCard('quote', '①', '첫 견적', '오염 상태', quote, baselinePhotoGrid('quote', quote))}
+          ${stageCard('deepclean', '②', '첫 청소', '대청소', deepClean, baselinePhotoGrid('deepClean', deepClean))}
+          ${stageCard(
+            'regular',
+            '③',
+            '이후 정기 관리',
+            latest ? `${fmtMonthDay(latest.date)} 최근` : '진행 중',
+            latest ? { date: latest.date, note: '' } : { date: '', note: '' },
+            regularStageBody(stats),
+          )}
+        </div>
+      </section>
+    `;
+  }
+
   function roomTemplate(site, stats, viewer) {
     const meta = CATEGORY_META[site.category] || {};
     const last = stats.last;
@@ -374,6 +468,8 @@ export function createCustomerView(container) {
           ${viewer.preview ? '' : '<button class="link-btn" type="button" data-action="logout">로그아웃</button>'}
         </div>
       </section>
+
+      ${compareTemplate(site, stats)}
 
       <section class="panel">
         <dl class="kv kv--left">
@@ -513,6 +609,29 @@ export function createCustomerView(container) {
 
   /* ---------------- lightbox ---------------- */
 
+  async function showBaselinePhotos(stage, startIndex) {
+    const site = state.site;
+    const record = site && site.baseline ? site.baseline[stage] : null;
+    const photos = (record && record.photos) || [];
+    if (!photos.length) return;
+    const items = [];
+    for (const photo of photos) {
+      const url = await store.photoFullUrl(photo);
+      if (!url) continue;
+      items.push({
+        url,
+        caption: [stage === 'quote' ? '① 첫 견적 · 오염 상태' : '② 첫 청소 · 대청소', photo.caption || '', record.date ? fmtDateLong(record.date) : '']
+          .filter(Boolean)
+          .join(' · '),
+      });
+    }
+    if (!items.length) {
+      toast('사진을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.', { tone: 'error' });
+      return;
+    }
+    openLightbox(items, Math.min(startIndex, items.length - 1));
+  }
+
   async function showPhotos(reportId, groupKey, startIndex) {
     const report = reportsById.get(reportId);
     if (!report) return;
@@ -620,6 +739,12 @@ export function createCustomerView(container) {
     if (filterButton) {
       state.filter = filterButton.dataset.filter;
       await render();
+      return;
+    }
+
+    const baselinePhoto = event.target.closest('[data-baseline-stage]');
+    if (baselinePhoto) {
+      await showBaselinePhotos(baselinePhoto.dataset.baselineStage, Number(baselinePhoto.dataset.baselineIndex) || 0);
       return;
     }
 

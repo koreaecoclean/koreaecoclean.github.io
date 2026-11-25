@@ -19,7 +19,7 @@
  * 서버 스키마: supabase-schema.sql
  */
 
-import { buildSeedData, SEED_VERSION, DEMO_ACCOUNTS } from './seed.js';
+import { buildSeedData, buildSites, buildRoomCodes, SEED_VERSION, DEMO_ACCOUNTS, DEFAULT_CHECKLISTS } from './seed.js';
 
 const DB_NAME = 'korea-ecoclean';
 const DB_VERSION = 2;
@@ -87,6 +87,28 @@ function normalizePhotos(photos) {
 function normalizeReport(report) {
   if (!report) return report;
   return { ...report, photos: normalizePhotos(report.photos), issueNote: report.issueNote || '' };
+}
+
+/** A site's 첫 상태 기록: ① 첫 견적(오염) ② 첫 청소(대청소). */
+export const BASELINE_STAGES = ['quote', 'deepClean'];
+
+export function normalizeBaseline(baseline) {
+  const source = baseline && typeof baseline === 'object' ? baseline : {};
+  const out = {};
+  for (const stage of BASELINE_STAGES) {
+    const value = source[stage] && typeof source[stage] === 'object' ? source[stage] : {};
+    out[stage] = {
+      date: value.date || '',
+      note: value.note || '',
+      photos: Array.isArray(value.photos) ? value.photos : [],
+    };
+  }
+  return out;
+}
+
+function normalizeSite(site) {
+  if (!site) return site;
+  return { ...site, baseline: normalizeBaseline(site.baseline) };
 }
 
 function isQuotaError(error) {
@@ -351,8 +373,8 @@ export class Store {
 
   async _init() {
     await this.adapter.init();
-    await this._migrate();
     await this._seedIfEmpty();
+    await this._migrate();
     return this;
   }
 
@@ -390,8 +412,77 @@ export class Store {
       }
     }
     await this._migrateAdminPhone(accounts);
+    await this._ensureSeedSites();
     await this._ensureSeedAccounts();
     await this._ensureSeedGrants();
+    await this._ensureSeedAssignments();
+    await this._ensureSeedCodes();
+    await this._ensureSiteBaseline();
+  }
+
+  /** Sites added to the seed later (a real client, for example) reach older devices. */
+  async _ensureSeedSites() {
+    const sites = await this.adapter.getAll('sites');
+    if (!sites.length) return; // an empty store is filled by _seedIfEmpty()
+    const ids = new Set(sites.map((site) => site.id));
+    const codes = new Set(sites.map((site) => normalizeCode(site.code)));
+    for (const site of buildSites()) {
+      if (ids.has(site.id) || codes.has(normalizeCode(site.code))) continue;
+      await this.adapter.put('sites', JSON.parse(JSON.stringify(site)));
+      ids.add(site.id);
+      codes.add(normalizeCode(site.code));
+    }
+  }
+
+  /** Seeded team leaders keep every site the seed assigns them, including new ones. */
+  async _ensureSeedAssignments() {
+    const accounts = await this.adapter.getAll('accounts');
+    if (!accounts.length) return;
+    const siteIds = new Set((await this.adapter.getAll('sites')).map((site) => site.id));
+    for (const account of accounts) {
+      const seed = DEMO_ACCOUNTS.find((row) => row.id === account.id);
+      if (!seed || !seed.assignedSiteIds) continue;
+      const current = new Set(account.assignedSiteIds || []);
+      const missing = seed.assignedSiteIds.filter((id) => siteIds.has(id) && !current.has(id));
+      if (!missing.length) continue;
+      await this.adapter.put('accounts', {
+        ...account,
+        assignedSiteIds: [...current, ...missing],
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  /** One-time codes that come with the seed exist on older devices too. */
+  async _ensureSeedCodes() {
+    const codes = await this.adapter.getAll('roomCodes');
+    const siteIds = new Set((await this.adapter.getAll('sites')).map((site) => site.id));
+    const existing = new Set(codes.map((row) => normalizeCode(row.code)));
+    for (const code of buildRoomCodes()) {
+      if (!siteIds.has(code.siteId) || existing.has(normalizeCode(code.code))) continue;
+      await this.adapter.put('roomCodes', { ...code });
+      existing.add(normalizeCode(code.code));
+    }
+  }
+
+  /** Every site carries its 첫 상태 기록(견적·대청소) so the customer can compare. */
+  async _ensureSiteBaseline() {
+    const sites = await this.adapter.getAll('sites');
+    if (!sites.length) return;
+    const seedById = new Map(buildSites().map((site) => [site.id, site]));
+    for (const site of sites) {
+      const hasBoth = site.baseline && site.baseline.quote && site.baseline.deepClean;
+      if (hasBoth) continue;
+      const seed = seedById.get(site.id);
+      const baseline = normalizeBaseline(site.baseline);
+      for (const stage of BASELINE_STAGES) {
+        if (site.baseline && site.baseline[stage]) continue;
+        if (seed && seed.baseline && seed.baseline[stage]) {
+          baseline[stage] = JSON.parse(JSON.stringify(seed.baseline[stage]));
+        }
+      }
+      await this.adapter.put('sites', { ...site, baseline });
+    }
   }
 
   /**
@@ -493,11 +584,111 @@ export class Store {
 
   async listSites() {
     const sites = await this.adapter.getAll('sites');
-    return sites.sort((a, b) => String(a.code).localeCompare(String(b.code)));
+    return sites.map(normalizeSite).sort((a, b) => String(a.code).localeCompare(String(b.code)));
   }
 
   async getSite(id) {
-    return this.adapter.get('sites', id);
+    return normalizeSite(await this.adapter.get('sites', id));
+  }
+
+  /**
+   * Register a site from the admin screen (a new contract, a real client, ...).
+   * Business registration details are kept with the site and shown in the app.
+   */
+  async addSite(input = {}) {
+    const name = String(input.name || '').trim();
+    if (!name) throw new StoreError('name-empty', '현장명(상호)을 입력해 주세요.');
+
+    const category = Object.prototype.hasOwnProperty.call(DEFAULT_CHECKLISTS, input.category) ? input.category : 'office';
+    const sites = await this.adapter.getAll('sites');
+    const taken = new Set(sites.map((site) => normalizeCode(site.code)));
+    let code = '';
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const candidate = `EC-${1000 + Math.floor(Math.random() * 9000)}`;
+      if (!taken.has(normalizeCode(candidate))) {
+        code = candidate;
+        break;
+      }
+    }
+    if (!code) throw new StoreError('code-collision', '현장 코드를 만들지 못했습니다. 다시 시도해 주세요.');
+
+    const today = new Date();
+    const startDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const site = {
+      id: uid('site'),
+      code,
+      name,
+      clientName: String(input.clientName || name).trim(),
+      category,
+      address: String(input.address || '').trim(),
+      area: String(input.area || '').trim(),
+      frequency: String(input.frequency || '주 1회 (일정 협의)').trim(),
+      intervalDays: Number(input.intervalDays) || 7,
+      startDate: String(input.startDate || startDate),
+      manager: String(input.manager || '').trim(),
+      managerRole: String(input.managerRole || '팀장').trim(),
+      accessNote: String(input.accessNote || '').trim(),
+      contactName: String(input.contactName || '').trim(),
+      bizNumber: String(input.bizNumber || '').trim(),
+      ceoName: String(input.ceoName || '').trim(),
+      taxEmail: String(input.taxEmail || '').trim(),
+      checklist: (DEFAULT_CHECKLISTS[category] || DEFAULT_CHECKLISTS.office).slice(),
+      locked: true,
+      baseline: normalizeBaseline(input.baseline),
+      createdAt: new Date().toISOString(),
+      source: 'app',
+    };
+
+    await this.adapter.put('sites', site);
+    await this.assignLeadersToSite(site.id, input.leaderIds || []);
+    this._notify();
+    return site;
+  }
+
+  async updateSite(id, patch = {}) {
+    const site = await this.getSite(id);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const next = { ...site, ...patch, id: site.id, updatedAt: new Date().toISOString() };
+    if (patch.baseline) next.baseline = normalizeBaseline(patch.baseline);
+    await this.adapter.put('sites', next);
+    this._notify();
+    return next;
+  }
+
+  /** Give the chosen team leaders this site (never removes their other sites). */
+  async assignLeadersToSite(siteId, leaderIds = []) {
+    const wanted = new Set((leaderIds || []).filter(Boolean));
+    if (!wanted.size) return [];
+    const accounts = await this.adapter.getAll('accounts');
+    const updated = [];
+    for (const account of accounts) {
+      if (account.role !== 'leader' || !wanted.has(account.id)) continue;
+      const current = new Set(account.assignedSiteIds || []);
+      if (current.has(siteId)) continue;
+      current.add(siteId);
+      const next = { ...account, assignedSiteIds: [...current], updatedAt: new Date().toISOString() };
+      await this.adapter.put('accounts', next);
+      updated.push(next);
+    }
+    return updated;
+  }
+
+  /** Save the 첫 견적(오염) or 첫 청소(대청소) record of a site. */
+  async saveSiteBaseline(siteId, stage, patch = {}) {
+    if (!BASELINE_STAGES.includes(stage)) throw new StoreError('bad-stage', '사진 단계를 확인해 주세요.');
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const baseline = normalizeBaseline(site.baseline);
+    const current = baseline[stage];
+    baseline[stage] = {
+      date: patch.date !== undefined ? String(patch.date) : current.date,
+      note: patch.note !== undefined ? String(patch.note) : current.note,
+      photos: Array.isArray(patch.photos) ? patch.photos.slice() : current.photos,
+    };
+    const next = { ...site, baseline, updatedAt: new Date().toISOString() };
+    await this.adapter.put('sites', next);
+    this._notify();
+    return next;
   }
 
   async findSiteByCode(code) {
