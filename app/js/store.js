@@ -382,6 +382,28 @@ export class Store {
       }
     }
     await this._migrateAdminPhone(accounts);
+    await this._ensureSeedAccounts();
+  }
+
+  /**
+   * Accounts added to the seed after a device already had data (새 팀장 계정 등) must
+   * appear on devices that ran an older build. Only an account whose `id` and phone
+   * number are both absent is added — idempotent and non-destructive: existing
+   * accounts (including deactivated ones), reports, codes, grants and sessions are
+   * never touched.
+   */
+  async _ensureSeedAccounts() {
+    const rows = await this.adapter.getAll('accounts');
+    if (!rows.length) return; // no accounts yet: _seedIfEmpty() writes the full seed
+    const ids = new Set(rows.map((row) => row.id));
+    const phones = new Set(rows.map((row) => normalizePhone(row.phone)));
+    const { accounts: seedAccounts } = buildSeedData();
+    for (const account of seedAccounts) {
+      if (ids.has(account.id) || phones.has(normalizePhone(account.phone))) continue;
+      await this.adapter.put('accounts', account);
+      ids.add(account.id);
+      phones.add(normalizePhone(account.phone));
+    }
   }
 
   /**
