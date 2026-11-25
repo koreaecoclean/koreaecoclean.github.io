@@ -3520,7 +3520,7 @@ button { font-family: inherit; }
 .client-card {
   display: grid;
   place-items: center;
-  min-height: 96px;
+  min-height: 100px;
   padding: 18px 20px;
   background: #fff;
   border: 1px solid var(--line);
@@ -3535,7 +3535,7 @@ button { font-family: inherit; }
 }
 .client-card img {
   max-width: 100%;
-  max-height: 38px;
+  max-height: 40px;
   width: auto;
   height: auto;
   object-fit: contain;
@@ -3553,7 +3553,10 @@ button { font-family: inherit; }
   line-height: 1.7;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1080px) {
+  .clients-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
   .clients-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
