@@ -321,6 +321,21 @@ export function buildAccounts() {
   }));
 }
 
+/**
+ * Demo customer accounts already hold their room access, so an existing client
+ * only needs to type the phone number that was registered for the site.
+ */
+export function buildGrants() {
+  return DEMO_ACCOUNTS.filter((account) => account.role === 'customer' && account.siteId).map((account) => ({
+    id: `${account.id}::${account.siteId}`,
+    accountId: account.id,
+    siteId: account.siteId,
+    codeId: '',
+    createdAt: daysAgoISO(120),
+    source: 'seed',
+  }));
+}
+
 /* ------------------------------------------------------------------ */
 /* one-time cleaning codes                                             */
 /* ------------------------------------------------------------------ */
@@ -506,5 +521,6 @@ export function buildSeedData() {
     reports: buildReports(sites),
     accounts: buildAccounts(),
     roomCodes: buildRoomCodes(),
+    grants: buildGrants(),
   };
 }

@@ -1,12 +1,13 @@
 /* ============================================================
    코리아 에코크린 PWA — service worker
    - Pre-caches the app shell so the app opens offline.
-   - Navigations: network first, cached index.html as fallback.
-   - Static assets: cache first, refreshed in the background.
+   - App code (HTML · JS · CSS · JSON): network first, so a deploy reaches
+     phones immediately and a stale shell can never mix with new code.
+   - Images / assets: cache first, refreshed in the background.
    Bump CACHE_VERSION whenever shell files change.
    ============================================================ */
 
-const CACHE_VERSION = 'v2.0.2';
+const CACHE_VERSION = 'v2.0.3';
 const CACHE_NAME = `kec-shell-${CACHE_VERSION}`;
 
 const PRECACHE = [
@@ -94,16 +95,22 @@ self.addEventListener('message', (event) => {
 async function networkFirst(request) {
   const cache = await caches.open(CACHE_NAME);
   try {
-    const response = await fetch(request);
-    if (response && response.ok) cache.put('./index.html', response.clone());
+    const response = await fetch(request, { cache: 'no-store' });
+    if (response && response.ok) {
+      cache.put(request, response.clone());
+      if (request.mode === 'navigate') cache.put('./index.html', response.clone());
+    }
     return response;
   } catch (error) {
-    const cached = (await cache.match(request)) || (await cache.match('./index.html'));
+    const cached = (await cache.match(request, { ignoreSearch: true })) || (await cache.match('./index.html'));
     if (cached) return cached;
-    return new Response(
-      '<!doctype html><meta charset="utf-8"><p style="font-family:sans-serif;padding:24px">오프라인 상태입니다. 연결 후 다시 시도해 주세요.</p>',
-      { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
-    );
+    if (request.mode === 'navigate') {
+      return new Response(
+        '<!doctype html><meta charset="utf-8"><p style="font-family:sans-serif;padding:24px">오프라인 상태입니다. 연결 후 다시 시도해 주세요.</p>',
+        { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+      );
+    }
+    return new Response('', { status: 504, statusText: 'Offline' });
   }
 }
 
@@ -130,6 +137,17 @@ async function cacheFirst(request) {
   }
 }
 
+/* App code must never be served stale — a phone that keeps an old seed.js or
+   store.js cannot log in after a deploy. Images and fonts can stay cached. */
+const NETWORK_FIRST_EXT = /\.(?:html?|js|mjs|css|json|webmanifest)$/i;
+
+function isAppCode(request) {
+  if (request.mode === 'navigate') return true;
+  const url = new URL(request.url);
+  if (url.pathname.endsWith('/')) return true;
+  return NETWORK_FIRST_EXT.test(url.pathname);
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
@@ -137,10 +155,5 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  if (request.mode === 'navigate') {
-    event.respondWith(networkFirst(request));
-    return;
-  }
-
-  event.respondWith(cacheFirst(request));
+  event.respondWith(isAppCode(request) ? networkFirst(request) : cacheFirst(request));
 });

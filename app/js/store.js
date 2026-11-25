@@ -19,7 +19,7 @@
  * 서버 스키마: supabase-schema.sql
  */
 
-import { buildSeedData, SEED_VERSION } from './seed.js';
+import { buildSeedData, SEED_VERSION, DEMO_ACCOUNTS } from './seed.js';
 
 const DB_NAME = 'korea-ecoclean';
 const DB_VERSION = 2;
@@ -57,6 +57,14 @@ export function normalizeCode(value) {
 
 export function normalizePhone(value) {
   return String(value || '').replace(/[^0-9]/g, '');
+}
+
+/** 01012345678 → 010-1234-5678 (best effort, any other length returned as digits). */
+export function prettyPhone(value) {
+  const digits = normalizePhone(value);
+  if (digits.length === 11) return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+  if (digits.length === 10) return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+  return digits;
 }
 
 export function countReportPhotos(report) {
@@ -383,6 +391,38 @@ export class Store {
     }
     await this._migrateAdminPhone(accounts);
     await this._ensureSeedAccounts();
+    await this._ensureSeedGrants();
+  }
+
+  /**
+   * Customers now enter their room with the registered phone number alone, so the
+   * demo client accounts must already hold their room grant. On a device that ran
+   * an older build (where the grant came from redeeming a code) this only adds a
+   * missing grant; nothing else is rewritten.
+   */
+  async _ensureSeedGrants() {
+    const accounts = await this.adapter.getAll('accounts');
+    if (!accounts.length) return;
+    const grants = await this.adapter.getAll('grants');
+    const existing = new Set(grants.map((row) => row.id));
+    for (const account of accounts) {
+      if (account.role !== 'customer' || !account.siteId) continue;
+      const id = `${account.id}::${account.siteId}`;
+      if (existing.has(id)) continue;
+      const seeded = DEMO_ACCOUNTS.some((row) => row.id === account.id && row.role === 'customer');
+      if (!seeded) continue;
+      const site = await this.adapter.get('sites', account.siteId);
+      if (!site) continue;
+      await this.adapter.put('grants', {
+        id,
+        accountId: account.id,
+        siteId: account.siteId,
+        codeId: '',
+        createdAt: new Date().toISOString(),
+        source: 'seed',
+      });
+      existing.add(id);
+    }
   }
 
   /**
@@ -440,11 +480,12 @@ export class Store {
   }
 
   async _writeSeed() {
-    const { sites, reports, accounts, roomCodes } = buildSeedData();
+    const { sites, reports, accounts, roomCodes, grants } = buildSeedData();
     for (const site of sites) await this.adapter.put('sites', site);
     for (const report of reports) await this.adapter.put('reports', report);
     for (const account of accounts) await this.adapter.put('accounts', account);
     for (const code of roomCodes) await this.adapter.put('roomCodes', code);
+    for (const grant of grants) await this.adapter.put('grants', grant);
     await this.setSetting('seedVersion', SEED_VERSION);
   }
 
@@ -697,6 +738,76 @@ export class Store {
     const grant = await this.createGrant(account.id, account.siteId, found.id);
     this._notify();
     return { code: { ...found, usedAt, usedBy: account.id }, grant };
+  }
+
+  /**
+   * Enter a customer room with a one-time code (first visit, or an extra person
+   * joining an existing room). The code is consumed; the phone number becomes a
+   * customer account for that site when it is new, and gets room access.
+   */
+  async enterCustomerRoomWithCode({ phone, code, name = '', title = '' }) {
+    const digits = normalizePhone(phone);
+    if (!digits) throw new StoreError('phone-empty', '전화번호를 입력해 주세요.');
+    const needle = normalizeCode(code);
+    if (!needle) throw new StoreError('code-required', '1회용 코드를 입력해 주세요.');
+
+    const rows = await this.adapter.getAll('roomCodes');
+    const found = rows.find((row) => normalizeCode(row.code) === needle);
+    if (!found) {
+      throw new StoreError('code-not-found', '등록되지 않은 청소코드입니다. 코드를 다시 확인해 주세요.');
+    }
+    if (found.usedAt) {
+      throw new StoreError(
+        'code-used',
+        '이미 사용된 코드입니다. 추가 인원은 관리자에게 새 1회용 코드를 발급받아 주세요.',
+      );
+    }
+    const site = await this.getSite(found.siteId);
+    if (!site) throw new StoreError('no-site', '코드에 연결된 현장을 찾을 수 없습니다.');
+
+    const accounts = await this.adapter.getAll('accounts');
+    let account = accounts.find((row) => row.role === 'customer' && normalizePhone(row.phone) === digits) || null;
+    if (account && account.active === false) {
+      throw new StoreError('inactive', '사용이 중지된 번호입니다. 관리자에게 문의해 주세요.');
+    }
+    if (account && account.siteId && account.siteId !== site.id) {
+      throw new StoreError('other-site', '이미 다른 현장에 등록된 번호입니다. 담당자에게 문의해 주세요.');
+    }
+
+    if (!account) {
+      // "이수민 실장" → 이름 이수민 · 직함 실장
+      let nameValue = String(name || '').trim();
+      let titleValue = String(title || '').trim();
+      if (!titleValue && /\s/.test(nameValue)) {
+        const parts = nameValue.split(/\s+/);
+        nameValue = parts[0];
+        titleValue = parts.slice(1).join(' ');
+      }
+      account = {
+        id: uid('acc_customer'),
+        role: 'customer',
+        name: nameValue || `고객 ${digits.slice(-4)}`,
+        title: titleValue || '담당자',
+        phone: digits,
+        phonePretty: prettyPhone(digits),
+        password: '',
+        siteId: site.id,
+        active: true,
+        createdAt: new Date().toISOString(),
+        source: 'code',
+      };
+      await this.adapter.put('accounts', account);
+    } else if (account.siteId !== site.id) {
+      account = { ...account, siteId: site.id, updatedAt: new Date().toISOString() };
+      await this.adapter.put('accounts', account);
+    }
+
+    const usedAt = new Date().toISOString();
+    const consumed = { ...found, usedAt, usedBy: account.id };
+    await this.adapter.put('roomCodes', consumed);
+    const grant = await this.createGrant(account.id, site.id, found.id);
+    this._notify();
+    return { account, site, grant, code: consumed };
   }
 
   /* ---------------- room access grants ---------------- */

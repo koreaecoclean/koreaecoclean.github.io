@@ -11,7 +11,7 @@
  * 역할(role)을 서버에서 검증하세요. README 7장 참고.
  */
 
-import { store, normalizeCode, normalizePhone } from './store.js';
+import { store, normalizeCode, normalizePhone, prettyPhone } from './store.js';
 import { DEMO_ACCOUNTS } from './seed.js';
 
 export const SESSION_KEY = 'session';
@@ -96,24 +96,44 @@ export async function logout() {
 /* logins                                                              */
 /* ------------------------------------------------------------------ */
 
-export async function loginCustomer({ phone, password }) {
+export async function loginCustomer({ phone, code = '', name = '', title = '' }) {
   const digits = normalizePhone(phone);
   if (!digits) throw new AuthError('phone-empty', '전화번호를 입력해 주세요.');
-  if (!password) throw new AuthError('password-empty', '비밀번호를 입력해 주세요.');
 
-  const account = await store.findAccountByPhone(digits, 'customer');
-  if (!account) throw new AuthError('no-account', '등록된 전화번호가 아닙니다. 담당자에게 문의해 주세요.');
-  await requireActive(account, 'customer');
-  if (!verifyPassword(account, password)) {
-    throw new AuthError('bad-password', '비밀번호가 일치하지 않습니다.');
+  const account = await store.findAccountByPhone(digits);
+  if (account && account.role !== 'customer') {
+    throw new AuthError('staff-phone', '팀장·대표 번호로는 고객 방에 입장할 수 없습니다. 담당자에게 문의해 주세요.');
   }
-  return startSession(account);
+  if (account) {
+    await requireActive(account, 'customer');
+    // Already registered with room access → the phone number alone opens the room.
+    if (account.siteId && (await store.getGrant(account.id, account.siteId))) {
+      return startSession(account);
+    }
+    if (!normalizeCode(code)) {
+      throw new AuthError(
+        'code-required',
+        '아직 방 입장 전인 번호입니다. 관리자에게 발급받은 1회용 코드를 함께 입력해 주세요.',
+      );
+    }
+    const entered = await store.enterCustomerRoomWithCode({ phone: digits, code, name, title });
+    return startSession(entered.account);
+  }
+
+  if (!normalizeCode(code)) {
+    throw new AuthError(
+      'code-required',
+      '처음 이용하시는 번호입니다. 관리자에게 발급받은 1회용 코드를 함께 입력해 주세요.',
+    );
+  }
+  const entered = await store.enterCustomerRoomWithCode({ phone: digits, code, name, title });
+  return startSession(entered.account);
 }
 
 export async function loginStaff({ phone, password, leaderCode }) {
   const digits = normalizePhone(phone);
   if (!digits) throw new AuthError('phone-empty', '전화번호를 입력해 주세요.');
-  if (!password) throw new AuthError('password-empty', '비밀번호를 입력해 주세요.');
+  if (!String(password || '').trim()) throw new AuthError('password-empty', '비밀번호를 입력해 주세요.');
   if (!normalizeCode(leaderCode)) throw new AuthError('code-empty', '팀장 고유코드를 입력해 주세요.');
 
   const account = await store.findAccountByPhone(digits);
@@ -121,7 +141,7 @@ export async function loginStaff({ phone, password, leaderCode }) {
     throw new AuthError('no-account', '등록된 팀장 계정이 아닙니다.');
   }
   await requireActive(account);
-  if (!verifyPassword(account, password)) {
+  if (!verifyPassword(account, String(password).trim())) {
     throw new AuthError('bad-password', '비밀번호가 일치하지 않습니다.');
   }
   if (!account.leaderCode || normalizeCode(account.leaderCode) !== normalizeCode(leaderCode)) {
@@ -138,7 +158,7 @@ export async function loginAdmin({ phone, password }) {
     throw new AuthError('no-account', '대표(관리자) 계정이 아닙니다.');
   }
   await requireActive(account, 'admin');
-  if (!verifyPassword(account, password)) {
+  if (!verifyPassword(account, String(password || '').trim())) {
     throw new AuthError('bad-password', '비밀번호가 일치하지 않습니다.');
   }
   return startSession(account);
@@ -179,6 +199,24 @@ export function demoAccounts() {
     leaderCode: account.leaderCode || '',
     siteId: account.siteId || '',
   }));
+}
+
+/** Customers already registered on this device (phone number alone opens the room). */
+export async function demoRegisteredCustomers() {
+  const accounts = await store.listAccounts({ role: 'customer' });
+  const sites = await store.listSites();
+  const siteById = new Map(sites.map((site) => [site.id, site]));
+  return accounts.map((account) => {
+    const site = siteById.get(account.siteId) || null;
+    return {
+      name: account.name,
+      title: account.title || '',
+      phone: account.phonePretty || prettyPhone(account.phone),
+      siteId: account.siteId || '',
+      siteName: site ? site.name : '',
+      siteCode: site ? site.code : '',
+    };
+  });
 }
 
 /** Room codes seeded for the demo (shown next to each demo customer account). */

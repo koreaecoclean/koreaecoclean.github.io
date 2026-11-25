@@ -12,7 +12,7 @@ import { createAdminView } from './views/admin.js';
 
 const TAB_NAMES = ['home', 'customer', 'leader', 'admin'];
 const TAB_TITLES = {
-  home: '코리아 에코크린 · 홈 상담',
+  home: '코리아 에코크린 · 현장 청소 기록',
   customer: '청소 확인 · 코리아 에코크린',
   leader: '현장 보고 · 코리아 에코크린',
   admin: '관리 · 코리아 에코크린',
@@ -165,7 +165,7 @@ function registerServiceWorker() {
 
   window.addEventListener('load', async () => {
     try {
-      const registration = await navigator.serviceWorker.register('sw.js', { scope: './' });
+      const registration = await navigator.serviceWorker.register('sw.js', { scope: './', updateViaCache: 'none' });
 
       const announceUpdate = (worker) => {
         if (!worker || !navigator.serviceWorker.controller) return;

@@ -23,7 +23,15 @@ import {
 } from '../ui.js';
 import { store, countReportPhotos } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
-import { getSession, loginCustomer, logout, hasRoomAccess, redeemRoomCode, demoAccounts, demoRoomCodes } from '../auth.js';
+import {
+  getSession,
+  loginCustomer,
+  logout,
+  hasRoomAccess,
+  redeemRoomCode,
+  demoRoomCodes,
+  demoRegisteredCustomers,
+} from '../auth.js';
 
 const FILTERS = [
   { key: 'all', label: '전체' },
@@ -71,60 +79,74 @@ export function createCustomerView(container) {
 
   /* ---------------- login ---------------- */
 
-  function demoPanelTemplate(onlyCustomer = true) {
-    const rows = demoAccounts().filter((row) => (onlyCustomer ? row.role === 'customer' : true));
+  function demoPanelTemplate(registered) {
+    const rows = registered || [];
     return `
       <details class="demo-panel">
-        <summary>데모 계정 보기 (테스트용)</summary>
+        <summary>등록된 번호 · 미사용 코드 보기</summary>
         <div class="demo-panel__body">
-          <p class="tiny muted">아래 값은 데모용입니다. 실제 운영에서는 서버 인증으로 교체하세요.</p>
-          ${rows
-            .map(
-              (row) => `
+          <p class="tiny muted">
+            이미 등록된 번호는 전화번호만 입력하면 바로 입장합니다. 새 번호는 아래 미사용 1회용 코드를 함께 입력하세요.
+          </p>
+          ${
+            rows.length
+              ? rows
+                  .map(
+                    (row) => `
               <div class="demo-row">
                 <div>
-                  <strong>${esc(row.roleLabel)} · ${esc(row.name)} ${esc(row.title || '')}</strong>
-                  <span>${esc(row.phone)} / ${esc(row.password)}${row.leaderCode ? ` / 코드 ${esc(row.leaderCode)}` : ''}</span>
+                  <strong>${esc(row.name)} ${esc(row.title || '')}</strong>
+                  <span>${esc(row.phone)} · ${esc(row.siteName)}${row.siteCode ? ` (${esc(row.siteCode)})` : ''}</span>
                 </div>
-                <button class="link-btn" type="button" data-fill-login="${esc(row.phone)}|${esc(row.password)}" data-role="${esc(row.role)}">입력</button>
+                <button class="link-btn" type="button" data-fill-phone="${esc(row.phone)}">번호 입력</button>
               </div>`,
-            )
-            .join('')}
+                  )
+                  .join('')
+              : '<p class="tiny muted">아직 등록된 번호가 없습니다.</p>'
+          }
+          <div id="demo-code-list"><p class="tiny muted">미사용 코드 불러오는 중…</p></div>
         </div>
       </details>
     `;
   }
 
-  function loginTemplate() {
+  function loginTemplate(registered) {
     return `
       <section class="panel auth-card">
-        <span class="eyebrow">${icons.clipboard} 고객용 · A고객사 전용 방</span>
+        <span class="eyebrow">${icons.clipboard} 고객사 전용 방</span>
         <h2>우리 현장 청소 기록</h2>
         <p class="tiny muted">
-          계약 시 안내받은 <strong>전화번호</strong>와 <strong>비밀번호</strong>로 입장합니다.
-          입장 후 담당자에게 받은 <strong>1회용 청소코드</strong>를 한 번 입력하면 우리 현장 방이 열립니다.
+          <strong>등록된 번호</strong>는 전화번호만 입력하면 바로 입장합니다.
+          처음 오신 분(추가 인원 포함)은 대표가 발급한 <strong>1회용 청소코드</strong>를 함께 입력해 주세요.
+          코드는 한 번만 사용할 수 있습니다.
         </p>
         <form class="form" id="customer-login" style="margin-top:14px" novalidate>
           <div class="field">
-            <label for="cust-phone">전화번호</label>
-            <input class="input" id="cust-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="010-0000-0000">
+            <label for="cust-phone">전화번호 <span class="req">*</span></label>
+            <input class="input" id="cust-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="010-0000-0000" required>
           </div>
           <div class="field">
-            <label for="cust-password">비밀번호</label>
-            <input class="input" id="cust-password" type="password" autocomplete="current-password" placeholder="비밀번호">
+            <label for="cust-code">1회용 청소코드 <span class="tiny muted">(처음 한 번만)</span></label>
+            <input class="input" id="cust-code" type="text" inputmode="text" autocomplete="off" spellcheck="false"
+                   placeholder="예: C-7F3K9Q" maxlength="12">
+            <span class="field__hint">등록된 번호는 비워 두고 입장하세요.</span>
+          </div>
+          <div class="field">
+            <label for="cust-name">이름 <span class="tiny muted">(선택)</span></label>
+            <input class="input" id="cust-name" type="text" autocomplete="name" placeholder="예: 정하윤 총무" maxlength="20">
           </div>
           ${state.loginError ? `<p class="field__error">${esc(state.loginError)}</p>` : ''}
-          <button class="btn btn--primary btn--block" type="submit">로그인</button>
+          <button class="btn btn--primary btn--block" type="submit">입장</button>
         </form>
-        ${demoPanelTemplate()}
+        ${demoPanelTemplate(registered)}
       </section>
 
       <section class="panel">
-        <div class="section-head"><h2>1회용 청소코드가 뭔가요?</h2></div>
+        <div class="section-head"><h2>입장 방법</h2></div>
         <div class="steps">
-          <div class="step"><span class="step__num">1</span><div><strong>코드 발급</strong><span>코리아 에코크린 대표가 현장별로 1회용 코드를 발급합니다.</span></div></div>
-          <div class="step"><span class="step__num">2</span><div><strong>한 번만 인증</strong><span>받은 코드를 한 번 입력하면 사용 완료 처리됩니다.</span></div></div>
-          <div class="step"><span class="step__num">3</span><div><strong>우리 방만 보임</strong><span>다른 고객사 기록은 보이지 않습니다.</span></div></div>
+          <div class="step"><span class="step__num">1</span><div><strong>등록된 번호</strong><span>전화번호만 입력하면 우리 현장 전용 방이 열립니다.</span></div></div>
+          <div class="step"><span class="step__num">2</span><div><strong>처음 · 추가 인원</strong><span>대표에게 받은 1회용 코드를 함께 입력합니다. 코드는 한 번만 사용됩니다.</span></div></div>
+          <div class="step"><span class="step__num">3</span><div><strong>우리 방만 보임</strong><span>방에는 우리 현장의 청소 보고만 표시됩니다.</span></div></div>
         </div>
       </section>
     `;
@@ -401,7 +423,10 @@ export function createCustomerView(container) {
 
     if (!session || session.role !== 'customer') {
       state.session = null;
-      container.innerHTML = loginTemplate();
+      const registered = await demoRegisteredCustomers().catch(() => []);
+      if (token !== renderToken) return;
+      container.innerHTML = loginTemplate(registered);
+      await fillDemoCodes();
       return;
     }
 
@@ -518,26 +543,29 @@ export function createCustomerView(container) {
 
   /* ---------------- events ---------------- */
 
-  function fillLoginFields(phone, password) {
+  function fillPhoneField(phone) {
     const phoneInput = $('#cust-phone', container);
-    const passwordInput = $('#cust-password', container);
-    if (phoneInput) phoneInput.value = phone;
-    if (passwordInput) passwordInput.value = password;
-    if (phoneInput) phoneInput.focus({ preventScroll: true });
+    if (phoneInput) {
+      phoneInput.value = phone;
+      phoneInput.focus({ preventScroll: true });
+    }
   }
 
   async function onSubmit(event) {
     if (event.target.id === 'customer-login') {
       event.preventDefault();
       const phone = $('#cust-phone', container)?.value || '';
-      const password = $('#cust-password', container)?.value || '';
+      const code = $('#cust-code', container)?.value || '';
+      const nameRaw = $('#cust-name', container)?.value || '';
+      const [name, ...rest] = nameRaw.trim().split(/\s+/);
       state.loginError = '';
       try {
-        const session = await loginCustomer({ phone, password });
-        toast(`${session.name}님, 로그인했습니다.`);
+        const session = await loginCustomer({ phone, code, name, title: rest.join(' ') });
+        toast(`${session.name}님, ${session.title || ''} · 우리 현장 방에 입장했습니다.`);
         await render();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       } catch (error) {
-        state.loginError = error.message || '로그인에 실패했습니다.';
+        state.loginError = error.message || '입장에 실패했습니다.';
         await render();
         const phoneInput = $('#cust-phone', container);
         if (phoneInput) phoneInput.focus();
@@ -565,16 +593,15 @@ export function createCustomerView(container) {
   }
 
   async function onClick(event) {
-    const fill = event.target.closest('[data-fill-login]');
+    const fill = event.target.closest('[data-fill-phone]');
     if (fill) {
-      const [phone, password] = fill.dataset.fillLogin.split('|');
-      fillLoginFields(phone, password);
+      fillPhoneField(fill.dataset.fillPhone);
       return;
     }
 
     const fillCode = event.target.closest('[data-fill-code]');
     if (fillCode) {
-      const input = $('#room-code', container);
+      const input = $('#room-code', container) || $('#cust-code', container);
       if (input) {
         input.value = fillCode.dataset.fillCode;
         input.focus({ preventScroll: true });
