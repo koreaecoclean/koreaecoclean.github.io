@@ -297,6 +297,23 @@
       return checked ? checked.value : '';
     }
 
+    var isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+    /* iOS는 ?body, 그 외는 ?body — 하이픈 없는 번호를 사용합니다 */
+    function smsHref(text) {
+      var sep = isIOSDevice ? '&' : '?';
+      return 'sms:050713178369' + sep + 'body=' + encodeURIComponent(text);
+    }
+
+    function copyText(text, done) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done); });
+      } else {
+        fallbackCopy(text, done);
+      }
+    }
+
     function buildMessage() {
       var area = areaInput.value.trim();
       var tel = telInput.value.trim();
@@ -332,7 +349,7 @@
       resultBadge.textContent = '신청 내용';
       resultTitle.textContent = '적으신 내용이 여기에 정리됩니다';
       resultEmpty.hidden = false;
-      resultHelp.textContent = '‘상담 내용 확인하기’를 누르면 문자·복사 버튼이 활성화됩니다.';
+      resultHelp.textContent = '‘상담 신청하기’를 누르면 문자 앱이 열리고 신청 내용이 자동으로 복사됩니다.';
       setActive(false);
       renderPreview();
     }
@@ -382,22 +399,41 @@
       submitted = true;
 
       resultPanel.classList.add('is-done');
-      resultBadge.textContent = '접수 내용 확인';
-      resultTitle.textContent = '아래 내용으로 상담을 신청하시겠어요?';
+      resultBadge.textContent = '상담 신청';
+      resultTitle.textContent = '신청 내용을 문자 앱으로 보냅니다';
       resultText.textContent = currentText;
       resultEmpty.hidden = true;
-      resultHelp.textContent = '문자로 보내면 대표 번호(0507-1317-8369)로 바로 전송됩니다.';
+      resultHelp.textContent = '문자 앱이 열리면 전송 버튼을 눌러주세요. PC이거나 문자 앱이 열리지 않으면 아래 ‘내용 복사’ 후 0507-1317-8369로 보내주시거나 바로 전화 주세요.';
       setActive(true);
 
-      if (smsBtn) {
-        smsBtn.href = 'sms:0507-1317-8369?body=' + encodeURIComponent(currentText);
-      }
+      if (smsBtn) smsBtn.href = smsHref(currentText);
+
+      /* 내용은 미리 복사해 두고, 곧바로 문자 앱을 엽니다 */
+      copyText(currentText, function () {});
 
       if (window.innerWidth < 980) {
         resultPanel.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
       }
 
+      openSmsApp();
     });
+
+    function openSmsApp() {
+      var text = currentText || buildMessage();
+      if (smsBtn) smsBtn.href = smsHref(text);
+      try { window.location.href = smsHref(text); } catch (err) { /* 무시 */ }
+    }
+
+    if (smsBtn) {
+      smsBtn.addEventListener('click', function (e) {
+        if (smsBtn.getAttribute('aria-disabled') === 'true') {
+          e.preventDefault();
+          return;
+        }
+        e.preventDefault();
+        openSmsApp();
+      });
+    }
 
     if (copyBtn) {
       copyBtn.addEventListener('click', function () {
@@ -411,11 +447,7 @@
           }
         };
 
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done); });
-        } else {
-          fallbackCopy(text, done);
-        }
+        copyText(text, done);
       });
     }
 
