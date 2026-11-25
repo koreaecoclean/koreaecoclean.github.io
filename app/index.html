@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>코리아 에코크린 · 홈 상담</title>
+  <meta name="description" content="코리아 에코크린 — 사무실·병원·상가·헬스장 정기청소 상담과 현장 청소 기록 확인, 팀장용 현장 보고 앱.">
+  <meta name="theme-color" content="#14532d">
+  <meta name="color-scheme" content="light">
+  <meta name="format-detection" content="telephone=no">
+
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="에코크린">
+
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/icon-192.png" sizes="192x192" type="image/png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">본문으로 바로가기</a>
+
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <img class="brand__logo" src="assets/logo.png" alt="" width="34" height="34" decoding="async">
+        <div class="brand__text">
+          <strong>코리아 에코크린</strong>
+          <span>정기청소 관리 · SINCE 2016</span>
+        </div>
+      </div>
+      <div class="header__actions">
+        <span class="net-pill" id="net-pill" hidden>오프라인</span>
+        <button class="icon-btn" id="install-btn" type="button" hidden>앱 설치</button>
+      </div>
+    </header>
+
+    <main class="main" id="main">
+      <section class="view" id="view-home" role="tabpanel" aria-labelledby="tab-home" aria-label="홈 · 상담">
+        <div class="skeleton"></div>
+      </section>
+      <section class="view" id="view-customer" role="tabpanel" aria-labelledby="tab-customer" aria-label="청소 확인" hidden>
+        <div class="skeleton"></div>
+      </section>
+      <section class="view" id="view-leader" role="tabpanel" aria-labelledby="tab-leader" aria-label="현장 보고" hidden>
+        <div class="skeleton"></div>
+      </section>
+      <section class="view" id="view-admin" role="tabpanel" aria-labelledby="tab-admin" aria-label="관리" hidden>
+        <div class="skeleton"></div>
+      </section>
+    </main>
+
+    <nav class="tabbar" role="tablist" aria-label="주요 메뉴">
+      <button class="tab" type="button" role="tab" id="tab-home" aria-controls="view-home" data-tab="home" aria-selected="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3.5 10.5 12 3.8l8.5 6.7"/><path d="M5.6 9.6V20h12.8V9.6"/><path d="M9.7 20v-5.3h4.6V20"/>
+        </svg>
+        <span>홈 · 상담</span>
+      </button>
+      <button class="tab" type="button" role="tab" id="tab-customer" aria-controls="view-customer" data-tab="customer" aria-selected="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="5" y="4.5" width="14" height="16" rx="2.4"/><path d="M9 4.5V3.4h6v1.1"/><path d="M8.7 11h6.6M8.7 15h4.4"/>
+        </svg>
+        <span>청소 확인</span>
+      </button>
+      <button class="tab" type="button" role="tab" id="tab-leader" aria-controls="view-leader" data-tab="leader" aria-selected="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3.5 8.5h3l1.4-2.2h8.2L17.5 8.5h3v10.2h-17z"/><circle cx="12" cy="13.4" r="3.4"/>
+        </svg>
+        <span>현장 보고</span>
+      </button>
+      <button class="tab" type="button" role="tab" id="tab-admin" aria-controls="view-admin" data-tab="admin" aria-selected="false" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3.4 5 6.2v5.1c0 4.2 2.9 7.6 7 8.4 4.1-.8 7-4.2 7-8.4V6.2z"/><path d="M9.2 12.1l2 2 3.6-3.9"/>
+        </svg>
+        <span>관리</span>
+      </button>
+    </nav>
+  </div>
+
+  <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
+
+  <div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-label="현장 사진 크게 보기">
+    <div class="lightbox__bar">
+      <span id="lightbox-counter">1 / 1</span>
+      <button class="lightbox__close" id="lightbox-close" type="button" data-lb="close" aria-label="사진 닫기">×</button>
+    </div>
+    <div class="lightbox__stage" id="lightbox-stage" data-lb="stage">
+      <img id="lightbox-img" src="" alt="">
+    </div>
+    <div class="lightbox__foot">
+      <p class="lightbox__caption" id="lightbox-caption"></p>
+      <div class="lightbox__nav">
+        <button type="button" data-lb="prev" id="lightbox-prev" aria-label="이전 사진">‹</button>
+        <button type="button" data-lb="next" id="lightbox-next" aria-label="다음 사진">›</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dialog" id="dialog" hidden role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+    <div class="dialog__card">
+      <h3 id="dialog-title">확인</h3>
+      <p id="dialog-message"></p>
+      <div class="dialog__actions">
+        <button class="btn btn--quiet" id="dialog-cancel" type="button" data-dialog="cancel">취소</button>
+        <button class="btn btn--primary" id="dialog-ok" type="button" data-dialog="ok">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <noscript>
+    <div style="padding:24px;font-family:sans-serif;line-height:1.7">
+      <h1 style="font-size:18px">코리아 에코크린</h1>
+      <p>이 앱을 사용하려면 브라우저에서 JavaScript를 켜 주세요.</p>
+      <p>상담 전화 <a href="tel:050713178369">0507-1317-8369</a> · 이메일 koreaecoclean@naver.com</p>
+    </div>
+  </noscript>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
