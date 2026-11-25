@@ -84,6 +84,21 @@ export function relDayLabel(iso) {
   return null;
 }
 
+/** 1430000 → '1,430,000원' (whole won, no locale dependency). */
+export function fmtWon(value) {
+  const number = Number(value);
+  const rounded = Number.isFinite(number) ? Math.round(number) : 0;
+  const digits = String(Math.abs(rounded)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${rounded < 0 ? '-' : ''}${digits}원`;
+}
+
+/** 1430000 → '1,430,000' (no unit, for table cells). */
+export function fmtNumber(value) {
+  const number = Number(value);
+  const rounded = Number.isFinite(number) ? Math.round(number) : 0;
+  return String(Math.abs(rounded)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
 export function fmtBytes(bytes) {
   if (!bytes || bytes < 1024) return `${bytes || 0} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;

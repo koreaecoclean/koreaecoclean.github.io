@@ -6,8 +6,8 @@
  * - 고객 계정과 방 입장 상태 확인
  */
 
-import { $, esc, icons, toast, confirmDialog, copyText, setBusy } from '../ui.js';
-import { store } from '../store.js';
+import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber } from '../ui.js';
+import { store, netProfit } from '../store.js';
 import { CATEGORY_META } from '../seed.js';
 import { preparePhoto } from '../photos.js';
 import { getSession, loginAdmin, logout, demoAccounts } from '../auth.js';
@@ -20,6 +20,7 @@ export function createAdminView(container) {
     newSiteOpen: false,
     newSiteError: '',
     newSite: { quote: [], deepClean: [] },
+    openDetails: '',
   };
   let mounted = false;
   let renderToken = 0;
@@ -140,6 +141,56 @@ export function createAdminView(container) {
               <label for="ns-contact">담당자명</label>
               <input class="input" id="ns-contact" type="text" placeholder="예: 신성민 대표" maxlength="40">
             </div>
+
+            <p class="details-head">계약 정보 (관리자 전용 · 선택)</p>
+            <div class="field-row">
+              <div class="field">
+                <label for="ns-contract-amount">계약금(원)</label>
+                <input class="input" id="ns-contract-amount" type="number" inputmode="numeric" min="0" step="1000" placeholder="예: 2200000">
+              </div>
+              <div class="field">
+                <label for="ns-subcontract-amount">도급금액(원)</label>
+                <input class="input" id="ns-subcontract-amount" type="number" inputmode="numeric" min="0" step="1000" placeholder="예: 1430000">
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="ns-fee-amount">수수료(원)</label>
+                <input class="input" id="ns-fee-amount" type="number" inputmode="numeric" min="0" step="1000" placeholder="예: 110000">
+              </div>
+              <div class="field">
+                <label for="ns-contract-date">계약일</label>
+                <input class="input" id="ns-contract-date" type="date">
+              </div>
+            </div>
+            <div class="field">
+              <label for="ns-billing-day">청구일</label>
+              <input class="input" id="ns-billing-day" type="text" maxlength="20" placeholder="예: 매월 10일">
+            </div>
+            <div class="field">
+              <label for="ns-contract-note">비고</label>
+              <textarea class="textarea" id="ns-contract-note" rows="2" maxlength="300" placeholder="예: 월 단위 청구 · 부가세 별도"></textarea>
+            </div>
+
+            <p class="details-head">직원용 현장 정보 (팀장 화면에 표시)</p>
+            <div class="field">
+              <label for="ns-process">청소 공정</label>
+              <textarea class="textarea" id="ns-process" rows="3" placeholder="예: 책상 먼지 → 회의실 → 탕비실 → 화장실 → 바닥 → 유리"></textarea>
+            </div>
+            <div class="field">
+              <label for="ns-access-method">출입방법</label>
+              <textarea class="textarea" id="ns-access-method" rows="2" placeholder="예: 출근 전 07:00~08:30 · 관리사무소에서 카드 수령"></textarea>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="ns-trash-location">쓰레기 배출위치</label>
+                <textarea class="textarea" id="ns-trash-location" rows="2" placeholder="예: 5층 화장실 옆 분리수거함"></textarea>
+              </div>
+              <div class="field">
+                <label for="ns-parking-method">주차방법</label>
+                <textarea class="textarea" id="ns-parking-method" rows="2" placeholder="예: 지하 1층 30분 무료"></textarea>
+              </div>
+            </div>
             <div class="field">
               <label>담당 팀장</label>
               <div class="check-list check-list--compact">
@@ -196,6 +247,128 @@ export function createAdminView(container) {
       </div>`;
   }
 
+  /* ---------------- contract · field ops (admin only) ---------------- */
+
+  function revenueSummaryTemplate(summary) {
+    const { rows, totals } = summary;
+    return `
+      <section class="panel rev-panel" data-revenue-summary>
+        <div class="section-head">
+          <h2>전체 매출 정리</h2>
+          <p>${totals.sites}개 현장 합계</p>
+        </div>
+        <div class="rev-totals">
+          <div><span>계약금 합계</span><strong data-revenue-total="contractAmount">${esc(fmtWon(totals.contractAmount))}</strong></div>
+          <div><span>도급액 합계</span><strong data-revenue-total="subcontractAmount">${esc(fmtWon(totals.subcontractAmount))}</strong></div>
+          <div><span>수수료 합계</span><strong data-revenue-total="feeAmount">${esc(fmtWon(totals.feeAmount))}</strong></div>
+          <div class="rev-totals__net"><span>순수 매출금 합계</span><strong data-revenue-total="netProfit">${esc(fmtWon(totals.netProfit))}</strong></div>
+        </div>
+        <div class="rev-table">
+          <div class="rev-row rev-row--head" role="row">
+            <span>고객사 · 현장</span><span>계약금</span><span>도급액</span><span>수수료</span><span>순수 매출</span>
+          </div>
+          ${rows
+            .map(
+              (row) => `
+                <div class="rev-row" role="row" data-revenue-row="${esc(row.siteId)}">
+                  <span class="rev-name"><strong>${esc(row.clientName)}</strong><em>${esc(row.name)} · ${esc(row.code)}</em></span>
+                  <span data-rev-field="contractAmount">${esc(fmtNumber(row.contractAmount))}</span>
+                  <span data-rev-field="subcontractAmount">${esc(fmtNumber(row.subcontractAmount))}</span>
+                  <span data-rev-field="feeAmount">${esc(fmtNumber(row.feeAmount))}</span>
+                  <span class="rev-net" data-rev-field="netProfit">${esc(fmtNumber(row.netProfit))}</span>
+                </div>`,
+            )
+            .join('')}
+        </div>
+        <p class="hint">단위: 원. 순수 매출금 = 계약금 − 도급금액 − 수수료. 아래 현장 카드에서 금액을 바꾸면 이 합계도 함께 다시 계산됩니다.</p>
+      </section>`;
+  }
+
+  function siteMoneyLine(site) {
+    const contract = site.contract || {};
+    const net = netProfit(contract);
+    return `
+      <div class="site-money" data-site-money="${esc(site.id)}">
+        <span>계약금 <strong>${esc(fmtWon(contract.contractAmount))}</strong></span>
+        <span>도급 <strong>${esc(fmtWon(contract.subcontractAmount))}</strong></span>
+        <span>수수료 <strong>${esc(fmtWon(contract.feeAmount))}</strong></span>
+        <span class="site-money__net">순수 매출 <strong>${esc(fmtWon(net))}</strong></span>
+      </div>`;
+  }
+
+  function siteDetailsTemplate(site) {
+    const id = esc(site.id);
+    const contract = site.contract || {};
+    const ops = site.ops || {};
+    const net = netProfit(contract);
+    const amountField = (key, label, value) => `
+      <div class="field">
+        <label for="sd-${key}-${id}">${label}</label>
+        <input class="input" id="sd-${key}-${id}" type="number" inputmode="numeric" min="0" step="1000"
+               value="${esc(value)}" data-contract-field="${key}">
+      </div>`;
+    const opsField = (key, label, value, rows) => `
+      <div class="field">
+        <label for="so-${key}-${id}">${label}</label>
+        <textarea class="textarea" id="so-${key}-${id}" rows="${rows || 2}"
+                  data-ops-field="${key}">${esc(value)}</textarea>
+      </div>`;
+
+    return `
+      <details class="settings site-details" data-site-details="${id}" ${state.openDetails === site.id ? 'open' : ''}>
+        <summary>계약 · 운영 정보 관리</summary>
+        <div class="settings__body">
+          <div class="rev-mini">
+            <span>계약일 <strong>${contract.contractDate ? esc(contract.contractDate) : '미등록'}</strong></span>
+            <span>청구 <strong>${esc(contract.billingDay || '미등록')}</strong></span>
+            <span>순수 매출 <strong data-net-profit-view="${id}">${esc(fmtWon(net))}</strong></span>
+          </div>
+          <form class="form" data-site-details-form="${id}" novalidate>
+            <p class="details-head">계약 정보 (관리자 전용)</p>
+            <div class="field-row">
+              ${amountField('contractAmount', '계약금(원)', contract.contractAmount)}
+              ${amountField('subcontractAmount', '도급금액(원)', contract.subcontractAmount)}
+            </div>
+            <div class="field-row">
+              ${amountField('feeAmount', '수수료(원)', contract.feeAmount)}
+              <div class="field">
+                <label for="sd-net-${id}">순수 매출금 (자동 계산)</label>
+                <input class="input" id="sd-net-${id}" type="text" value="${esc(fmtWon(net))}"
+                       data-net-profit readonly aria-readonly="true">
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="sd-date-${id}">계약일</label>
+                <input class="input" id="sd-date-${id}" type="date" value="${esc(contract.contractDate)}"
+                       data-contract-field="contractDate">
+              </div>
+              <div class="field">
+                <label for="sd-billing-${id}">청구일</label>
+                <input class="input" id="sd-billing-${id}" type="text" maxlength="20" placeholder="예: 매월 10일"
+                       value="${esc(contract.billingDay)}" data-contract-field="billingDay">
+              </div>
+            </div>
+            <div class="field">
+              <label for="sd-note-${id}">비고</label>
+              <textarea class="textarea" id="sd-note-${id}" rows="2" maxlength="300"
+                        data-contract-field="note">${esc(contract.note)}</textarea>
+            </div>
+
+            <p class="details-head">직원용 현장 정보 (팀장 화면에 표시)</p>
+            ${opsField('process', '청소 공정', ops.process, 3)}
+            ${opsField('accessMethod', '출입방법', ops.accessMethod, 2)}
+            <div class="field-row">
+              ${opsField('trashLocation', '쓰레기 배출위치', ops.trashLocation, 2)}
+              ${opsField('parkingMethod', '주차방법', ops.parkingMethod, 2)}
+            </div>
+            <button class="btn btn--primary btn--sm" type="submit">계약 · 운영 정보 저장</button>
+            <p class="hint">도급금액은 팀장(현장) 화면에 표시됩니다. 계약금 · 수수료 · 순수 매출은 관리자만 볼 수 있습니다.</p>
+          </form>
+        </div>
+      </details>`;
+  }
+
   function siteCodeCardTemplate(site, codes) {
     const unused = codes.filter((code) => !code.usedAt);
     const used = codes.filter((code) => code.usedAt);
@@ -216,6 +389,9 @@ export function createAdminView(container) {
             ? `<p class="site-biz">사업자 ${esc(site.bizNumber || '-')} · 대표 ${esc(site.ceoName || '-')}${site.taxEmail ? ` · 세금계산서 ${esc(site.taxEmail)}` : ''}</p>`
             : ''
         }
+
+        ${siteMoneyLine(site)}
+        ${siteDetailsTemplate(site)}
 
         ${baselineAdminTemplate(site)}
 
@@ -279,6 +455,7 @@ export function createAdminView(container) {
     const leaders = accounts.filter((account) => account.role === 'leader');
     const customers = accounts.filter((account) => account.role === 'customer');
     const grants = await store.listGrants();
+    const revenue = await store.revenueSummary();
 
     const unusedTotal = codes.filter((code) => !code.usedAt).length;
     const usedTotal = codes.filter((code) => code.usedAt).length;
@@ -303,6 +480,8 @@ export function createAdminView(container) {
           <div><strong>${leaders.length}</strong><span>팀장</span></div>
         </div>
       </section>
+
+      ${revenueSummaryTemplate(revenue)}
 
       <section>
         <div class="section-head">
@@ -491,6 +670,20 @@ export function createAdminView(container) {
         ceoName: $('#ns-ceo', container)?.value || '',
         taxEmail: $('#ns-tax', container)?.value || '',
         contactName: $('#ns-contact', container)?.value || '',
+        contract: {
+          contractAmount: $('#ns-contract-amount', container)?.value || 0,
+          subcontractAmount: $('#ns-subcontract-amount', container)?.value || 0,
+          feeAmount: $('#ns-fee-amount', container)?.value || 0,
+          contractDate: $('#ns-contract-date', container)?.value || '',
+          billingDay: $('#ns-billing-day', container)?.value || '',
+          note: $('#ns-contract-note', container)?.value || '',
+        },
+        ops: {
+          process: $('#ns-process', container)?.value || '',
+          accessMethod: $('#ns-access-method', container)?.value || '',
+          trashLocation: $('#ns-trash-location', container)?.value || '',
+          parkingMethod: $('#ns-parking-method', container)?.value || '',
+        },
         leaderIds,
       });
 
@@ -544,9 +737,47 @@ export function createAdminView(container) {
     }
   }
 
+  /* ---------------- contract · field ops save ---------------- */
+
+  async function submitSiteDetails(form) {
+    const siteId = form.dataset.siteDetailsForm;
+    const contract = {};
+    const ops = {};
+    form.querySelectorAll('[data-contract-field]').forEach((input) => {
+      contract[input.dataset.contractField] = input.value;
+    });
+    form.querySelectorAll('[data-ops-field]').forEach((input) => {
+      ops[input.dataset.opsField] = input.value;
+    });
+    state.openDetails = siteId;
+    try {
+      const site = await store.updateSiteDetails(siteId, { contract, ops });
+      await render();
+      toast(`${site.name} 계약 · 운영 정보를 저장했습니다.`);
+    } catch (error) {
+      toast(error.message || '계약 정보를 저장하지 못했습니다.', { tone: 'error' });
+    }
+  }
+
+  function onInput(event) {
+    const form = event.target.closest('[data-site-details-form]');
+    if (!form) return;
+    const amount = (key) => Number($(`[data-contract-field="${key}"]`, form)?.value) || 0;
+    const net = amount('contractAmount') - amount('subcontractAmount') - amount('feeAmount');
+    const output = $('[data-net-profit]', form);
+    if (output) output.value = fmtWon(net);
+    const view = $(`[data-net-profit-view="${form.dataset.siteDetailsForm}"]`, container);
+    if (view) view.textContent = fmtWon(net);
+  }
+
   /* ---------------- events ---------------- */
 
   async function onSubmit(event) {
+    if (event.target.matches('[data-site-details-form]')) {
+      event.preventDefault();
+      await submitSiteDetails(event.target);
+      return;
+    }
     if (event.target.id === 'new-site-form') {
       await submitNewSite(event);
       return;
@@ -670,6 +901,7 @@ export function createAdminView(container) {
     container.addEventListener('submit', onSubmit);
     container.addEventListener('click', onClick);
     container.addEventListener('change', onChange);
+    container.addEventListener('input', onInput);
     mounted = true;
   }
 

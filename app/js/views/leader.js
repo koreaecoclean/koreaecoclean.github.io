@@ -18,6 +18,7 @@ import {
   fmtDateLong,
   fmtTime,
   fmtBytes,
+  fmtWon,
   toISODate,
   nowHHMM,
   daysBetween,
@@ -259,6 +260,36 @@ export function createLeaderView(container) {
     `;
   }
 
+  function opsCardTemplate(site) {
+    const contract = site.contract || {};
+    const ops = site.ops || {};
+    const value = (text) => (text ? esc(text) : '<span class="ops-empty">미등록 · 관리자에게 확인</span>');
+
+    return `
+      <section class="panel ops-card" data-ops-card="${esc(site.id)}">
+        <div class="section-head">
+          <h2>현장 운영 · 도급 정보</h2>
+          <p>현장 필수 정보</p>
+        </div>
+        <p class="tiny muted" style="margin:-6px 0 10px">
+          이 현장에서 바로 확인하는 정보입니다. 도급금액과 함께 청소 공정·출입·쓰레기·주차를 확인하세요.
+        </p>
+        <dl class="kv kv--left ops-list">
+          <dt>도급금액</dt>
+          <dd><strong class="ops-amount" data-ops-field="subcontractAmount">${esc(fmtWon(contract.subcontractAmount))}</strong></dd>
+          <dt>청소 공정</dt>
+          <dd data-ops-field="process">${value(ops.process)}</dd>
+          <dt>출입방법</dt>
+          <dd data-ops-field="accessMethod">${value(ops.accessMethod)}</dd>
+          <dt>쓰레기 배출위치</dt>
+          <dd data-ops-field="trashLocation">${value(ops.trashLocation)}</dd>
+          <dt>주차방법</dt>
+          <dd data-ops-field="parkingMethod">${value(ops.parkingMethod)}</dd>
+        </dl>
+      </section>
+    `;
+  }
+
   function baselinePanelTemplate(site) {
     const baseline = site.baseline || {};
     const row = (key, num, label, hint, record) => {
@@ -306,6 +337,8 @@ export function createLeaderView(container) {
     return `
       ${leaderBarTemplate(session)}
       ${state.sent ? sentTemplate(state.sent) : ''}
+
+      ${opsCardTemplate(site)}
 
       ${baselinePanelTemplate(site)}
 

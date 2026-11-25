@@ -1907,3 +1907,81 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* ---------- 25. 계약 · 매출 · 현장 운영 정보 ---------- */
+.rev-totals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.rev-totals div {
+  padding: 9px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.rev-totals span { display: block; font-size: 10.5px; font-weight: 700; color: var(--muted); }
+.rev-totals strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -.03em;
+  color: var(--brand-800);
+  font-variant-numeric: tabular-nums;
+}
+.rev-totals__net { background: var(--brand-50); border-color: var(--brand-100); }
+.rev-totals__net strong { color: var(--brand-700); }
+
+.rev-table { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; }
+.rev-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  align-items: center;
+  padding: 7px 6px;
+  border-radius: 8px;
+}
+.rev-row > span { text-align: right; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.rev-row > span:first-child { text-align: left; min-width: 0; }
+.rev-row--head { font-size: 10px; font-weight: 700; color: var(--muted); background: var(--surface-2); }
+.rev-row--head span { color: var(--muted); }
+.rev-row:not(.rev-row--head):nth-of-type(even) { background: var(--surface-2); }
+.rev-name strong { display: block; font-size: 11.5px; font-weight: 800; color: var(--ink); }
+.rev-name em { display: block; font-style: normal; font-size: 10px; color: var(--muted); }
+.rev-net { font-weight: 800; color: var(--brand-700); }
+
+.site-money {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--body);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.site-money strong { color: var(--brand-800); font-weight: 800; }
+.site-money__net strong { color: var(--brand-600); }
+
+.details-head { margin: 6px 0 0; font-size: 11px; font-weight: 800; color: var(--brand-700); }
+.rev-mini { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--muted); }
+.rev-mini strong { color: var(--body); font-weight: 800; }
+.site-details .settings__body { gap: 8px; }
+
+.ops-card .section-head h2 { font-size: 15px; }
+.ops-list { gap: 6px 12px; font-size: 12.5px; }
+.ops-list dt { white-space: nowrap; }
+.ops-list dd { line-height: 1.6; word-break: break-word; }
+.ops-amount { font-size: 16px; font-weight: 800; letter-spacing: -.02em; color: var(--brand-700); }
+.ops-empty { font-size: 11.5px; color: var(--muted); }
+
+@media (max-width: 360px) {
+  .rev-row { grid-template-columns: minmax(0, 1.2fr) repeat(4, minmax(0, 1fr)); font-size: 10.5px; padding: 6px 4px; }
+  .rev-row--head { font-size: 9px; }
+  .rev-name em { display: none; }
+  .rev-totals strong { font-size: 13.5px; }
+}

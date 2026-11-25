@@ -106,9 +106,83 @@ export function normalizeBaseline(baseline) {
   return out;
 }
 
+/* ------------------------------------------------------------------ */
+/* contract + field operations info                                     */
+/* ------------------------------------------------------------------ */
+
+/** Money fields are whole won; anything unparsable becomes 0. */
+function toAmount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return 0;
+  return Math.round(number);
+}
+
+/**
+ * 계약 정보 (관리자 전용).
+ * 순수 매출금 = 계약금 - 도급금액 - 수수료  → netProfit()
+ */
+export function normalizeContract(contract) {
+  const source = contract && typeof contract === 'object' ? contract : {};
+  return {
+    contractAmount: toAmount(source.contractAmount),
+    subcontractAmount: toAmount(source.subcontractAmount),
+    feeAmount: toAmount(source.feeAmount),
+    contractDate: String(source.contractDate || ''),
+    billingDay: String(source.billingDay || ''),
+    note: String(source.note || ''),
+  };
+}
+
+/** 팀장(현장) 전용 운영 정보 — 금액은 도급금액만 포함합니다. */
+export function normalizeOps(ops) {
+  const source = ops && typeof ops === 'object' ? ops : {};
+  return {
+    process: String(source.process || ''),
+    accessMethod: String(source.accessMethod || ''),
+    trashLocation: String(source.trashLocation || ''),
+    parkingMethod: String(source.parkingMethod || ''),
+  };
+}
+
+/** 순수 매출금 (계약금 - 도급금액 - 수수료). */
+export function netProfit(contract) {
+  const row = normalizeContract(contract);
+  return row.contractAmount - row.subcontractAmount - row.feeAmount;
+}
+
+/** 계약 정보 한 줄(합계 계산용). */
+export function contractRow(site) {
+  const contract = normalizeContract(site && site.contract);
+  return {
+    ...contract,
+    netProfit: netProfit(contract),
+    siteId: site ? site.id : '',
+    code: site ? site.code : '',
+    name: site ? site.name : '',
+    clientName: site ? site.clientName || site.name : '',
+  };
+}
+
+/** 전체 매출 합계 — 순수 매출금은 행별 합계로 계산합니다. */
+export function revenueTotals(sites) {
+  const rows = (sites || []).filter((site) => site && site.active !== false).map(contractRow);
+  return {
+    sites: rows.length,
+    contractAmount: rows.reduce((sum, row) => sum + row.contractAmount, 0),
+    subcontractAmount: rows.reduce((sum, row) => sum + row.subcontractAmount, 0),
+    feeAmount: rows.reduce((sum, row) => sum + row.feeAmount, 0),
+    netProfit: rows.reduce((sum, row) => sum + row.netProfit, 0),
+  };
+}
+
 function normalizeSite(site) {
   if (!site) return site;
-  return { ...site, baseline: normalizeBaseline(site.baseline) };
+  return {
+    ...site,
+    baseline: normalizeBaseline(site.baseline),
+    contract: normalizeContract(site.contract),
+    ops: normalizeOps(site.ops),
+  };
 }
 
 function isQuotaError(error) {
@@ -418,6 +492,7 @@ export class Store {
     await this._ensureSeedAssignments();
     await this._ensureSeedCodes();
     await this._ensureSiteBaseline();
+    await this._ensureSiteContractOps();
   }
 
   /** Sites added to the seed later (a real client, for example) reach older devices. */
@@ -482,6 +557,33 @@ export class Store {
         }
       }
       await this.adapter.put('sites', { ...site, baseline });
+    }
+  }
+
+  /**
+   * Every site carries 계약 정보(관리자)와 운영 정보(팀장). Sites stored by an older
+   * build have neither, so they are backfilled once from the seed when the site
+   * came from the seed, and with editable empty defaults otherwise. Idempotent and
+   * non-destructive: a site that already has both objects is left untouched, and a
+   * half-filled object only gains its missing keys.
+   */
+  async _ensureSiteContractOps() {
+    const sites = await this.adapter.getAll('sites');
+    if (!sites.length) return;
+    const seedById = new Map(buildSites().map((site) => [site.id, site]));
+    for (const site of sites) {
+      const hasContract = !!site.contract && typeof site.contract === 'object';
+      const hasOps = !!site.ops && typeof site.ops === 'object';
+      const contractComplete =
+        hasContract && Object.keys(normalizeContract(null)).every((key) => key in site.contract);
+      const opsComplete = hasOps && Object.keys(normalizeOps(null)).every((key) => key in site.ops);
+      if (contractComplete && opsComplete) continue;
+      const seed = seedById.get(site.id);
+      const contract = normalizeContract(
+        hasContract ? site.contract : seed ? seed.contract : null,
+      );
+      const ops = normalizeOps(hasOps ? site.ops : seed ? seed.ops : null);
+      await this.adapter.put('sites', { ...site, contract, ops, updatedAt: new Date().toISOString() });
     }
   }
 
@@ -632,6 +734,8 @@ export class Store {
       bizNumber: String(input.bizNumber || '').trim(),
       ceoName: String(input.ceoName || '').trim(),
       taxEmail: String(input.taxEmail || '').trim(),
+      contract: normalizeContract(input.contract),
+      ops: normalizeOps(input.ops),
       checklist: (DEFAULT_CHECKLISTS[category] || DEFAULT_CHECKLISTS.office).slice(),
       locked: true,
       baseline: normalizeBaseline(input.baseline),
@@ -650,9 +754,52 @@ export class Store {
     if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
     const next = { ...site, ...patch, id: site.id, updatedAt: new Date().toISOString() };
     if (patch.baseline) next.baseline = normalizeBaseline(patch.baseline);
+    if (patch.contract !== undefined) next.contract = normalizeContract(patch.contract);
+    if (patch.ops !== undefined) next.ops = normalizeOps(patch.ops);
     await this.adapter.put('sites', next);
     this._notify();
     return next;
+  }
+
+  /** Alias kept for the documented admin API (새 현장 등록). */
+  async createSite(input = {}) {
+    return this.addSite(input);
+  }
+
+  /**
+   * 관리자 화면의 현장 계약 · 운영 정보 저장.
+   * `contract` / `ops` patches are merged into the stored objects key by key, so a
+   * form that edits only some fields never wipes the others.
+   */
+  async updateSiteDetails(siteId, patch = {}) {
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const next = { ...site };
+    if (patch.contract && typeof patch.contract === 'object') {
+      next.contract = normalizeContract({ ...site.contract, ...patch.contract });
+    }
+    if (patch.ops && typeof patch.ops === 'object') {
+      next.ops = normalizeOps({ ...site.ops, ...patch.ops });
+    }
+    for (const key of ['name', 'clientName', 'address', 'area', 'frequency', 'contactName', 'bizNumber', 'ceoName', 'taxEmail', 'manager', 'managerRole', 'accessNote']) {
+      if (patch[key] !== undefined) next[key] = String(patch[key]).trim();
+    }
+    if (patch.category && Object.prototype.hasOwnProperty.call(DEFAULT_CHECKLISTS, patch.category)) {
+      next.category = patch.category;
+    }
+    if (typeof next.name !== 'string' || !next.name.trim()) {
+      throw new StoreError('name-empty', '현장명(상호)을 입력해 주세요.');
+    }
+    next.updatedAt = new Date().toISOString();
+    await this.adapter.put('sites', next);
+    this._notify();
+    return next;
+  }
+
+  /** 전체 매출 정리 — 행별 내역과 합계 (관리자 화면 전용). */
+  async revenueSummary() {
+    const sites = (await this.listSites()).filter((site) => site.active !== false);
+    return { rows: sites.map(contractRow), totals: revenueTotals(sites) };
   }
 
   /** Give the chosen team leaders this site (never removes their other sites). */

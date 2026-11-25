@@ -9,7 +9,7 @@
  * "데모 계정" panel.
  */
 
-export const SEED_VERSION = 5;
+export const SEED_VERSION = 6;
 
 /** The three required photo categories for every site report. */
 export const PHOTO_GROUPS = [
@@ -191,6 +191,22 @@ export function buildSites() {
       managerRole: '팀장',
       accessNote: '출근 전 07:00~08:30 · 관리실에서 출입카드 수령',
       contactName: '정하윤 총무',
+      // 관리자 전용 계약 정보 (고객·팀장 화면에는 노출되지 않습니다)
+      contract: {
+        contractAmount: 2200000,
+        subcontractAmount: 1430000,
+        feeAmount: 110000,
+        contractDate: '2024-03-04',
+        billingDay: '매월 10일',
+        note: '월 단위 청구 · 부가세 별도 · 주 2회(월·목)',
+      },
+      // 팀장(현장) 전용 운영 정보 (도급금액만 팀장에게 공개)
+      ops: {
+        process: '책상·모니터 먼지 → 회의실·교육장 → 탕비실·정수기 → 화장실 세정·소독 → 카펫 흡입 → 계단·출입구 유리',
+        accessMethod: '출근 전 07:00~08:30 · 관리사무소에서 출입카드 수령 후 5층',
+        trashLocation: '5층 화장실 옆 분리수거함 (일반 · 재활용)',
+        parkingMethod: '지하 1층 방문 주차 30분 무료 · 관리사무소에 차량 번호 등록',
+      },
       checklist: DEFAULT_CHECKLISTS.office,
       locked: true,
       baseline: {
@@ -218,6 +234,20 @@ export function buildSites() {
       managerRole: '팀장',
       accessNote: '진료 시작 전 07:30~09:00 · 데스크에서 열쇠 수령',
       contactName: '김소연 실장',
+      contract: {
+        contractAmount: 2700000,
+        subcontractAmount: 1750000,
+        feeAmount: 130000,
+        contractDate: '2023-08-28',
+        billingDay: '매월 5일',
+        note: '월 단위 청구 · 부가세 별도 · 주 2회(화·금)',
+      },
+      ops: {
+        process: '진료실·시술실 바닥 소독 → 대기 라운지 → 파우더룸·화장실 → 손잡이·스위치 소독 → 의료 폐기물 교체 → 현관 유리',
+        accessMethod: '진료 시작 전 07:30~09:00 · 3층 데스크에서 열쇠 수령',
+        trashLocation: '3층 계단 옆 의료 폐기물 보관함 · 일반 쓰레기는 건물 뒤 수거장',
+        parkingMethod: '건물 뒤편 주차장 2시간 무료 · 데스크에 차량 번호 확인',
+      },
       checklist: DEFAULT_CHECKLISTS.clinic,
       locked: true,
       baseline: {
@@ -245,6 +275,20 @@ export function buildSites() {
       managerRole: '대표',
       accessNote: '이용객이 적은 10:00~12:00 · 정문 비밀번호 출입',
       contactName: '박준호 관장',
+      contract: {
+        contractAmount: 4300000,
+        subcontractAmount: 2900000,
+        feeAmount: 210000,
+        contractDate: '2024-12-30',
+        billingDay: '매월 15일',
+        note: '월 단위 청구 · 부가세 별도 · 주 3회(월·수·금)',
+      },
+      ops: {
+        process: '운동기구 존·매트 소독 → 거울 물때 → 샤워실·배수구 → 탈의실·사물함 → 화장실 세정 → 계단·엘리베이터',
+        accessMethod: '이용객이 적은 10:00~12:00 · 정문 비밀번호 출입 (비밀번호는 관장님 확인)',
+        trashLocation: '지하 1층 엘리베이터 옆 방출구 · 재활용 분리 배출',
+        parkingMethod: '건물 지하 2층 · 사장님 차량 등록 (10:00 이전 진입)',
+      },
       checklist: DEFAULT_CHECKLISTS.fitness,
       locked: true,
       baseline: {
@@ -273,6 +317,21 @@ export function buildSites() {
       bizNumber: '195-81-00480',
       ceoName: '신성민, 윤한수',
       taxEmail: 'skltm0518@gmail.com',
+      // 실제 계약 금액은 대표가 확인 후 입력합니다 (데모 값은 0원).
+      contract: {
+        contractAmount: 0,
+        subcontractAmount: 0,
+        feeAmount: 0,
+        contractDate: '',
+        billingDay: '협의 중',
+        note: '실제 계약 금액 · 계약일은 대표 확인 후 입력',
+      },
+      ops: {
+        process: '사무실 정기청소 (주 1회 · 일정 협의) — 책상 먼지 → 회의실 → 탕비실 → 화장실 → 바닥 → 유리',
+        accessMethod: '서교동 비금빌딩 7층 · 출입 방식 확인 중 (첫 방문 시 담당자 안내)',
+        trashLocation: '건물 지정 수거 위치 확인 중',
+        parkingMethod: '건물 주차 안내 확인 중 (첫 방문 시 확인)',
+      },
       checklist: DEFAULT_CHECKLISTS.office,
       locked: true,
       baseline: {
