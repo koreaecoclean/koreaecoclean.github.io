@@ -3497,3 +3497,59 @@ button { font-family: inherit; }
   .header-call { font-size: 14px; }
   .header-cta { padding: 11px 18px; font-size: 14px; }
 }
+
+/* ---------------- 함께해 온 주요 고객사 (로고) ---------------- */
+
+.clients { padding-top: clamp(56px, 6.4vw, 92px); padding-bottom: clamp(56px, 6.4vw, 92px); background: linear-gradient(180deg, #fff 0%, var(--bg-soft) 100%); }
+.clients .section-head { margin-bottom: clamp(30px, 3.6vw, 46px); }
+
+.clients-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: clamp(10px, 1.4vw, 16px);
+}
+.client-card {
+  display: grid;
+  place-items: center;
+  min-height: 96px;
+  padding: 18px 20px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow-xs);
+  transition: border-color .25s ease, box-shadow .25s ease, transform .25s var(--ease);
+}
+.client-card:hover {
+  border-color: #bcd8c9;
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-2px);
+}
+.client-card img {
+  max-width: 100%;
+  max-height: 38px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  filter: grayscale(0);
+}
+/* 어두운 배경 로고는 원본 비율대로 판 형태로 */
+.client-card.is-plate { background: #fff; }
+.client-card.is-plate img { max-height: 40px; border-radius: 6px; }
+
+.clients-note {
+  margin-top: clamp(20px, 2.4vw, 28px);
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+@media (max-width: 980px) {
+  .clients-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .clients-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .client-card { min-height: 84px; padding: 14px 14px; }
+  .client-card img { max-height: 30px; }
+  .client-card.is-plate img { max-height: 34px; }
+}
