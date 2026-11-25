@@ -651,6 +651,8 @@ export function createCustomerView(container) {
       state.session = null;
       state.site = null;
       state.filter = 'all';
+      state.loginError = '';
+      state.codeError = '';
       toast('로그아웃했습니다.');
       await render();
       return;
