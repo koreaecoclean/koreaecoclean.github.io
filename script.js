@@ -476,6 +476,32 @@
       });
     }
 
+    /* 소리 켜기 / 끄기 (자동재생은 무음으로 시작) */
+    var heroSound = doc.getElementById('heroSound');
+
+    function syncHeroSound() {
+      if (!heroSound) return;
+      var on = !heroVideo.muted;
+      heroMedia.classList.toggle('is-sound', on);
+      heroSound.setAttribute('aria-pressed', on ? 'true' : 'false');
+      heroSound.setAttribute('aria-label', on ? '현장 영상 소리 끄기' : '현장 영상 소리 켜기');
+      var label = heroSound.querySelector('.hero-sound-label');
+      if (label) label.textContent = on ? '소리 끄기' : '소리 켜기';
+    }
+
+    if (heroSound) {
+      heroSound.addEventListener('click', function () {
+        heroVideo.muted = !heroVideo.muted;
+        if (!heroVideo.muted) {
+          heroVideo.volume = 1;
+          if (heroVideo.paused) heroVideo.play().catch(function () {});
+        }
+        syncHeroSound();
+      });
+      heroVideo.addEventListener('volumechange', syncHeroSound);
+      syncHeroSound();
+    }
+
     /* 사용자가 직접 멈춘 영상은 화면에 돌아와도 저절로 다시 켜지 않습니다 */
     var heroUserPaused = reduceMotion;
 
@@ -699,6 +725,9 @@
       });
       frame.classList.add('is-playing');
       video.controls = true;
+      /* 사용자가 직접 누른 재생이므로 소리를 켜고 재생합니다 */
+      video.muted = false;
+      video.volume = 1;
       video.play().catch(function () {});
     });
   });
