@@ -500,6 +500,185 @@
     }
   }
 
+  /* ---------- 현장 소식 탭 (블로그 · 인스타그램) ---------- */
+  var contentsTabs = [doc.getElementById('tabReport'), doc.getElementById('tabInsta')];
+  var contentsPanels = [doc.getElementById('panelReport'), doc.getElementById('panelInsta')];
+
+  function selectContentsTab(index) {
+    contentsTabs.forEach(function (tab, i) {
+      if (!tab) return;
+      var on = i === index;
+      tab.classList.toggle('is-active', on);
+      tab.setAttribute('aria-selected', on ? 'true' : 'false');
+      tab.tabIndex = on ? 0 : -1;
+      if (contentsPanels[i]) contentsPanels[i].hidden = !on;
+    });
+  }
+
+  if (contentsTabs[0] && contentsTabs[1]) {
+    contentsTabs.forEach(function (tab, i) {
+      tab.addEventListener('click', function () { selectContentsTab(i); });
+      tab.addEventListener('keydown', function (e) {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        e.preventDefault();
+        var next = (i + (e.key === 'ArrowRight' ? 1 : -1) + contentsTabs.length) % contentsTabs.length;
+        selectContentsTab(next);
+        contentsTabs[next].focus();
+      });
+    });
+  }
+
+  /* ---------- 인스타그램 카드뉴스 목록 · 모달 ---------- */
+  var instaDataEl = doc.getElementById('instaData');
+  var instaGrid = doc.getElementById('instaGrid');
+  var instaItems = [];
+
+  if (instaDataEl) {
+    try { instaItems = JSON.parse(instaDataEl.textContent) || []; } catch (err) { instaItems = []; }
+  }
+
+  if (instaGrid && instaItems.length) {
+    instaItems.forEach(function (item, i) {
+      var li = doc.createElement('li');
+      li.className = 'insta-card';
+
+      var btn = doc.createElement('button');
+      btn.type = 'button';
+      btn.className = 'insta-open';
+      btn.setAttribute('aria-label', item.label + ' ' + item.title + ' 카드뉴스 5장 보기');
+
+      var img = doc.createElement('img');
+      img.src = item.images[0];
+      img.alt = item.label + ' ' + item.title + ' 카드뉴스 표지';
+      img.width = 720;
+      img.height = 720;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+
+      var count = doc.createElement('span');
+      count.className = 'insta-count';
+      count.textContent = item.images.length + '장';
+
+      var date = doc.createElement('span');
+      date.className = 'insta-datepill';
+      date.textContent = item.label;
+
+      var hint = doc.createElement('span');
+      hint.className = 'insta-hint';
+      hint.textContent = '전체 보기 →';
+
+      btn.appendChild(img);
+      btn.appendChild(count);
+      btn.appendChild(date);
+      btn.appendChild(hint);
+      btn.addEventListener('click', function () { openInsta(i); });
+
+      li.appendChild(btn);
+      instaGrid.appendChild(li);
+    });
+  }
+
+  var instaModal = doc.getElementById('instaModal');
+  var instaImage = doc.getElementById('instaImage');
+  var instaDate = doc.getElementById('instaDate');
+  var instaTag = doc.getElementById('instaTag');
+  var instaTitleEl = doc.getElementById('instaTitle');
+  var instaBody = doc.getElementById('instaBody');
+  var instaOrigin = doc.getElementById('instaOrigin');
+  var instaCounter = doc.getElementById('instaCounter');
+  var instaPrev = doc.getElementById('instaPrev');
+  var instaNext = doc.getElementById('instaNext');
+  var instaClose = doc.getElementById('instaClose');
+  var instaIndex = 0;
+  var instaSlide = 0;
+  var instaFocus = null;
+
+  function renderInsta() {
+    var item = instaItems[instaIndex];
+    if (!item || !instaModal) return;
+    var total = item.images.length;
+    instaImage.src = item.images[instaSlide];
+    instaImage.alt = item.label + ' ' + item.title + ' 카드뉴스 ' + (instaSlide + 1) + '번째 장';
+    instaCounter.textContent = (instaSlide + 1) + ' / ' + total;
+    instaDate.textContent = item.label;
+    instaTag.textContent = item.tag;
+    instaTitleEl.textContent = item.title;
+    instaBody.textContent = '';
+    item.body.forEach(function (line) {
+      var p = doc.createElement('p');
+      p.textContent = line;
+      instaBody.appendChild(p);
+    });
+    instaOrigin.href = item.url;
+    instaPrev.disabled = false;
+    instaNext.disabled = false;
+  }
+
+  function openInsta(i) {
+    if (!instaModal || !instaItems[i]) return;
+    instaIndex = i;
+    instaSlide = 0;
+    instaFocus = doc.activeElement;
+    renderInsta();
+    instaModal.hidden = false;
+    doc.body.style.overflow = 'hidden';
+    instaClose.focus();
+  }
+
+  function closeInsta() {
+    if (!instaModal) return;
+    instaModal.hidden = true;
+    doc.body.style.overflow = '';
+    if (instaFocus && instaFocus.focus) instaFocus.focus();
+  }
+
+  function stepInsta(delta) {
+    var item = instaItems[instaIndex];
+    if (!item) return;
+    var total = item.images.length;
+    instaSlide = (instaSlide + delta + total) % total;
+    renderInsta();
+  }
+
+  if (instaModal) {
+    instaClose.addEventListener('click', closeInsta);
+    instaPrev.addEventListener('click', function () { stepInsta(-1); });
+    instaNext.addEventListener('click', function () { stepInsta(1); });
+
+    instaModal.addEventListener('click', function (e) {
+      if (e.target === instaModal) closeInsta();
+    });
+
+    doc.addEventListener('keydown', function (e) {
+      if (instaModal.hidden) return;
+      if (e.key === 'Escape') { closeInsta(); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); stepInsta(-1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); stepInsta(1); }
+      else if (e.key === 'Tab') {
+        var focusables = [instaClose, instaPrev, instaNext, instaOrigin];
+        var idx = focusables.indexOf(doc.activeElement);
+        e.preventDefault();
+        var next = (idx + (e.shiftKey ? -1 : 1) + focusables.length) % focusables.length;
+        focusables[next].focus();
+      }
+    });
+
+    /* 모바일 스와이프 */
+    var touchX = null;
+    var stage = instaModal.querySelector('.insta-stage');
+    if (stage) {
+      stage.addEventListener('touchstart', function (e) {
+        touchX = e.changedTouches[0].clientX;
+      }, { passive: true });
+      stage.addEventListener('touchend', function (e) {
+        if (touchX === null) return;
+        var dx = e.changedTouches[0].clientX - touchX;
+        if (Math.abs(dx) > 44) stepInsta(dx < 0 ? 1 : -1);
+        touchX = null;
+      }, { passive: true });
+    }
+  }
+
   /* ---------- 현장 영상 카드 ---------- */
   var videoCards = Array.prototype.slice.call(doc.querySelectorAll('.video-card'));
 

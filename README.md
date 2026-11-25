@@ -8,7 +8,7 @@
 ## 구성
 
 ```
-index.html            메인 페이지 (히어로 영상·회사 소개·연혁·자격증·서비스·차별성·현장 영상/사진·지역·FAQ·예약 상담·이벤트)
+index.html            메인 페이지 (히어로 영상·회사 소개·연혁·자격증·서비스·차별성·현장 영상/사진·현장 소식(블로그/인스타)·지역·FAQ·예약 상담·이벤트)
 styles.css            스타일시트 (화이트/소프트그레이 + 딥그린, 스크롤 등장 애니메이션)
 script.js             인터랙션 (스크롤 진행 바·등장 애니메이션·카운트업·사진 필터/라이트박스·자격증 확대·히어로/현장 영상 재생·예약 폼)
 404.html              없는 페이지 안내
@@ -24,6 +24,7 @@ assets/
   videos/             현장 영상 (field-hero.mp4 = 히어로 배경, field-1~3.mp4 = 현장 영상 섹션, poster-*.jpg)
   certs/              자격증 사본 4장 (생년월일 가림 처리)
   photos/             현장 사진 (7장)
+  insta-cards/        인스타그램 카드뉴스 표지·내부 5장 (날짜별 폴더, 720×720 JPEG)
   icon-192/512.png    앱 아이콘
 ```
 
@@ -35,6 +36,47 @@ assets/
 4. CSS·JS·영상을 고친 뒤에는 `index.html`의 `?v=` 버전 값(예: `styles.css?v=20261124i`)도 함께 올려 브라우저 캐시를 갱신합니다.
 5. 예약 상담 폼은 정적 페이지라 서버 저장 없이, 입력 내용을 문자(`sms:`)·전화(`tel:`)·복사로 넘기는 방식입니다.
 6. 자격증 이미지를 새로 넣을 때는 생년월일 부분을 반드시 가림 처리한 사본을 `assets/certs/`에 넣습니다.
+7. `sitemap.xml`의 `lastmod`를 고친 날짜로 바꿉니다.
+
+## 현장 소식(블로그 · 인스타그램) 갱신 방법
+
+매일 발행분을 홈페이지에 올릴 때는 아래 두 곳만 고치면 됩니다.
+
+### 블로그 현장 리포트
+
+`index.html`의 `id="panelReport"` 안 `ul.report-grid`에서 가장 위 카드(`li.report-card`)를 복사해 맨 위에 붙이고 값만 바꿉니다.
+
+```html
+<li class="report-card reveal" data-reveal style="--d:1">
+  <a class="report-link" href="블로그 글 주소" target="_blank" rel="noopener">
+    <span class="report-top"><span class="report-date">2026.11.26</span><span class="report-badge">지역 · 업종</span></span>
+    <h3 class="report-title">글 제목</h3>
+    <p class="report-sum">한 줄 현장 요약</p>
+    <span class="report-more">블로그 보기 …</span>
+  </a>
+</li>
+```
+
+카드는 9개만 남기고 가장 오래된 것을 지웁니다. 탭 옆 숫자(`<span class="tab-count">9</span>`)도 함께 맞춥니다.
+
+### 인스타그램 카드뉴스
+
+1. 원본 `하크-카드뉴스/{날짜}/01~05.png`를 720×720 JPEG로 줄여 `assets/insta-cards/{날짜}/01~05.jpg`로 넣습니다(Pillow: `Image.open(src).convert('RGB').resize((720,720), Image.LANCZOS).save(dst,'JPEG',quality=86,optimize=True,progressive=True)`).
+2. `index.html`의 `<script id="instaData" type="application/json">` 배열 **맨 앞**에 한 건을 추가합니다.
+
+```json
+{
+  "date": "2026-11-26",
+  "label": "2026.11.26",
+  "tag": "업종청소",
+  "title": "카드뉴스 표지 제목",
+  "body": ["첫 줄", "둘째 줄"],
+  "url": "https://www.instagram.com/p/.../",
+  "images": ["assets/insta-cards/2026-11-26/01.jpg", "...", ".../05.jpg"]
+}
+```
+
+목록은 최근 6건만 보이도록 오래된 항목을 지우고 `tab-count` 숫자를 맞춥니다.
 
 ## 사업자 정보
 

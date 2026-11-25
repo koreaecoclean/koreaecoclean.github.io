@@ -2237,15 +2237,15 @@ button { font-family: inherit; }
 .event-bar-more svg { width: 13px; height: 13px; }
 .event-bar a:hover .event-bar-more { color: #fff; }
 
-/* ---------------- 히어로 (풀블리드 현장 영상) ---------------- */
+/* ---------------- 히어로 (현장 영상 · 2단 / 모바일 상하 분리) ---------------- */
 
 .hero.hero-video {
   position: relative;
   display: flex;
   align-items: center;
   min-height: calc(100svh - 104px);
-  padding: clamp(34px, 4.4vw, 62px) 0 clamp(24px, 2.8vw, 40px);
-  background: var(--ink-deep);
+  padding: clamp(24px, 3.2vw, 48px) 0 clamp(24px, 2.8vw, 40px);
+  background: radial-gradient(130% 130% at 6% 10%, #0d4630 0%, #07291c 44%, #04170f 100%);
   color: #fff;
   overflow: hidden;
   isolation: isolate;
@@ -2260,8 +2260,8 @@ button { font-family: inherit; }
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: blur(46px) saturate(1.25) brightness(.52);
-  transform: scale(1.32);
+  filter: blur(52px) saturate(1.2) brightness(.46);
+  transform: scale(1.34);
 }
 .hero-video .hero-bg::before {
   content: "";
@@ -2269,8 +2269,8 @@ button { font-family: inherit; }
   inset: 0;
   z-index: 1;
   background:
-    radial-gradient(46% 54% at 14% 76%, rgba(26, 160, 95, .22), transparent 72%),
-    radial-gradient(40% 46% at 62% 4%, rgba(242, 201, 107, .1), transparent 70%);
+    radial-gradient(46% 54% at 14% 76%, rgba(26, 160, 95, .2), transparent 72%),
+    radial-gradient(40% 46% at 62% 4%, rgba(242, 201, 107, .08), transparent 70%);
   pointer-events: none;
 }
 .hero-video .hero-bg::after {
@@ -2279,45 +2279,51 @@ button { font-family: inherit; }
   inset: 0;
   z-index: 2;
   background:
-    radial-gradient(125% 120% at 6% 38%, rgba(3, 17, 11, .94) 0%, rgba(4, 23, 14, .82) 36%, rgba(5, 30, 19, .55) 64%, rgba(4, 17, 11, .7) 100%);
+    radial-gradient(120% 120% at 4% 34%, rgba(3, 17, 11, .9) 0%, rgba(4, 23, 14, .76) 38%, rgba(5, 30, 19, .5) 66%, rgba(4, 17, 11, .62) 100%);
 }
 
+/* 본문(카피) · 영상 · 지표를 겹치지 않는 그리드로 배치 */
+.hero-video .hero-shell {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: minmax(0, 1.02fr) minmax(0, .98fr);
+  grid-template-areas:
+    "copy media"
+    "foot media";
+  align-items: center;
+  column-gap: clamp(26px, 4.4vw, 68px);
+  row-gap: clamp(16px, 2.2vw, 26px);
+}
+.hero-video .hero-copy { grid-area: copy; max-width: 600px; }
+.hero-video .hero-foot { grid-area: foot; align-self: start; width: 100%; }
+
+/* 영상은 어두운 덮개 없이 독립된 패널로, 잘리지 않고 그대로 보이게 */
 .hero-media {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 1;
-  width: min(44vw, 620px);
+  grid-area: media;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  max-height: min(64vh, 560px);
+  border-radius: 26px;
   overflow: hidden;
   background: #06150f;
+  border: 1px solid rgba(255, 255, 255, .16);
+  box-shadow: 0 46px 90px -46px rgba(0, 0, 0, .92);
 }
 .hero-media video {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center 44%;
+  object-position: center 42%;
   display: block;
-  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, .45) 9%, #000 32%);
-  mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, .45) 9%, #000 32%);
 }
+/* 태그·버튼 글자가 읽히도록 위아래만 아주 옅게 */
 .hero-media-scrim {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(4, 18, 12, .45) 0%, rgba(4, 18, 12, 0) 20%, rgba(4, 18, 12, 0) 72%, rgba(4, 18, 12, .62) 100%);
-}
-
-/* 히어로 전체를 덮는 그러데이션 — 영상과 배경이 이어지도록 */
-.hero-video::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  pointer-events: none;
-  background:
-    linear-gradient(90deg, rgba(4, 18, 12, .72) 0%, rgba(4, 18, 12, .52) 34%, rgba(4, 18, 12, .22) 56%, rgba(4, 18, 12, 0) 72%),
-    linear-gradient(180deg, rgba(4, 18, 12, .45) 0%, rgba(4, 18, 12, 0) 16%, rgba(4, 18, 12, 0) 74%, rgba(4, 18, 12, .55) 100%);
+  background: linear-gradient(180deg, rgba(4, 18, 12, .3) 0%, rgba(4, 18, 12, .02) 20%, rgba(4, 18, 12, 0) 68%, rgba(4, 18, 12, .32) 100%);
 }
 
 .hero-video-tag {
@@ -2382,24 +2388,8 @@ button { font-family: inherit; }
 .hero-media.is-paused .i-play { display: block; }
 .hero-media.is-paused .rec-dot { background: #ffb347; animation: none; }
 
-.hero-video .hero-shell {
-  position: relative;
-  z-index: 3;
-  display: grid;
-  gap: clamp(20px, 2.6vw, 30px);
-  justify-items: start;
-}
-
-/* 영상 패널이 본문 영역을 침범하지 않도록 오른쪽 여백을 확보합니다 */
-@media (min-width: 981px) {
-  .hero-video .hero-shell {
-    padding-right: calc(28px + max(0px, min(44vw, 620px) - (100vw - 1180px) / 2));
-  }
-}
-.hero-video .hero-copy { max-width: 620px; }
-
 .hero-video .hero-badge {
-  margin-bottom: 22px;
+  margin-bottom: 20px;
   color: #eaf7f0;
   background: rgba(255, 255, 255, .08);
   border: 1px solid rgba(255, 255, 255, .2);
@@ -2414,10 +2404,10 @@ button { font-family: inherit; }
 
 .hero-video h1 {
   color: #fff;
-  font-size: clamp(2.4rem, 4.5vw, 4.15rem);
+  font-size: clamp(2.3rem, 4.2vw, 3.9rem);
   line-height: 1.14;
   letter-spacing: -0.05em;
-  margin-bottom: 20px;
+  margin-bottom: 18px;
   text-shadow: 0 18px 50px rgba(0, 0, 0, .45);
 }
 .hero-video h1 em {
@@ -2438,9 +2428,9 @@ button { font-family: inherit; }
 }
 
 .hero-video .hero-copy p.lead {
-  color: rgba(255, 255, 255, .74);
+  color: rgba(255, 255, 255, .76);
   max-width: 31em;
-  margin-bottom: 28px;
+  margin-bottom: 26px;
   line-height: 1.78;
   font-size: clamp(.98rem, 1.1vw, 1.06rem);
   text-shadow: 0 2px 18px rgba(0, 0, 0, .5);
@@ -2980,35 +2970,32 @@ button { font-family: inherit; }
 
 /* ---------------- 반응형 ---------------- */
 
-@media (max-width: 1080px) {
-  .hero-media { width: min(52vw, 560px); }
-}
-
 @media (max-width: 980px) {
+  /* 모바일: 영상과 카피를 절대 겹치지 않게 위아래로 분리 */
   .hero.hero-video {
-    min-height: calc(100svh - 96px);
-    align-items: flex-end;
-    padding: 92px 0 96px;
+    min-height: 0;
+    align-items: stretch;
+    padding: 16px 0 44px;
   }
-  .hero-video .hero-bg { display: none; }
-  .hero-media { width: 100%; }
-  .hero-media video {
-    object-position: center 38%;
-    -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, .8) 0%, #000 18%);
-    mask-image: linear-gradient(180deg, rgba(0, 0, 0, .8) 0%, #000 18%);
+  .hero-video .hero-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "media"
+      "copy"
+      "foot";
+    row-gap: 24px;
   }
-  .hero-media-scrim {
-    background:
-      linear-gradient(180deg, rgba(4, 18, 12, .5) 0%, rgba(4, 18, 12, .22) 14%, rgba(4, 18, 12, .5) 28%, rgba(4, 18, 12, .9) 40%, rgba(4, 18, 12, .97) 50%, rgba(4, 18, 12, .99) 100%);
+  .hero-media {
+    aspect-ratio: 5 / 4;
+    max-height: none;
+    border-radius: 20px;
+    box-shadow: 0 30px 60px -34px rgba(0, 0, 0, .9);
   }
-  .hero-video::after {
-    background: linear-gradient(180deg, rgba(4, 18, 12, .32) 0%, rgba(4, 18, 12, 0) 16%, rgba(4, 18, 12, .28) 32%, rgba(4, 18, 12, .72) 44%, rgba(4, 18, 12, .92) 56%, rgba(4, 18, 12, .96) 100%);
-  }
-  .hero-video-tag { top: 14px; left: 14px; bottom: auto; font-size: 11px; padding: 6px 10px; }
-  .hero-controls { top: 12px; right: 12px; bottom: auto; }
+  .hero-media video { object-position: center 40%; }
+  .hero-video-tag { top: 12px; left: 12px; bottom: auto; font-size: 11px; padding: 6px 10px; }
+  .hero-controls { top: 10px; right: 10px; bottom: auto; }
   .hero-ctrl { width: 38px; height: 38px; }
   .hero-ctrl svg { width: 15px; height: 15px; }
-  .hero-video .hero-shell { gap: 18px; }
   .hero-video .hero-copy { max-width: none; }
   .hero-video h1 { font-size: clamp(2rem, 7.6vw, 2.9rem); }
   .hero-video .hero-copy p.lead { font-size: .96rem; margin-bottom: 22px; }
@@ -3046,7 +3033,7 @@ button { font-family: inherit; }
   .event-bar-tag { font-size: 9.5px; padding: 3px 8px; }
   .event-bar-more { display: none; }
 
-  .hero.hero-video { min-height: calc(100svh - 92px); padding: 84px 0 128px; }
+  .hero.hero-video { min-height: 0; padding: 12px 0 40px; }
   .hero-video h1 { font-size: clamp(1.95rem, 8.4vw, 2.5rem); }
   .hero-video .hero-badge { margin-bottom: 16px; font-size: 11.5px; padding: 6px 12px; }
   .hero-video .hero-actions .btn { flex: 1 1 0; padding: 14px 18px; font-size: 15px; }
@@ -3095,4 +3082,417 @@ button { font-family: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .hero-scroll svg { animation: none; }
   .rec-dot { animation: none; }
+}
+
+/* ---------------- 현장 소식 (블로그 현장 리포트 · 인스타그램 카드뉴스) ---------------- */
+
+.contents-tabs {
+  display: inline-flex;
+  gap: 6px;
+  padding: 6px;
+  margin-bottom: clamp(26px, 3vw, 38px);
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.contents-tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 22px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: -0.02em;
+  transition: color .2s ease, background .25s ease, box-shadow .25s ease;
+}
+.contents-tab:hover { color: var(--green-700); }
+.contents-tab.is-active {
+  background: linear-gradient(135deg, var(--green-700), var(--green-800));
+  color: #fff;
+  box-shadow: 0 12px 26px -16px rgba(15, 81, 50, .95);
+}
+.tab-count {
+  font-size: 11.5px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--green-700);
+  background: #fff;
+  border: 1px solid var(--line-strong);
+  font-variant-numeric: tabular-nums;
+}
+.contents-tab.is-active .tab-count { color: #eafff2; background: rgba(255, 255, 255, .18); border-color: rgba(255, 255, 255, .28); }
+
+.contents-panel[hidden] { display: none; }
+.contents-panel:focus { outline: none; }
+.contents-panel:focus-visible { outline: 3px solid rgba(26, 160, 95, .35); outline-offset: 10px; border-radius: 18px; }
+
+/* --- 탭 1: 블로그 카드 3열 --- */
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(14px, 1.7vw, 22px);
+}
+.report-card { display: flex; }
+.report-link {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding: 24px 24px 20px;
+  background: #fff;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  transition: transform .3s var(--ease), box-shadow .3s ease, border-color .3s ease;
+}
+.report-link:hover {
+  transform: translateY(-4px);
+  border-color: #bcd8c9;
+  box-shadow: var(--shadow-md);
+}
+.report-top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.report-date {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--muted);
+  letter-spacing: .01em;
+  font-variant-numeric: tabular-nums;
+}
+.report-badge {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--green-700);
+  background: var(--green-50);
+  border: 1px solid #dcece3;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.report-title {
+  font-size: 1.01rem;
+  line-height: 1.52;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.report-sum {
+  font-size: .9rem;
+  color: var(--body);
+  line-height: 1.68;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.report-more {
+  margin-top: auto;
+  padding-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--green-700);
+}
+.report-more svg { width: 14px; height: 14px; transition: transform .25s var(--ease); }
+.report-link:hover .report-more svg { transform: translateX(3px); }
+
+/* --- 탭 2: 인스타그램 카드뉴스 표지 3열 --- */
+.insta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(12px, 1.6vw, 20px);
+}
+.insta-card { margin: 0; }
+.insta-open {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  cursor: pointer;
+  background: #0b1a13;
+  aspect-ratio: 1 / 1;
+  box-shadow: var(--shadow-sm);
+  transition: transform .35s var(--ease), box-shadow .35s ease;
+}
+.insta-open:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+.insta-open img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform .55s var(--ease);
+}
+.insta-open:hover img { transform: scale(1.035); }
+.insta-open::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 34%;
+  background: linear-gradient(180deg, rgba(4, 18, 12, 0), rgba(4, 18, 12, .5));
+  pointer-events: none;
+}
+.insta-datepill {
+  position: absolute;
+  left: 12px;
+  bottom: 11px;
+  z-index: 2;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: .02em;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, .4);
+}
+.insta-count {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 2;
+  font-size: 11px;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(6, 22, 14, .55);
+  border: 1px solid rgba(255, 255, 255, .26);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+.insta-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(4, 18, 12, .38);
+  opacity: 0;
+  transition: opacity .25s ease;
+  pointer-events: none;
+}
+.insta-open:hover .insta-hint,
+.insta-open:focus-visible .insta-hint { opacity: 1; }
+
+/* --- 섹션 하단 보조 링크 --- */
+.contents-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  margin-top: clamp(26px, 3vw, 36px);
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.contents-foot-label { font-size: 12.5px; font-weight: 700; color: var(--muted); }
+.blog-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.blog-links a {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  background: #fff;
+  border: 1px solid var(--line-strong);
+  padding: 7px 14px;
+  border-radius: 999px;
+  transition: border-color .2s ease, color .2s ease, background .2s ease;
+}
+.blog-links a:hover { color: var(--green-700); border-color: var(--green-500); background: var(--green-50); }
+.noscript-links { margin-bottom: 18px; }
+.contents-insta-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--green-700);
+}
+.contents-insta-link:hover { color: var(--green-500); }
+.contents-insta-link svg { width: 14px; height: 14px; }
+
+/* ---------------- 인스타그램 카드뉴스 모달 ---------------- */
+
+.insta-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  display: grid;
+  place-items: center;
+  padding: clamp(10px, 3vw, 32px);
+  background: rgba(4, 14, 9, .84);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.insta-modal[hidden] { display: none; }
+.insta-dialog {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.06fr) minmax(0, .94fr);
+  width: min(1060px, 100%);
+  max-height: min(88vh, 820px);
+  background: #fff;
+  border-radius: 24px;
+  overflow: hidden;
+  box-shadow: 0 60px 120px -40px rgba(0, 0, 0, .85);
+}
+.insta-stage {
+  position: relative;
+  background: #0b1a13;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+}
+.insta-stage img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.insta-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .34);
+  background: rgba(6, 22, 14, .55);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background .2s ease, border-color .2s ease;
+}
+.insta-nav svg { width: 18px; height: 18px; }
+.insta-nav:hover { background: rgba(26, 160, 95, .92); border-color: transparent; }
+.insta-prev { left: 12px; }
+.insta-next { right: 12px; }
+.insta-counter {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(6, 22, 14, .62);
+  border: 1px solid rgba(255, 255, 255, .22);
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+.insta-info {
+  padding: clamp(22px, 2.6vw, 36px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.insta-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.insta-date {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.insta-tag {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--green-700);
+  background: var(--green-50);
+  border: 1px solid #dcece3;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+.insta-title {
+  font-size: clamp(1.22rem, 1.7vw, 1.5rem);
+  line-height: 1.42;
+  color: var(--ink);
+}
+.insta-body { display: grid; gap: 10px; color: var(--body); font-size: .96rem; line-height: 1.82; }
+.insta-origin {
+  margin-top: auto;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #fff;
+  background: linear-gradient(135deg, var(--green-700), var(--green-800));
+  padding: 12px 18px;
+  border-radius: 12px;
+  box-shadow: 0 14px 30px -16px rgba(15, 81, 50, .85);
+}
+.insta-origin:hover { background: var(--green-600); }
+.insta-origin svg { width: 15px; height: 15px; }
+.insta-close {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  z-index: 5;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .3);
+  background: rgba(6, 22, 14, .55);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background .2s ease;
+}
+.insta-close:hover { background: rgba(26, 160, 95, .92); }
+.insta-close svg { width: 17px; height: 17px; }
+
+@media (max-width: 980px) {
+  .report-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 860px) {
+  .insta-dialog {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: 92vh;
+    overflow-y: auto;
+  }
+  .insta-stage { aspect-ratio: 1 / 1; }
+  .insta-info { overflow: visible; gap: 12px; }
+  .insta-origin { margin-top: 6px; }
+}
+@media (max-width: 760px) {
+  .contents-tabs { width: 100%; gap: 4px; padding: 5px; }
+  .contents-tab { flex: 1 1 0; justify-content: center; padding: 11px 10px; font-size: 13.5px; gap: 6px; }
+  .tab-count { padding: 1px 6px; font-size: 10.5px; }
+  .insta-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .contents-foot { flex-direction: column; align-items: flex-start; gap: 12px; }
+}
+@media (max-width: 640px) {
+  .report-grid { grid-template-columns: minmax(0, 1fr); }
+  .report-link { padding: 20px 20px 18px; }
+}
+
+/* 메뉴가 7개로 늘어난 폭 구간(1081~1260px)에서 헤더 한 줄 유지 */
+@media (min-width: 1081px) and (max-width: 1260px) {
+  .nav { gap: 14px; }
+  .nav a { font-size: 14.5px; }
+  .header-call { font-size: 14px; }
+  .header-cta { padding: 11px 18px; font-size: 14px; }
 }
