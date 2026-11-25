@@ -121,14 +121,17 @@ export function createAdminView(container) {
   }
 
   function leaderCardTemplate(account, sites) {
-    const site = sites.find((item) => (account.assignedSiteIds || []).includes(item.id));
+    const assigned = sites.filter((item) => (account.assignedSiteIds || []).includes(item.id));
+    const siteLabel = assigned.length
+      ? ` · ${assigned.map((item) => item.name).join(' · ')}${assigned.length > 1 ? ` (${assigned.length}곳)` : ''}`
+      : '';
     return `
       <div class="staff-row" data-leader-row="${esc(account.id)}">
         <div class="staff-row__who">
           <span class="avatar" aria-hidden="true">${esc(account.name.slice(0, 1))}</span>
           <div>
             <strong>${esc(account.name)} ${esc(account.title || '팀장')}${account.active === false ? ' · 중지됨' : ''}</strong>
-            <span>${esc(account.phonePretty || account.phone)}${site ? ` · ${esc(site.name)}` : ''}</span>
+            <span>${esc(account.phonePretty || account.phone)}${esc(siteLabel)}</span>
           </div>
         </div>
         <div class="staff-row__code">
