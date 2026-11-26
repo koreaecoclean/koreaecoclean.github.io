@@ -147,10 +147,9 @@ values ('ecoclean-files', 'ecoclean-files', true)
 on conflict (id) do update set public = true;
 
 drop policy if exists "ecoclean files public read" on storage.objects;
-create policy "ecoclean files public read"
-  on storage.objects for select
-  to anon, authenticated
-  using (bucket_id = 'ecoclean-files');
+-- 공개(public) 버킷의 파일은 정책 없이도 공개 URL 로 바로 열립니다.
+-- SELECT 정책을 두면 누구나 버킷 안의 전체 파일 목록을 볼 수 있어(대시보드 경고)
+-- 일부로 두지 않습니다. 앱도 목록을 읽지 않고, 레코드에 저장한 공개 주소만 엽니다.
 
 drop policy if exists "ecoclean files upload" on storage.objects;
 create policy "ecoclean files upload"
