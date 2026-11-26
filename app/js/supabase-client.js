@@ -17,6 +17,9 @@
  *   · supplyCatalog · supplyOrders · meta
  *   roomCodes → inviteCodes, grants → leaderCodes, staffChecks → attitudeLogs
  *
+ * 기기마다 달라야 하는 값(로그인 세션)은 서버로 올리지도 받지도 않습니다.
+ * (그러지 않으면 한 폰에서 대표로 로그인한 세션이 모든 폰으로 복사됩니다.)
+ *
  * ⚠️ 이 앱은 Supabase Auth 세션이 아니라 앱 자체 인증(전화번호 · 1회용 초대코드)을
  *    쓰므로 publishable(anon) 키로 통신합니다. 키는 공개되어도 되는 등급이지만,
  *    테이블 정책이 넓게 열려 있으니 운영 확장 시 Supabase Auth + 좁은 RLS 로
@@ -53,6 +56,18 @@ export const COLLECTION_OF = Object.freeze({
 
 /** 서버와 맞추는 앱 컬렉션 목록. (사진 원본은 Storage 에 올리고 기기에 캐시합니다.) */
 export const SYNC_TABLES = Object.keys(COLLECTION_OF);
+
+/**
+ * 기기마다 달라야 하는 값 — 서버로 올리지도, 받지도 않습니다.
+ * 로그인 세션이 서버를 타면 다른 폰이 대표 계정으로 열리므로 반드시 막습니다.
+ */
+export const DEVICE_LOCAL_KEYS = Object.freeze({ meta: ['session'] });
+
+export function isDeviceLocal(table, key) {
+  const list = DEVICE_LOCAL_KEYS[table];
+  if (!list) return false;
+  return list.includes(String(key));
+}
 
 const TABLE_OF_COLLECTION = Object.freeze(
   Object.entries(COLLECTION_OF).reduce((map, [table, collection]) => {
@@ -400,7 +415,7 @@ export class SupabaseSync {
       const list = await this.local.getAll(table);
       for (const value of list || []) {
         const key = rowKey(value);
-        if (!key) continue;
+        if (!key || isDeviceLocal(table, key)) continue;
         rows.push({ table, key, value });
       }
     }
@@ -428,12 +443,18 @@ export class SupabaseSync {
    */
   async _applyRemote(rows, { replaceTables = false } = {}) {
     const remoteKeys = new Map();
+    const stale = [];
     let applied = 0;
     for (const row of rows || []) {
       const table = localTable(row.collection);
       if (!table) continue;
       const key = rowKey(row.data) || String(row.id || '');
       if (!key) continue;
+      // 기기 전용 값(로그인 세션)은 들여오지 않고 서버에서도 지웁니다.
+      if (isDeviceLocal(table, key)) {
+        stale.push({ collection: row.collection, id: key });
+        continue;
+      }
       if (!remoteKeys.has(table)) remoteKeys.set(table, new Set());
       remoteKeys.get(table).add(key);
       if (this._pendingKeys().has(`${table}::${key}`)) continue;
@@ -448,10 +469,14 @@ export class SupabaseSync {
         for (const value of (await this.local.getAll(table)) || []) {
           const key = rowKey(value);
           if (!key || keep.has(key)) continue;
+          if (isDeviceLocal(table, key)) continue;
           if (this._pendingKeys().has(`${table}::${key}`)) continue;
           await this.local.remove(table, key);
         }
       }
+    }
+    for (const item of stale) {
+      this.client.deleteItem(item.collection, item.id).catch(() => {});
     }
     return applied;
   }
@@ -497,6 +522,7 @@ export class SupabaseSync {
     if (!remoteCollection(table)) return;
     const key = rowKey(value);
     if (!key) return;
+    if (isDeviceLocal(table, key)) return; // 로그인 세션 등 기기 전용 값
     const last = this._lastOp();
     if (last && last.type === 'put' && last.table === table) {
       last.rows.set(key, value);
@@ -509,6 +535,7 @@ export class SupabaseSync {
 
   queueDelete(table, key) {
     if (!remoteCollection(table) || !key) return;
+    if (isDeviceLocal(table, key)) return;
     this.queue.push({ type: 'delete', table, key: String(key) });
     this._writes += 1;
     this._schedule();
