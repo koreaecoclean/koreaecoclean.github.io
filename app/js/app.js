@@ -5,6 +5,7 @@
 import { $, toast, initLightbox } from './ui.js';
 import { store } from './store.js';
 import { getSession } from './auth.js';
+import { consumeInviteHash, inviteTab } from './invite.js';
 import { createHomeView } from './views/home.js';
 import { createCustomerView } from './views/customer.js';
 import { createLeaderView } from './views/leader.js';
@@ -92,6 +93,12 @@ function bindNavigation() {
   });
 
   window.addEventListener('hashchange', () => {
+    // 앱이 이미 열려 있는 상태에서 초대 링크를 눌러도 그 화면으로 이동합니다.
+    const invite = consumeInviteHash(window.location.hash);
+    if (invite) {
+      switchTab(inviteTab(invite));
+      return;
+    }
     const name = window.location.hash.replace('#', '');
     if (TAB_NAMES.includes(name) && name !== activeTab) switchTab(name);
   });
@@ -118,6 +125,51 @@ function setNetworkPill(online) {
   const pill = $('#net-pill');
   if (!pill) return;
   pill.hidden = !!online;
+}
+
+/* ------------------------------------------------------------------ */
+/* 서버 동기화 상태 표시 (무료 Supabase)                                */
+/* ------------------------------------------------------------------ */
+
+const SYNC_LABELS = {
+  synced: '서버 동기화 중',
+  syncing: '동기화 중…',
+  offline: '오프라인 저장',
+  error: '동기화 지연',
+  local: '기기 저장',
+};
+
+function bindSyncStatus() {
+  const pill = $('#sync-pill');
+  const remote = store.remote;
+  document.documentElement.dataset.sync = remote ? remote.status : 'local';
+  if (!pill) return;
+  if (!remote) {
+    pill.hidden = true;
+    return;
+  }
+  pill.hidden = false;
+  const paint = ({ status }) => {
+    pill.dataset.status = status;
+    pill.textContent = SYNC_LABELS[status] || '동기화';
+    pill.title = remote.message || '다른 기기와 자동으로 맞춥니다.';
+    document.documentElement.dataset.sync = status;
+  };
+  remote.onStatus(paint);
+  paint({ status: remote.status });
+
+  // 다른 기기의 변경이 들어오면 지금 화면을 다시 그릴 수 있게 알려 줍니다.
+  document.addEventListener('kec:remote-change', (event) => {
+    const count = (event.detail && event.detail.count) || 0;
+    if (!count || activeTab === 'customer') return; // 고객 방은 store 알림으로 이미 갱신됩니다
+    toast(`다른 기기에서 ${count}건이 반영되었습니다.`, {
+      actionLabel: '새로고침',
+      duration: 7000,
+      onAction: () => {
+        if (activeTab && views[activeTab]) views[activeTab].render();
+      },
+    });
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -208,7 +260,11 @@ async function boot() {
   initLightbox();
   bindNavigation();
   bindInstallPrompt();
+  bindSyncStatus();
   registerServiceWorker();
+
+  // 모두싸인형 초대 링크(#invite=S-…)로 들어오면 그 코드의 입장 화면을 먼저 엽니다.
+  const inviteCode = consumeInviteHash(window.location.hash);
 
   try {
     await store.init();
@@ -218,11 +274,12 @@ async function boot() {
   }
 
   const fromHash = window.location.hash.replace('#', '');
-  const initial = TAB_NAMES.includes(fromHash) ? fromHash : 'home';
+  const initial = inviteCode ? inviteTab(inviteCode) : TAB_NAMES.includes(fromHash) ? fromHash : 'home';
   await switchTab(initial);
 
   document.body.dataset.appReady = 'true';
   document.documentElement.dataset.store = store.adapterName;
+  document.documentElement.dataset.sync = store.remote ? store.remote.status : 'local';
 
   // Keep the customer room fresh when a report is added elsewhere in the app.
   store.subscribe(() => {

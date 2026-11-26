@@ -109,6 +109,43 @@
 - 영수증에는 상호·대표·사업자번호·주소·전화·발행일·구입자·품목별 단가/수량/금액·**합계 (현금가)**·`※ 현금 결제 금액 · 부가세 별도`·`위 금액을 정히 영수합니다`·대표 직인이 그대로 인쇄됩니다. 단가가 미정인 봉투가 섞여 있으면 영수증에 안내가 붙습니다.
 - 데모: **김미영 팀장 영수증 1건(6품목 · 612,000원)** 과 **이정숙 팀장 발행 대기 신청 1건**이 들어 있어 바로 눌러볼 수 있습니다.
 
+### v2.5.0 — ☁️ 다중 기기 실시간 동기화 · 모두싸인형 초대 링크
+
+**무료 Supabase 프로젝트가 실제로 연결되어 있습니다** — 폰이 여러 대여도 같은 데이터를 봅니다.
+
+| | |
+| --- | --- |
+| Project | `https://magwvjtnxlewumojlpwz.supabase.co` |
+| 공유 테이블 | `public.ecoclean_items` (collection · id · data · updated_at) |
+| 파일 저장소 | Storage 버킷 `ecoclean-files` (사진 · 사업자등록증 · 서명) |
+| 앱 파일 | `js/supabase-client.js` (연결 · 동기화), `js/invite.js` (초대 링크) |
+
+- **켜자마자 서버와 맞춥니다.** 서버가 비어 있으면 이 기기의 데이터를 그대로 올리고, 서버에 데이터가 있으면 서버를 기준으로 기기 캐시(IndexedDB)를 갱신합니다.
+- **모든 저장이 곧바로 서버로** 갑니다 — 서명 · 보고 · 견적 · 초대코드 · 장비 영수증 · 근무태도 · 현장 정보 · 계정 전부.
+- **5초마다 다른 기기의 변경을 받아 옵니다.** 화면으로 돌아올 때 · 네트워크가 복구될 때도 즉시 한 번 맞춥니다. 1분에 한 번은 전체를 비교해 다른 기기에서 지운 기록도 정리합니다.
+- 헤더 오른쪽에 **서버 동기화 배지**가 뜨고, 오프라인이면 기기 저장으로 계속 동작하다가 연결되면 올라갑니다.
+- 로컬 개발 · 자동 테스트(`127.0.0.1`, `localhost`)에서는 **운영 DB를 건드리지 않도록 자동으로 꺼집니다.** 켜려면 `?sync=on`, 끄려면 `?sync=off`.
+
+**모두싸인형 원클릭 링크** — 링크를 받은 사람은 코드를 입력할 필요가 없습니다.
+
+```
+https://koreaecoclean.github.io/app/#invite=S-H3K9P2   도급처 · 직원 계약서 서명
+https://koreaecoclean.github.io/app/#invite=Q-G7K2M4   고객 견적서 · 계약서 서명
+https://koreaecoclean.github.io/app/#invite=C-7F3K9Q   정기청소 현장 입장
+```
+
+- 관리 → 견적 · 계약 / 직원 · 계약 관리 카드에 **초대 링크 주소가 그대로 보이고**, **[초대 문구 복사] · [초대 링크 복사]** 로 문자·카톡에 보낼 수 있습니다.
+- 작성 중(draft)인 견적·직원 계약은 **링크를 복사하는 순간 발송 상태**가 됩니다(링크를 보냈다 = 발송했다).
+- 링크를 열면 그 코드의 입장 화면이 **코드가 채워진 채로** 뜨고, 전화번호만 넣으면 됩니다.
+- `#invite=S-…` 는 [현장 보고] 탭의 직원관리방으로 들어가 **내 계약서 서명 창이 바로 열립니다**(을 정보 입력 → 서명 → 체결).
+- `#invite=Q-…` 는 [청소 확인] 탭 견적 방 → 계약서 확인 → 서명 → **현장 자동 등록**까지 이어집니다.
+
+**다중 기기 실증 (2026-11-26 라이브 확인)**
+
+1. **기기 A** — 대표 로그인 → 관리 → 직원 · 계약 관리 → **+ 새 직원 계약 등록(도급 · 을 미정)** → **[초대 링크 복사]**
+2. **기기 B** — 로그인 기록이 하나도 없는 새 브라우저에서 그 링크를 열고 도급처 정보(상호 · 대표 · 사업자번호/생년월일 · 주소 · 연락처 · 입금계좌) 입력 → **손가락/마우스로 서명** → **[직원 서명 완료]**
+3. **기기 A** — 새로고침하면 기기 B가 입력한 을 정보와 서명 이미지가 계약서에 그대로 올라와 있습니다. (5초 폴링으로 열려 있는 화면에도 '다른 기기에서 반영되었습니다' 알림)
+
 ### 업로드 사진 3분류 (필수 요건)
 
 팀장 보고 화면과 고객 보고 화면 모두 아래 3개 구역으로 나뉩니다.
@@ -195,6 +232,16 @@
 2. **현장 보고** → 한지우(프리랜서) 직원관리방 입장(`010-7712-4490` / `S-H3K9P2`) → 계약서 → **확인 · 서명** → 서명 박스 클릭 → 서명 창에서 서명 → **[서명 적용]** → **[직원 서명 완료]**
 3. 김미영 도급 계약서는 이미 체결된 예시입니다. 관리 → 직원 · 계약 관리에서 열어 도급계약서·별첨본을 확인할 수 있습니다.
 
+### v2.5.0 테스트 (초대 링크 · 다중 기기) — 폰 1대로도 확인 가능
+
+1. **관리** 탭 → 대표 로그인(`010-9900-8369` / `ceo2016`) → **직원 · 계약 관리**
+2. **+ 새 직원 계약 등록** → 유형 **도급(하도급)** · 이름·연락처·월 금액 입력 → **저장**
+3. 카드에 뜨는 **초대 링크** 를 **[초대 링크 복사]** → 문자·카톡으로 내 폰에 보내기
+4. 그 링크를 **시크릿 창(로그인·저장 기록 없음)** 에서 열기 → 코드가 채워진 직원관리방 입장 화면 → 내 전화번호 입력 → **직원관리방 입장**
+5. 도급계약서 서명 창에서 **상호 · 대표 · 사업자번호/생년월일 · 주소 · 연락처 · 입금계좌** 입력 → 서명 박스 → 손가락으로 서명 → **[서명 적용]** → **[직원 서명 완료]**
+6. 원래 창(대표)으로 돌아와 **새로고침** → 직원 · 계약 관리 → 그 계약서를 열면 **방금 입력한 을 정보와 서명**이 그대로 있습니다.
+7. 헤더의 **서버 동기화 배지**가 초록이면 서버 저장 완료입니다. 비행기 모드로 바꾸면 ‘오프라인 저장’으로 바뀌고, 다시 켜면 자동으로 올라갑니다.
+
 ### 5분 테스트 시나리오
 
 1. **현장 보고** 탭 → 팀장 로그인(`010-3300-1042` / `team1234` / `TL-4821`)
@@ -237,9 +284,11 @@ korea-ecoclean-app/
 ├─ supabase-schema.sql         Supabase 무료 플랜용 테이블 · RLS · Storage 정책
 ├─ css/styles.css              디자인 토큰 + 전체 스타일
 ├─ js/
-│  ├─ app.js                   부트스트랩 · 탭 라우팅(역할별) · 설치 배너 · SW 등록
+│  ├─ app.js                   부트스트랩 · 탭 라우팅(역할별) · 동기화 배지 · 초대 링크 진입 · SW 등록
 │  ├─ auth.js                  고객/팀장/대표 로그인, 세션, 방 입장 권한
-│  ├─ store.js                 데이터 계층 (Store 파사드 + IndexedDB/localStorage 어댑터)
+│  ├─ store.js                 데이터 계층 (Store 파사드 + IndexedDB/localStorage 어댑터 + 서버 동기화)
+│  ├─ supabase-client.js       Supabase REST·Storage 클라이언트 + 다중 기기 동기화 계층
+│  ├─ invite.js                모두싸인형 초대 링크 (#invite=코드) 생성 · 해석
 │  ├─ seed.js                  현장 3곳 · 보고 10건 · 계정 7개 · 1회용 코드 4개 · 데모 방 권한 3개
 │  ├─ photos.js                사진 리사이즈/압축 · 샘플 사진 · 대체 이미지
 │  ├─ ui.js                    공통 헬퍼 (esc · 날짜 · 토스트 · 라이트박스 · 확인창)
@@ -319,78 +368,49 @@ vercel --prod
 
 ---
 
-## 7. Supabase 무료 플랜 연결 (기기 간 공유)
+## 7. Supabase 무료 플랜 연결 (기기 간 공유) — 연결 완료
 
-지금은 **기기 1대 안에서만** 동작합니다. 여러 기기·실제 고객에게 서비스하려면 무료 Supabase로 옮깁니다.
+**이미 연결되어 있습니다.** 아래는 지금 무엇이 어떻게 붙어 있는지와, 새 프로젝트로 옮길 때의 순서입니다.
 
-### 단계 1 — 프로젝트 만들기
-1. <https://supabase.com> → **Start your project** (무료, 카드 등록 없음)
-2. Organization 선택 → **New project**
-   - Name: `korea-ecoclean`
-   - Database Password: 안전한 값 (따로 보관)
-   - Region: **Northeast Asia (Seoul)**
-3. 프로젝트 생성에 1~2분 걸립니다.
+### 지금 연결된 것
+| 항목 | 값 |
+| --- | --- |
+| Project URL | `https://magwvjtnxlewumojlpwz.supabase.co` |
+| 공개 키(publishable) | `js/supabase-client.js` 의 `SUPABASE_KEY` |
+| 공유 테이블 | `public.ecoclean_items` — collection · id · data(jsonb) · updated_at |
+| 파일 버킷 | `ecoclean-files` (public) — 사진 · 사업자등록증 · 서명 PNG |
+| 스키마 원본 | `supabase-schema.sql` (대시보드 SQL Editor에서 실행한 그대로) |
 
-### 단계 2 — 스키마 실행
-1. 왼쪽 **SQL Editor** → **New query**
-2. 이 폴더의 `supabase-schema.sql` 내용을 **통째로 붙여넣고 RUN**
-3. 생성되는 것: `sites` `accounts` `room_codes` `grants` `reports` `report_photos` `inquiries` `app_meta` 테이블, RLS 정책, Storage 버킷 `report-photos`
+- collection 이름은 앱 저장 이름을 그대로 쓰되 세 개만 이름이 다릅니다.
+  `roomCodes → inviteCodes`, `grants → leaderCodes`, `staffChecks → attitudeLogs`.
+- 서버가 `updated_at` 을 항상 직접 찍습니다(트리거). 그래서 폰 시계가 틀려도 증분 동기화가 어긋나지 않습니다.
+- 사진·서명은 Storage에 올리고 **공개 주소만** 레코드에 넣습니다. 사진 원본이 data URL로 DB에 쌓이지 않습니다.
 
-### 단계 3 — 키 확인
-**Project Settings → API**
-- `Project URL` → `https://xxxx.supabase.co`
-- `anon public` 키 (공개되어도 되는 키, RLS로 보호)
+### 새 Supabase 프로젝트로 옮기려면
+1. <https://supabase.com> → **New project** (무료, 카드 등록 없음 · Region: Northeast Asia (Seoul))
+2. 왼쪽 **SQL Editor** → New query → 이 폴더의 `supabase-schema.sql` 통째로 붙여넣고 **RUN**
+   - 만드는 것: `ecoclean_items` 테이블 + `updated_at` 트리거 + anon 권한(GRANT) + RLS 정책 4종 + Realtime 발행 + Storage 버킷 `ecoclean-files` 와 정책
+3. **Project Settings → API Keys** 에서 Project URL 과 publishable 키를 복사
+4. `js/supabase-client.js` 의 `SUPABASE_URL` · `SUPABASE_KEY` 두 줄만 바꿔서 배포
 
-### 단계 4 — 앱에 연결
-`index.html`의 `</body>` 앞에 추가:
-```html
-<script type="module">
-  import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-  window.__supabase = createClient('https://xxxx.supabase.co', 'anon-public-key');
-</script>
-```
-`js/app.js` 상단에서 store를 교체:
-```js
-import { Store } from './store.js';
-import { createSupabaseAdapter } from './store-remote.example.js';
-export const store = new Store(createSupabaseAdapter(window.__supabase));
-```
-> `store-remote.example.js`는 참고용 파일입니다. 실제로 쓰려면 파일 이름에서 `.example`을 빼고 import 하세요.
+> `GRANT` 를 빼면 `permission denied for table ecoclean_items` (401) 가 납니다. SQL Editor로 만든 테이블은 anon 역할 권한이 자동으로 붙지 않습니다.
 
-### 단계 5 — 사진을 Storage로
-어댑터가 `report_photos` 버킷에 JPEG를 올리고 URL만 저장합니다(base64 저장 안 함).
-무료 플랜 저장소 1GB면 장당 150KB 기준 **약 6,000장**을 보관할 수 있습니다.
-
-### 단계 6 — 로그인을 Supabase Auth로
-1. **Authentication → Providers** 에서 Email(매직링크/OTP) 또는 Kakao 활성화
-2. `accounts` 테이블을 `auth.users`와 연결(또는 `profiles`로 확장)
-3. `js/auth.js`의 `verifyPassword`를 `supabase.auth.signInWithPassword`로 교체
-4. 1회용 코드 검증은 **서버 함수(RPC)** 로 옮겨 브라우저에서 코드 목록을 읽지 못하게 합니다:
-```sql
-create or replace function public.redeem_room_code(p_code text)
-returns table (site_id uuid) language plpgsql security definer as $$
-declare v_code public.room_codes;
-begin
-  select * into v_code from public.room_codes where code = upper(p_code) for update;
-  if not found then raise exception 'code_not_found'; end if;
-  if v_code.used_at is not null then raise exception 'code_used'; end if;
-  update public.room_codes set used_at = now(), used_by = auth.uid() where id = v_code.id;
-  insert into public.grants (id, account_id, site_id, code_id)
-  values (auth.uid() || '::' || v_code.site_id, auth.uid(), v_code.site_id, v_code.id)
-  on conflict do nothing;
-  return query select v_code.site_id;
-end; $$;
-```
+### 키 노출과 보안
+- publishable(sb_publishable_…) 키는 원래 공개되어도 되는 등급이고, 앱 JS에 들어 있어도 됩니다. 다만 이 앱은 Supabase Auth 세션이 아니라 **앱 자체 인증(전화번호 · 1회용 초대코드)** 을 쓰므로, 테이블 정책이 anon에게 열려 있습니다. 즉 **키를 아는 사람은 데이터를 읽고 쓸 수 있습니다.**
+- 고객에게 개인정보를 본격적으로 받기 전에는 아래 순서로 좁히세요.
+  1. **Authentication → Providers** 에서 Email(OTP)·Kakao 중 하나를 켜고 `js/auth.js` 의 로그인을 `supabase.auth.signInWithOtp` 로 교체
+  2. RLS 정책을 collection · 계정 단위로 좁히기(고객은 자기 현장 행만, 금액은 대표만)
+  3. 1회용 코드 소모를 서버 함수(RPC)로 옮기기 — 코드 목록을 브라우저가 읽지 못하게
 
 ### 무료 플랜 참고
-| 항목 | 무료 한도(2025년 기준, 정책에 따라 변동) |
+| 항목 | 무료 한도(2025~2026년 기준, 정책에 따라 변동) |
 | --- | --- |
 | 데이터베이스 | 500MB |
 | 파일 저장소 | 1GB |
-| 대역폭 | 2GB/월 |
+| 대역폭 / egress | 5GB/월 |
 | 비활성 프로젝트 | 일정 기간 미사용 시 일시정지될 수 있음 |
 
-정리하면 **호스팅 0원(GitHub Pages/Vercel/Cloudflare) + DB 0원(Supabase Free)** 으로 운영할 수 있습니다.
+정리하면 **호스팅 0원(GitHub Pages) + DB 0원(Supabase Free)** 으로 운영할 수 있습니다.
 
 ---
 

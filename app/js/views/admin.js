@@ -16,10 +16,34 @@ import {
   staffPanelTemplate,
   quoteInviteMessage,
   staffInviteMessage,
+  roomCodeInviteMessage,
   defaultScope,
   managerDashboardTemplate,
   staffRoomTemplate,
 } from './admin-docs.js';
+import { inviteUrl } from '../invite.js';
+
+/**
+ * 초대 링크를 보낸다는 것은 곧 발송이라는 뜻입니다.
+ * 아직 작성 중(draft)인 견적·직원 계약은 링크·문구를 복사할 때 발송 상태로 바꿉니다.
+ */
+async function ensureQuoteSent(quote) {
+  if (!quote || quote.status !== 'draft') return quote;
+  try {
+    return await store.sendQuote(quote.id);
+  } catch (error) {
+    return quote;
+  }
+}
+
+async function ensureStaffSent(contract) {
+  if (!contract || contract.status !== 'draft') return contract;
+  try {
+    return await store.sendStaffContract(contract.id);
+  } catch (error) {
+    return contract;
+  }
+}
 import { openQuoteSheet, openAgreementSheet, openStaffContractSheet, openBlankSubcontractSheet } from './quote-contract.js';
 import {
   supplyAdminPanel,
@@ -31,8 +55,7 @@ import {
   refreshSupplyTotal,
 } from './supply.js';
 
-export function createAdminView(container) {
-  const state = {
+export function createAdminView(container) {  const state = {
     session: null,
     isCeo: false,
     loginError: '',
@@ -451,6 +474,7 @@ export function createAdminView(container) {
                         <span>${code.usedAt ? `사용 완료 · ${formatStamp(code.usedAt)}` : `미사용 · ${formatStamp(code.issuedAt)} 발급`}</span>
                       </div>
                       <button class="link-btn" type="button" data-copy-code="${esc(code.code)}">복사</button>
+                      <button class="link-btn" type="button" data-copy-code-link="${esc(code.code)}|${esc(site.name)}">초대 링크</button>
                     </li>`,
                 )
                 .join('')
@@ -1234,8 +1258,26 @@ export function createAdminView(container) {
     if (copyQuoteInvite) {
       const quote = await store.getQuote(copyQuoteInvite.dataset.copyQuoteInvite);
       if (quote) {
-        const ok = await copyText(quoteInviteMessage(quote));
-        toast(ok ? `${quote.clientCompany} 초대 문구를 복사했습니다.` : '복사가 차단되었습니다.', { tone: ok ? 'default' : 'error' });
+        const sent = await ensureQuoteSent(quote);
+        const ok = await copyText(quoteInviteMessage(sent));
+        toast(ok ? `${sent.clientCompany} 초대 문구를 복사했습니다.` : '복사가 차단되었습니다.', { tone: ok ? 'default' : 'error' });
+        if (sent !== quote) await render();
+      }
+      return;
+    }
+
+    // 초대 링크만 복사 — 링크를 받은 사람이 열면 코드가 입력된 입장 화면이 뜨는습니다.
+    const copyQuoteLink = event.target.closest('[data-copy-quote-link]');
+    if (copyQuoteLink) {
+      const quote = await store.getQuote(copyQuoteLink.dataset.copyQuoteLink);
+      if (quote) {
+        const sent = await ensureQuoteSent(quote);
+        const ok = await copyText(inviteUrl(sent.inviteCode));
+        toast(ok ? `초대 링크를 복사했습니다 · ${inviteUrl(sent.inviteCode)}` : inviteUrl(sent.inviteCode), {
+          tone: ok ? 'default' : 'error',
+          duration: 7000,
+        });
+        if (sent !== quote) await render();
       }
       return;
     }
@@ -1282,10 +1324,28 @@ export function createAdminView(container) {
 
     const copyStaffInvite = event.target.closest('[data-copy-staff-invite]');
     if (copyStaffInvite) {
-      const contract = await store.getStaffContract(copyStaffInvite.dataset.copyStaffInvite);
-      if (contract) {
+      const found = await store.getStaffContract(copyStaffInvite.dataset.copyStaffInvite);
+      if (found) {
+        const contract = await ensureStaffSent(found);
         const ok = await copyText(staffInviteMessage(contract));
         toast(ok ? `${contract.name}님 직원 초대 문구를 복사했습니다.` : '복사가 차단되었습니다.', { tone: ok ? 'default' : 'error' });
+        if (contract !== found) await render();
+      }
+      return;
+    }
+
+    // 직원 · 도급처 계약서 초대 링크만 복사.
+    const copyStaffLink = event.target.closest('[data-copy-staff-link]');
+    if (copyStaffLink) {
+      const found = await store.getStaffContract(copyStaffLink.dataset.copyStaffLink);
+      if (found) {
+        const contract = await ensureStaffSent(found);
+        const ok = await copyText(inviteUrl(contract.inviteCode));
+        toast(ok ? `초대 링크를 복사했습니다 · ${inviteUrl(contract.inviteCode)}` : inviteUrl(contract.inviteCode), {
+          tone: ok ? 'default' : 'error',
+          duration: 7000,
+        });
+        if (contract !== found) await render();
       }
       return;
     }
@@ -1328,6 +1388,18 @@ export function createAdminView(container) {
     if (copy) {
       const ok = await copyText(copy.dataset.copyCode);
       toast(ok ? `${copy.dataset.copyCode} 코드를 복사했습니다.` : '복사가 차단되었습니다. 코드를 길게 눌러 복사해 주세요.');
+      return;
+    }
+
+    // 정기청소 현장 1회용 코드(C-…) 초대 링크 · 문구.
+    const copyCodeLink = event.target.closest('[data-copy-code-link]');
+    if (copyCodeLink) {
+      const [code, siteName] = String(copyCodeLink.dataset.copyCodeLink).split('|');
+      const ok = await copyText(roomCodeInviteMessage(siteName, code));
+      toast(ok ? `초대 문구를 복사했습니다 · ${inviteUrl(code)}` : '복사가 차단되었습니다.', {
+        tone: ok ? 'default' : 'error',
+        duration: 7000,
+      });
       return;
     }
 

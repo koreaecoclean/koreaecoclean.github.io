@@ -35,6 +35,7 @@ import {
 } from '../auth.js';
 import { openQuoteSheet, openAgreementSheet } from './quote-contract.js';
 import { preparePhoto } from '../photos.js';
+import { peekPendingInvite, clearPendingInvite, inviteKind, inviteLabel } from '../invite.js';
 
 const FILTERS = [
   { key: 'all', label: '전체' },
@@ -115,10 +116,20 @@ export function createCustomerView(container) {
   }
 
   function loginTemplate(registered) {
+    const invite = peekPendingInvite();
+    const inviteCode = invite && inviteKind(invite) !== 'staff' ? invite : '';
     return `
       <section class="panel auth-card">
         <span class="eyebrow">${icons.clipboard} 고객사 전용 방</span>
         <h2>우리 현장 청소 기록</h2>
+        ${
+          inviteCode
+            ? `<div class="invite-banner" data-invite-banner>
+                 <strong>초대 링크로 접속하셨습니다 · ${esc(inviteLabel(inviteCode))}</strong>
+                 <span>초대코드 <code>${esc(inviteCode)}</code> 가 입력되어 있습니다. 전화번호만 넣고 입장하세요.</span>
+               </div>`
+            : ''
+        }
         <p class="tiny muted">
           <strong>등록된 번호</strong>는 전화번호만 입력하면 바로 입장합니다.
           처음 오신 분(추가 인원 포함)은 대표가 발급한 <strong>1회용 청소코드</strong>를 함께 입력해 주세요.
@@ -132,7 +143,7 @@ export function createCustomerView(container) {
           <div class="field">
             <label for="cust-code">1회용 청소코드 <span class="tiny muted">(처음 한 번만)</span></label>
             <input class="input" id="cust-code" type="text" inputmode="text" autocomplete="off" spellcheck="false"
-                   placeholder="예: C-7F3K9Q" maxlength="12">
+                   placeholder="예: C-7F3K9Q" maxlength="14" value="${esc(inviteCode)}">
             <span class="field__hint">등록된 번호는 비워 두고 입장하세요.</span>
           </div>
           <div class="field">
@@ -961,6 +972,7 @@ export function createCustomerView(container) {
       state.loginError = '';
       try {
         const session = await loginCustomer({ phone, code, name, title: rest.join(' ') });
+        clearPendingInvite();
         toast(`${session.name}님, ${session.title || ''} · 우리 현장 방에 입장했습니다.`);
         await render();
         window.scrollTo({ top: 0, behavior: 'smooth' });

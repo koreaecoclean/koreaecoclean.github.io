@@ -27,6 +27,7 @@ import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
 import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, demoStaffCodes } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
 import { openStaffContractSheet } from './quote-contract.js';
+import { peekPendingInvite, clearPendingInvite, inviteKind, inviteLabel } from '../invite.js';
 import { supplyStaffPanel, openSupplyReceipt, submitSupplyRequest, refreshSupplyTotal } from './supply.js';
 
 const SAMPLE_POOL = {
@@ -78,6 +79,8 @@ export function createLeaderView(container) {
   };
   const sampleCursor = { security: 0, cleaning: 0, issue: 0 };
   let mounted = false;
+  /** #invite=S-… 로 자동으로 연 계약서 코드(같은 링크로 두 번 열지 않게). */
+  let inviteOpened = '';
 
   /* ---------------- draft ---------------- */
 
@@ -424,12 +427,22 @@ export function createLeaderView(container) {
   }
 
   function staffGateTemplate() {
+    const invite = peekPendingInvite();
+    const inviteCode = invite && inviteKind(invite) === 'staff' ? invite : '';
     return `
       <section class="panel staff-gate">
         <div class="section-head">
           <h2>직원관리방 입장</h2>
           <p>프리랜서 · 도급 · 일용직</p>
         </div>
+        ${
+          inviteCode
+            ? `<div class="invite-banner" data-invite-banner>
+                 <strong>초대 링크로 접속하셨습니다 · ${esc(inviteLabel(inviteCode))}</strong>
+                 <span>초대코드 <code>${esc(inviteCode)}</code> 가 입력되어 있습니다. 전화번호만 넣고 입장하면 내 계약서가 바로 열립니다.</span>
+               </div>`
+            : ''
+        }
         <p class="tiny muted">
           대표가 보낸 <strong>1회용 직원 초대코드</strong>로 내 계약서를 확인하고 전자서명합니다.
           한 번 입장한 번호는 다음부터 전화번호만 입력해도 들어옵니다.
@@ -441,7 +454,7 @@ export function createLeaderView(container) {
           </div>
           <div class="field">
             <label for="si-code">1회용 직원 초대코드 <span class="tiny muted">(처음 한 번만)</span></label>
-            <input class="input" id="si-code" type="text" autocomplete="off" spellcheck="false" placeholder="예: S-H3K9P2" maxlength="12">
+            <input class="input" id="si-code" type="text" autocomplete="off" spellcheck="false" placeholder="예: S-H3K9P2" maxlength="12" value="${esc(inviteCode)}">
           </div>
           ${state.staffError ? `<p class="field__error">${esc(state.staffError)}</p>` : ''}
           <button class="btn btn--primary btn--block" type="submit">직원관리방 입장</button>
@@ -788,6 +801,7 @@ export function createLeaderView(container) {
       container.innerHTML = await sitePickerTemplate(state.session, allowed);
       refreshWeekSummary();
       refreshStorage();
+      openInviteContractOnce(state.session);
       return;
     }
 
@@ -805,6 +819,33 @@ export function createLeaderView(container) {
     container.innerHTML = formTemplate(state.session, site);
     refreshMyReports(state.session);
     refreshStorage();
+  }
+
+  /* ---------------- 초대 링크 → 내 계약서 바로 열기 ---------------- */
+
+  /** 대표가 보낸(서명 대기) 계약서가 있으면 그 계약서 창을 엽니다. */
+  async function openMySentContract(session) {
+    const accountId = (session && session.accountId) || (state.session && state.session.accountId);
+    if (!accountId) return false;
+    const rows = await store.listStaffContracts({ accountId });
+    const target = rows.find((row) => row.status === 'sent' && !row.signature);
+    if (!target) return false;
+    await openStaffContractSheet(target.id, { role: 'staff', onChanged: render });
+    return true;
+  }
+
+  /** #invite=S-… 링크로 들어온 경우, 한 번만 계약서 창을 자동으로 엽니다. */
+  function openInviteContractOnce(session) {
+    const invite = peekPendingInvite();
+    if (!invite || inviteKind(invite) !== 'staff' || inviteOpened === invite) return;
+    inviteOpened = invite;
+    clearPendingInvite();
+    state.leaderTab = 'contracts';
+    setTimeout(() => {
+      openMySentContract(session).then((opened) => {
+        if (!opened) render();
+      });
+    }, 0);
   }
 
   /* ---------------- photos ---------------- */
@@ -1023,13 +1064,17 @@ export function createLeaderView(container) {
     if (event.target.id === 'staff-invite-form') {
       event.preventDefault();
       state.staffError = '';
+      const byInviteLink = !!peekPendingInvite();
       try {
         const session = await loginStaffInvite({
           phone: $('#si-phone', container)?.value || '',
           code: $('#si-code', container)?.value || '',
         });
+        clearPendingInvite();
+        if (byInviteLink) state.leaderTab = 'contracts';
         toast(`${session.name} ${session.title || '팀장'}님, 직원관리방에 입장했습니다.`);
         await render();
+        if (byInviteLink) await openMySentContract(session);
       } catch (error) {
         state.staffError = error.message || '직원관리방 입장에 실패했습니다.';
         await render();

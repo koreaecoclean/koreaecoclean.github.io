@@ -14,11 +14,14 @@
  *   remove(table, key) / clear(table?) / close()
  *   tables: sites | reports | photos | inquiries | accounts | roomCodes | grants | meta
  *
- * Supabase 로 교체하려면 같은 계약을 구현한 어댑터를 만들어
- * `new Store(adapter)` 에 넘기면 됩니다. 예시: js/store-remote.example.js,
- * 서버 스키마: supabase-schema.sql
+ * 무료 Supabase 다중 기기 동기화 (v2.5.0)
+ *  - 기기 저장소는 그대로 쓰고, 그 위에 js/supabase-client.js 의 동기화 계층을
+ *    덧씌웁니다. 모든 쓰기는 기기에 먼저 저장되고 곧바로 서버에도 올라가며,
+ *    5초마다 다른 기기의 변경을 받아 옵니다.
+ *  - 서버 스키마: supabase-schema.sql
  */
 
+import { attachSupabaseSync } from './supabase-client.js';
 import {
   buildSeedData,
   buildSites,
@@ -343,6 +346,7 @@ export function normalizeStaffContract(input) {
     birthDate: toText(source.birthDate),
     bizNumber: toText(source.bizNumber),
     companyName: toText(source.companyName),
+    ceoName: toText(source.ceoName),
     address: toText(source.address),
     bankName: toText(source.bankName) || PAYMENT_ACCOUNT.bankName,
     bankAccount: toText(source.bankAccount),
@@ -793,6 +797,9 @@ export class Store {
       adapter instanceof IndexedDbAdapter ? 'indexeddb' : adapter instanceof LocalStorageAdapter ? 'localstorage' : 'memory';
     this._ready = null;
     this._listeners = new Set();
+    /** 서버 동기화 계층 (js/supabase-client.js) — 꺼져 있으면 null. */
+    this.remote = null;
+    this.syncStatus = 'local';
   }
 
   init() {
@@ -802,8 +809,20 @@ export class Store {
 
   async _init() {
     await this.adapter.init();
+    // ① 서버를 기준으로 기기 캐시를 맞춥니다(서버가 비었으면 이 기기 데이터를 올립니다).
+    if (this.remote) {
+      try {
+        await this.remote.hydrate(this.adapter);
+        // ② 이후 모든 쓰기가 서버에도 반영되도록 어댑터를 감쌉니다.
+        this.adapter = this.remote.decorate(this.adapter);
+      } catch (error) {
+        console.warn('[store] 서버 동기화를 준비하지 못했습니다', error);
+      }
+    }
     await this._seedIfEmpty();
     await this._migrate();
+    // ③ 5초 주기 · 화면 복귀 · 네트워크 복구 때 서버 변경을 받아 옵니다.
+    if (this.remote) this.remote.start(this);
     return this;
   }
 
@@ -1662,6 +1681,8 @@ export class Store {
       });
     }
 
+    // 서명 이미지는 Storage 에 올려 여러 기기에서 같은 서명을 보게 합니다(실패 시 dataURL).
+    const signature = await this.storeSignature(toText(payload.signature));
     const nextAgreement = normalizeAgreement({
       ...agreement,
       status: 'signed',
@@ -1672,7 +1693,7 @@ export class Store {
       clientCeo: client.ceo,
       signedDate,
       signedByName: client.ceo || agreement.signedByName,
-      signature: toText(payload.signature) || agreement.signature,
+      signature: signature || agreement.signature,
       signedAt: now,
       updatedAt: now,
     });
@@ -1914,11 +1935,13 @@ export class Store {
       throw new StoreError('signature-empty', '서명란에 서명해 주세요.');
     }
     const now = new Date().toISOString();
+    const signature = await this.storeSignature(toText(payload.signature));
     const next = normalizeStaffContract({
       ...contract,
       // 도급 계약서 — 직원이 직접 확인·입력한 수급인(을) 정보를 함께 저장합니다.
       name: toText(payload.name) || contract.name,
       companyName: toText(payload.companyName) || contract.companyName,
+      ceoName: toText(payload.ceoName) || contract.ceoName,
       phone: toText(payload.phone) || contract.phone,
       address: toText(payload.address) || contract.address,
       bizNumber: toText(payload.bizNumber) || contract.bizNumber,
@@ -1927,7 +1950,7 @@ export class Store {
       bankAccount: toText(payload.bankAccount) || contract.bankAccount,
       accountHolder: toText(payload.accountHolder) || contract.accountHolder,
       status: 'signed',
-      signature: toText(payload.signature) || contract.signature,
+      signature: signature || contract.signature,
       signedDate: toText(payload.signedDate) || todayISO(),
       signedByName: toText(payload.name) || contract.name,
       signedAt: now,
@@ -2246,6 +2269,24 @@ export class Store {
 
   /* ---------------- photos ---------------- */
 
+  /** 서버 Storage 에 파일을 올리고 공개 주소를 돌려줍니다(동기화 꺼짐 · 실패 시 ''). */
+  async uploadFile(dataUrl, options = {}) {
+    if (!this.remote || !dataUrl || !/^data:/i.test(String(dataUrl))) return '';
+    try {
+      return await this.remote.upload(dataUrl, options);
+    } catch (error) {
+      return '';
+    }
+  }
+
+  /** 서명 dataURL → Storage 주소. 올리지 못하면 dataURL 을 그대로 저장합니다. */
+  async storeSignature(dataUrl) {
+    const value = String(dataUrl || '');
+    if (!value.startsWith('data:')) return value;
+    const url = await this.uploadFile(value, { folder: 'signatures', name: 'sign.png' });
+    return url || value;
+  }
+
   /** Persist one photo and return the small reference a report stores. */
   async savePhoto(photo) {
     const record = {
@@ -2267,12 +2308,15 @@ export class Store {
       }
       throw error;
     }
+    // 다른 기기에서도 원본을 볼 수 있도록 Storage 에도 올립니다(실패해도 썸네일로 표시).
+    const asset = await this.uploadFile(photo.dataUrl, { folder: 'photos', name: 'photo.jpg' });
     return {
       id: record.id,
       thumb: photo.thumb,
       width: record.width,
       height: record.height,
       caption: photo.caption || '',
+      ...(asset ? { asset } : {}),
     };
   }
 
@@ -2610,7 +2654,25 @@ export function createStore() {
     : LocalStorageAdapter.isSupported()
       ? new LocalStorageAdapter()
       : new MemoryAdapter();
-  return new Store(adapter);
+  const instance = new Store(adapter);
+  attachRemoteSync(instance);
+  return instance;
+}
+
+/**
+ * 무료 Supabase 동기화를 붙입니다.
+ * - 운영 주소(koreaecoclean.github.io)에서는 기본으로 켜집니다.
+ * - 로컬 개발 · 자동 테스트(127.0.0.1, localhost, file:)에서는 운영 DB 를 건드리지 않도록
+ *   기본으로 꺼져 있습니다. 켜려면 `?sync=on`, 끄려면 `?sync=off`.
+ */
+function attachRemoteSync(instance) {
+  if (typeof attachSupabaseSync !== 'function') return null;
+  try {
+    return attachSupabaseSync(instance);
+  } catch (error) {
+    console.warn('[store] 서버 동기화를 시작하지 못했습니다', error);
+    return null;
+  }
 }
 
 export const store = createStore();

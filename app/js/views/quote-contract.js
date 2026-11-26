@@ -18,6 +18,7 @@ import {
 } from '../ui.js';
 import { store, QUOTE_STATUS, AGREEMENT_STATUS } from '../store.js';
 import { CATEGORY_META, STAFF_TYPES, SUPPLIER, PAYMENT_ACCOUNT } from '../seed.js';
+import { inviteUrl } from '../invite.js';
 import {
   CONTRACT_TITLE,
   CONTRACT_SUBTITLE,
@@ -535,8 +536,8 @@ export async function openQuoteSheet(quoteId, options = {}) {
 export async function copyInviteText(quote) {
   const message = [
     `[코리아 에코크린] ${quote.clientCompany} 담당자님, 정기청소 견적서가 도착했습니다.`,
-    `아래 주소에서 1회용 코드를 입력하시면 견적서와 계약서를 확인하고 바로 전자서명하실 수 있습니다.`,
-    `주소: https://koreaecoclean.github.io/app/#customer`,
+    '아래 링크를 누르면 초대코드가 입력된 화면이 열립니다. 견적서와 계약서를 확인하고 바로 전자서명하실 수 있습니다.',
+    `링크: ${inviteUrl(quote.inviteCode)}`,
     `1회용 코드: ${quote.inviteCode}`,
     `문의: 0507-1317-8369`,
   ].join('\n');

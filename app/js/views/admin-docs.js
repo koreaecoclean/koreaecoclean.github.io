@@ -7,6 +7,7 @@
 import { esc, fmtWon } from '../ui.js';
 import { QUOTE_STATUS, AGREEMENT_STATUS } from '../store.js';
 import { CATEGORY_META, STAFF_TYPES, SUPPLIER, PAYMENT_ACCOUNT, APP_URL, DEFAULT_CHECKLISTS } from '../seed.js';
+import { inviteUrl } from '../invite.js';
 
 const money = (value) => esc(fmtWon(value));
 
@@ -18,8 +19,8 @@ export function defaultScope(category) {
 export function quoteInviteMessage(quote) {
   return [
     `[코리아 에코크린] ${quote.clientCompany} 담당자님, 정기청소 견적서가 도착했습니다.`,
-    '아래 주소에서 1회용 코드를 입력하시면 견적서와 계약서를 확인하고 바로 전자서명하실 수 있습니다.',
-    `주소: ${APP_URL}#customer`,
+    '아래 링크를 누르면 초대코드가 입력된 화면이 열립니다. 견적서와 계약서를 확인하고 바로 전자서명하실 수 있습니다.',
+    `링크: ${inviteUrl(quote.inviteCode)}`,
     `1회용 코드: ${quote.inviteCode}`,
     `문의: ${SUPPLIER.phone}`,
   ].join('\n');
@@ -29,10 +30,20 @@ export function staffInviteMessage(contract) {
   const meta = STAFF_TYPES[contract.employmentType] || STAFF_TYPES.freelancer;
   return [
     `[코리아 에코크린] ${contract.name}님, ${meta.label}가 도착했습니다.`,
-    '아래 주소의 [현장 보고] 화면에서 1회용 직원 초대코드를 입력하시면',
-    '내 계약서를 확인하고 전자서명하실 수 있습니다.',
-    `주소: ${APP_URL}#leader`,
+    '아래 링크를 누르면 초대코드가 입력된 화면이 열립니다. 내 계약서를 확인하고 전자서명하실 수 있습니다.',
+    `링크: ${inviteUrl(contract.inviteCode)}`,
     `1회용 코드: ${contract.inviteCode}`,
+    `문의: ${SUPPLIER.phone}`,
+  ].join('\n');
+}
+
+/** 정기청소 현장 1회용 코드(추가 인원) 초대 문구. */
+export function roomCodeInviteMessage(siteName, code) {
+  return [
+    `[코리아 에코크린] ${siteName || '현장'} 담당자님, 청소 확인 방 초대입니다.`,
+    '아래 링크를 누르면 초대코드가 입력된 화면이 열립니다. 전화번호를 넣고 입장하세요.',
+    `링크: ${inviteUrl(code)}`,
+    `1회용 코드: ${code}`,
     `문의: ${SUPPLIER.phone}`,
   ].join('\n');
 }
@@ -194,7 +205,9 @@ function quoteCardTemplate(quote, agreement) {
       <div class="quote-card__invite">
         <code>${esc(quote.inviteCode)}</code>
         <span>${esc(inviteState)}</span>
+        <a class="invite-link" href="${esc(inviteUrl(quote.inviteCode))}" data-invite-link="${esc(quote.inviteCode)}" target="_blank" rel="noreferrer">${esc(inviteUrl(quote.inviteCode))}</a>
         <button class="link-btn" type="button" data-copy-quote-invite="${esc(quote.id)}">초대 문구 복사</button>
+        <button class="link-btn" type="button" data-copy-quote-link="${esc(quote.id)}">초대 링크 복사</button>
         <button class="link-btn" type="button" data-regen-quote-invite="${esc(quote.id)}">재발급</button>
       </div>
       <div class="quote-card__actions">
@@ -424,7 +437,9 @@ function staffCardTemplate(contract, sites, checks = []) {
       <div class="quote-card__invite">
         <code>${esc(contract.inviteCode)}</code>
         <span>${contract.inviteUsedAt ? '사용 완료' : contract.status === 'signed' ? '체결 완료' : '미사용'}</span>
+        <a class="invite-link" href="${esc(inviteUrl(contract.inviteCode))}" data-invite-link="${esc(contract.inviteCode)}" target="_blank" rel="noreferrer">${esc(inviteUrl(contract.inviteCode))}</a>
         <button class="link-btn" type="button" data-copy-staff-invite="${esc(contract.id)}">초대 문구 복사</button>
+        <button class="link-btn" type="button" data-copy-staff-link="${esc(contract.id)}">초대 링크 복사</button>
         <button class="link-btn" type="button" data-regen-staff-invite="${esc(contract.id)}">재발급</button>
       </div>
       <div class="quote-card__actions">

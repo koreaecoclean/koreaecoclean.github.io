@@ -190,6 +190,52 @@ body {
   background: var(--gold-500);
 }
 
+/* 서버 동기화 배지 (무료 Supabase) */
+.sync-pill {
+  color: var(--brand-700);
+  background: var(--brand-100);
+}
+.sync-pill::before { background: var(--brand-500); }
+.sync-pill[data-status="syncing"] { color: var(--sky-500); background: var(--sky-100); }
+.sync-pill[data-status="syncing"]::before { background: var(--sky-500); }
+.sync-pill[data-status="offline"],
+.sync-pill[data-status="error"] { color: var(--danger); background: var(--danger-100); }
+.sync-pill[data-status="offline"]::before,
+.sync-pill[data-status="error"]::before { background: var(--danger); }
+
+/* 초대 링크로 들어왔을 때 입장 화면 위에 뜨는 안내 */
+.invite-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 10px 0 4px;
+  padding: 11px 13px;
+  border: 1px solid var(--brand-300);
+  border-left: 4px solid var(--brand-600);
+  border-radius: 12px;
+  background: var(--brand-50);
+}
+.invite-banner strong { font-size: 13px; color: var(--brand-800); letter-spacing: -.01em; }
+.invite-banner span { font-size: 12px; color: var(--body); line-height: 1.5; }
+.invite-banner code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid var(--brand-100);
+  font-weight: 800;
+  color: var(--brand-800);
+}
+
+/* 카드에 보여 주는 초대 링크 주소 */
+.invite-link {
+  display: block;
+  max-width: 100%;
+  font-size: 11.5px;
+  color: var(--brand-700);
+  text-decoration: underline;
+  word-break: break-all;
+}
+
 .icon-btn {
   display: inline-flex;
   align-items: center;
