@@ -294,7 +294,8 @@ export class SupabaseClient {
       method: 'POST',
       headers: {
         'Content-Type': type,
-        'x-upsert': 'true',
+        // 경로가 매번 고유하므로 upsert(x-upsert)는 쓰지 않습니다.
+        // x-upsert 는 기존 객체 조회(SELECT 권한)를 요구해, 목록 조회를 막아 둔 버킷에서 403 이 납니다.
         'cache-control': '31536000',
       },
       body: blob,
