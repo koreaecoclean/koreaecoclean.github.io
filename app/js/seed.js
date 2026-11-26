@@ -671,6 +671,8 @@ export const DEMO_ACCOUNTS = [
     assignedSiteIds: ['site_cheongnyangni_dongbang', 'site_cheongnyangni_marugame'],
     staffAccess: true,
     employmentType: 'contract',
+    // 실제 직원 계정 — 공개 로그인 화면의 ‘데모 계정 보기’에는 올리지 않습니다.
+    demoHidden: true,
     active: true,
   },
   {

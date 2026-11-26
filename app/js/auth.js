@@ -235,7 +235,7 @@ export async function redeemRoomCode(session, code) {
 
 /** Demo credentials shown in the app's "데모 계정" panel. */
 export function demoAccounts() {
-  return DEMO_ACCOUNTS.map((account) => ({
+  return DEMO_ACCOUNTS.filter((account) => !account.demoHidden).map((account) => ({
     role: account.role,
     roleLabel: account.role === 'customer' ? '고객' : account.role === 'leader' ? '팀장' : '대표(관리자)',
     name: account.name,
