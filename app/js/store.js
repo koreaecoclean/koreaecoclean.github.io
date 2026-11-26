@@ -33,6 +33,7 @@ import {
   buildSupplyOrders,
   SEED_VERSION,
   DEMO_ACCOUNTS,
+  CLEANING_MANUALS,
   DEFAULT_CHECKLISTS,
   STAFF_TYPES,
   SUPPLIER,
@@ -867,6 +868,7 @@ export class Store {
     await this._ensureSeedCodes();
     await this._ensureSiteBaseline();
     await this._ensureSiteContractOps();
+    await this._ensureSiteManual();
     await this._ensureSeedQuotes();
     await this._ensureSeedStaffContracts();
     await this._ensureSeedStaffChecks();
@@ -1019,6 +1021,31 @@ export class Store {
       );
       const ops = normalizeOps(hasOps ? site.ops : seed ? seed.ops : null);
       await this.adapter.put('sites', { ...site, contract, ops, updatedAt: new Date().toISOString() });
+    }
+  }
+
+  /**
+   * 청소공정 매뉴얼(청소 가능 시간 · 요일별 작업표)이 없는 현장에 시드 값을 채웁니다.
+   * 이미 저장된 매뉴얼은 건드리지 않고, 현장의 청소 공정 설명이 비어 있을 때만
+   * 시드의 한 줄 요약을 넣습니다 — 기존 기록을 덮어쓰지 않습니다.
+   */
+  async _ensureSiteManual() {
+    const sites = await this.adapter.getAll('sites');
+    if (!sites.length) return;
+    const seedById = new Map(buildSites().map((site) => [site.id, site]));
+    for (const site of sites) {
+      const seed = seedById.get(site.id);
+      if (!seed || !seed.manual) continue;
+      const hasManual = !!site.manual && Array.isArray(site.manual.days) && site.manual.days.length > 0;
+      const processEmpty = !site.ops || !String(site.ops.process || '').trim();
+      if (hasManual && !processEmpty) continue;
+      const next = { ...site };
+      if (!hasManual) next.manual = JSON.parse(JSON.stringify(seed.manual));
+      if (processEmpty && seed.ops && seed.ops.process) {
+        next.ops = normalizeOps({ ...(site.ops || {}), process: seed.ops.process });
+      }
+      next.updatedAt = new Date().toISOString();
+      await this.adapter.put('sites', next);
     }
   }
 
@@ -2244,6 +2271,8 @@ export class Store {
       note: String(input.note || '').trim(),
       issueNote: String(input.issueNote || '').trim(),
       photos: normalizePhotos(input.photos),
+      manualDay: String(input.manualDay || '').trim(),
+      manualTime: String(input.manualTime || '').trim(),
       createdAt: new Date().toISOString(),
       source: 'app',
     };

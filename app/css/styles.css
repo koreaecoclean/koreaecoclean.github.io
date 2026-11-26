@@ -2025,6 +2025,49 @@ body {
 .ops-amount { font-size: 16px; font-weight: 800; letter-spacing: -.02em; color: var(--brand-700); }
 .ops-empty { font-size: 11.5px; color: var(--muted); }
 
+/* ---------- 청소공정 매뉴얼 (현장 보고 · 톡톡 확인) ---------- */
+.manual-card .section-head { align-items: center; }
+.manual-card .section-head h2 { display: flex; align-items: center; gap: 6px; font-size: 15px; }
+.manual-card .section-head h2 svg { width: 17px; height: 17px; color: var(--brand-600); }
+.manual-time {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: var(--brand-50);
+  border: 1px solid var(--brand-300);
+  border-radius: 12px;
+  color: var(--brand-800);
+}
+.manual-time__label { font-size: 11.5px; font-weight: 800; color: var(--brand-700); }
+.manual-time strong { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
+.manual-time__note { flex-basis: 100%; font-size: 11px; color: var(--muted); }
+.manual-days { display: flex; gap: 6px; margin: 0 0 10px; }
+.manual-day {
+  flex: 1;
+  min-height: 44px;
+  padding: 10px 0;
+  border: 1.5px solid var(--line);
+  border-radius: 11px;
+  background: #fff;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--body);
+  cursor: pointer;
+  transition: background .18s var(--ease), border-color .18s var(--ease), color .18s var(--ease);
+}
+.manual-day[aria-pressed="true"] { background: var(--brand-600); border-color: var(--brand-600); color: #fff; }
+.manual-offday { margin: -2px 0 10px; }
+.manual-area { margin-top: 12px; }
+.manual-area:first-child { margin-top: 0; }
+.manual-area__head { display: flex; align-items: baseline; gap: 6px; margin: 0 0 6px 2px; }
+.manual-area__head strong { font-size: 12.5px; font-weight: 800; color: var(--body); }
+.manual-area__head span { font-size: 11px; color: var(--muted); }
+.manual-card.is-day-changed [data-manual-body] { animation: manualIn .24s var(--ease); }
+@keyframes manualIn { from { opacity: .35; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
 @media (max-width: 360px) {
   .rev-row { grid-template-columns: minmax(0, 1.2fr) repeat(4, minmax(0, 1fr)); font-size: 10.5px; padding: 6px 4px; }
   .rev-row--head { font-size: 9px; }

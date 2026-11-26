@@ -59,6 +59,44 @@ const SAMPLE_POOL = {
 
 const MEMO_CHIPS = ['소모품 보충 필요', '추가 견적 안내 필요', '다음 방문 시 재확인', '시설 문제 발견'];
 
+/* ---------------- 청소공정 매뉴얼 ---------------- */
+
+const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const WEEKDAY_NAMES = { sun: '일', mon: '월', tue: '화', wed: '수', thu: '목', fri: '금', sat: '토' };
+
+/** 현장의 요일별 매뉴얼 (없으면 빈 배열). */
+function manualDays(site) {
+  const days = site && site.manual && Array.isArray(site.manual.days) ? site.manual.days : [];
+  return days.filter((day) => day && Array.isArray(day.areas));
+}
+
+/** 선택한 요일의 작업 항목을 구역 순서대로 펼칩니다. */
+function manualItems(site, dayKey) {
+  const days = manualDays(site);
+  const day = days.find((row) => row.key === dayKey) || days[0];
+  if (!day) return { day: null, items: [] };
+  const items = [];
+  day.areas.forEach((area, areaIndex) => {
+    (area.items || []).forEach((label, itemIndex) => {
+      items.push({
+        id: `${day.key}:${areaIndex}:${itemIndex}`,
+        area: area.label || '',
+        floors: area.floors || '',
+        label,
+      });
+    });
+  });
+  return { day, items };
+}
+
+/** 오늘 요일이 작업일이면 그 요일, 아니면 첫 요일. */
+function defaultManualDay(site) {
+  const days = manualDays(site);
+  if (!days.length) return '';
+  const todayKey = WEEKDAY_KEYS[new Date().getDay()];
+  return (days.find((day) => day.key === todayKey) || days[0]).key;
+}
+
 export function createLeaderView(container) {
   const state = {
     session: null,
@@ -99,11 +137,15 @@ export function createLeaderView(container) {
       issueNote: '',
       photos: emptyPhotos(),
       checks: site.checklist.map(() => false),
+      manualDay: defaultManualDay(site),
+      manual: {},
     };
   }
 
   function ensureDraft(session, site) {
-    if (!state.draft || state.draft.checks.length !== site.checklist.length) startDraft(session, site);
+    const days = manualDays(site);
+    const staleManual = days.length > 0 && !days.some((day) => day.key === (state.draft && state.draft.manualDay));
+    if (!state.draft || state.draft.checks.length !== site.checklist.length || staleManual) startDraft(session, site);
     return state.draft;
   }
 
@@ -521,12 +563,13 @@ export function createLeaderView(container) {
   function formTemplate(session, site) {
     const draft = ensureDraft(session, site);
     const meta = CATEGORY_META[site.category] || {};
+    const hasManual = manualDays(site).length > 0;
 
     return `
       ${leaderBarTemplate(session)}
       ${state.sent ? sentTemplate(state.sent) : ''}
 
-      ${opsCardTemplate(site)}
+      ${hasManual ? '' : opsCardTemplate(site)}
 
       ${state.siteStaff.length ? siteStaffTemplate(site, state.siteStaff) : ''}
 
@@ -560,29 +603,35 @@ export function createLeaderView(container) {
         </div>
       </section>
 
+      ${hasManual ? manualCardTemplate(site, draft) : ''}
+
       ${PHOTO_GROUPS.map((group, index) => photoSectionTemplate(group, site, draft, index)).join('')}
 
-      <section class="panel">
-        <div class="section-head">
-          <h2>점검 항목</h2>
-          <button class="sort-btn" type="button" data-action="check-all">전체 선택</button>
-        </div>
-        <div class="progress-line">
-          <span id="check-progress-text">${draft.checks.filter(Boolean).length}/${draft.checks.length}</span>
-          <div class="progress-line__bar"><i id="check-progress" style="width:${progressPercent(draft)}%"></i></div>
-        </div>
-        <div class="check-list" style="margin-top:10px">
-          ${site.checklist
-            .map(
-              (label, index) => `
-                <label class="check-item">
-                  <input type="checkbox" data-check="${index}"${draft.checks[index] ? ' checked' : ''}>
-                  <span>${esc(label)}</span>
-                </label>`,
-            )
-            .join('')}
-        </div>
-      </section>
+      ${
+        hasManual
+          ? ''
+          : `<section class="panel">
+              <div class="section-head">
+                <h2>점검 항목</h2>
+                <button class="sort-btn" type="button" data-action="check-all">전체 선택</button>
+              </div>
+              <div class="progress-line">
+                <span id="check-progress-text">${draft.checks.filter(Boolean).length}/${draft.checks.length}</span>
+                <div class="progress-line__bar"><i id="check-progress" style="width:${progressPercent(draft)}%"></i></div>
+              </div>
+              <div class="check-list" style="margin-top:10px">
+                ${site.checklist
+                  .map(
+                    (label, index) => `
+                      <label class="check-item">
+                        <input type="checkbox" data-check="${index}"${draft.checks[index] ? ' checked' : ''}>
+                        <span>${esc(label)}</span>
+                      </label>`,
+                  )
+                  .join('')}
+              </div>
+            </section>`
+      }
 
       <section class="panel">
         <div class="section-head">
@@ -645,6 +694,97 @@ export function createLeaderView(container) {
       .join('');
   }
 
+  function manualBodyTemplate(site, draft) {
+    const { day, items } = manualItems(site, draft.manualDay);
+    if (!day) return '';
+    const days = manualDays(site);
+    const todayKey = WEEKDAY_KEYS[new Date().getDay()];
+    const showDays = days.length > 1;
+    const offDay = showDays && !days.some((row) => row.key === todayKey);
+    const checked = draft.manual || {};
+    const done = items.filter((item) => checked[item.id]).length;
+    const percent = items.length ? Math.round((done / items.length) * 100) : 0;
+
+    // 같은 구역(사무실 · 화장실 · 계단 · 주방 · 홀)을 묶어서 보여줍니다.
+    const groups = [];
+    for (const item of items) {
+      let group = groups[groups.length - 1];
+      if (!group || group.area !== item.area || group.floors !== item.floors) {
+        group = { area: item.area, floors: item.floors, items: [] };
+        groups.push(group);
+      }
+      group.items.push(item);
+    }
+
+    return `
+      ${
+        showDays
+          ? `<div class="manual-days">${days
+              .map(
+                (row) => `<button class="manual-day" type="button" data-manual-day="${esc(row.key)}"
+                  aria-pressed="${row.key === draft.manualDay}">${esc(row.label)}</button>`,
+              )
+              .join('')}</div>`
+          : ''
+      }
+      ${
+        offDay
+          ? `<p class="tiny muted manual-offday">오늘(${esc(WEEKDAY_NAMES[todayKey])})은 작업일이 아닙니다 · ${days
+              .map((row) => esc(row.label))
+              .join(' · ')} 중 고르세요</p>`
+          : ''
+      }
+      ${groups
+        .map(
+          (group) => `
+        <div class="manual-area">
+          <div class="manual-area__head">
+            <strong>${esc(group.area)}</strong>
+            ${group.floors ? `<span>${esc(group.floors)}</span>` : ''}
+          </div>
+          <div class="check-list">
+            ${group.items
+              .map(
+                (item) => `
+              <label class="check-item">
+                <input type="checkbox" data-manual-check="${esc(item.id)}"${checked[item.id] ? ' checked' : ''}>
+                <span>${esc(item.label)}</span>
+              </label>`,
+              )
+              .join('')}
+          </div>
+        </div>`,
+        )
+        .join('')}
+      <div class="progress-line" style="margin-top:10px">
+        <span data-manual-progress-text>${done}/${items.length}</span>
+        <div class="progress-line__bar"><i data-manual-progress style="width:${percent}%"></i></div>
+      </div>
+    `;
+  }
+
+  /** 청소 가능 시간 한 줄 + (요일 버튼) + 톡톡 눌러 확인하는 작업 체크리스트. */
+  function manualCardTemplate(site, draft) {
+    const manual = site.manual || {};
+    const { day, items } = manualItems(site, draft.manualDay);
+    if (!day || !items.length) return '';
+    const subtitle = day.key === 'daily' ? '매일 같은 작업' : `${day.label}요일 작업`;
+    return `
+      <section class="panel manual-card" id="manual-card" data-manual-card="${esc(site.id)}">
+        <div class="section-head">
+          <h2>${icons.check} 청소공정 매뉴얼</h2>
+          <p data-manual-subtitle>${esc(subtitle)}</p>
+        </div>
+        <p class="manual-time">
+          <span class="manual-time__label">청소 가능 시간</span>
+          <strong>${esc(manual.time || '')}</strong>
+          ${manual.timeNote ? `<span class="manual-time__note">${esc(manual.timeNote)}</span>` : ''}
+        </p>
+        <div data-manual-body>${manualBodyTemplate(site, draft)}</div>
+      </section>
+    `;
+  }
+
   function progressPercent(draft) {
     if (!draft.checks.length) return 0;
     return Math.round((draft.checks.filter(Boolean).length / draft.checks.length) * 100);
@@ -698,6 +838,29 @@ export function createLeaderView(container) {
     if (text) text.textContent = `${done}/${draft.checks.length}`;
     const bar = $('#check-progress', container);
     if (bar) bar.style.width = `${progressPercent(draft)}%`;
+  }
+
+  function refreshManualProgress() {
+    const boxes = $$('[data-manual-check]', container);
+    if (!boxes.length) return;
+    const done = boxes.filter((box) => box.checked).length;
+    const text = $('[data-manual-progress-text]', container);
+    if (text) text.textContent = `${done}/${boxes.length}`;
+    const bar = $('[data-manual-progress]', container);
+    if (bar) bar.style.width = `${Math.round((done / boxes.length) * 100)}%`;
+  }
+
+  async function switchManualDay(dayKey) {
+    const draft = state.draft;
+    if (!draft || !dayKey) return;
+    draft.manualDay = dayKey;
+    const site = await store.getSite(state.siteId);
+    const body = $('[data-manual-body]', container);
+    if (site && body) body.innerHTML = manualBodyTemplate(site, draft);
+    const { day } = manualItems(site, dayKey);
+    const subtitle = $('[data-manual-subtitle]', container);
+    if (subtitle && day) subtitle.textContent = day.key === 'daily' ? '매일 같은 작업' : `${day.label}요일 작업`;
+    $('[data-manual-card]', container)?.classList.add('is-day-changed');
   }
 
   async function refreshMyReports(session) {
@@ -957,18 +1120,29 @@ export function createLeaderView(container) {
       toast('업장별 맞춤 청소 사진을 1장 이상 추가해 주세요.', { tone: 'error' });
       return;
     }
-    if (!draft.checks.some(Boolean)) {
-      toast('완료한 점검 항목을 1개 이상 선택해 주세요.', { tone: 'error' });
-      return;
-    }
     if (!draft.date) {
       toast('방문 날짜를 입력해 주세요.', { tone: 'error' });
       return;
     }
-
     const site = await store.getSite(state.siteId);
     if (!site) {
       toast('현장 정보를 찾을 수 없습니다.', { tone: 'error' });
+      return;
+    }
+
+    const manual = manualDays(site).length > 0;
+    const manualDayInfo = manual ? manualItems(site, draft.manualDay) : { day: null, items: [] };
+    const checkRows = manual
+      ? manualDayInfo.items.map((item) => ({
+          label: item.area ? `${item.area} · ${item.label}` : item.label,
+          done: !!draft.manual[item.id],
+        }))
+      : site.checklist.map((label, index) => ({ label, done: !!draft.checks[index] }));
+
+    if (!checkRows.some((row) => row.done)) {
+      toast(manual ? '완료한 작업을 1개 이상 체크해 주세요.' : '완료한 점검 항목을 1개 이상 선택해 주세요.', {
+        tone: 'error',
+      });
       return;
     }
 
@@ -997,9 +1171,11 @@ export function createLeaderView(container) {
         leader: draft.leader,
         leaderRole: draft.leaderRole,
         durationMin: draft.duration,
-        checklist: site.checklist.map((label, index) => ({ label, done: !!draft.checks[index] })),
+        checklist: checkRows,
         note: draft.note,
         issueNote: draft.issueNote,
+        manualDay: manual && manualDayInfo.day ? manualDayInfo.day.label : '',
+        manualTime: manual && site.manual ? site.manual.time || '' : '',
         photos: photoRefs,
       });
 
@@ -1122,6 +1298,12 @@ export function createLeaderView(container) {
     }
 
     if (!draft) return;
+    const manualCheck = target.closest('[data-manual-check]');
+    if (manualCheck) {
+      draft.manual[manualCheck.dataset.manualCheck] = manualCheck.checked;
+      refreshManualProgress();
+      return;
+    }
     if (target.matches('[data-check]')) {
       draft.checks[Number(target.dataset.check)] = target.checked;
       refreshChecks();
@@ -1151,6 +1333,12 @@ export function createLeaderView(container) {
   }
 
   async function onClick(event) {
+    const manualDay = event.target.closest('[data-manual-day]');
+    if (manualDay) {
+      await switchManualDay(manualDay.dataset.manualDay);
+      return;
+    }
+
     const leaderTab = event.target.closest('[data-leader-tab]');
     if (leaderTab) {
       state.leaderTab = leaderTab.dataset.leaderTab;

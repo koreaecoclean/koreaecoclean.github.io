@@ -9,7 +9,7 @@
  * "데모 계정" panel.
  */
 
-export const SEED_VERSION = 8;
+export const SEED_VERSION = 9;
 
 /** 앱 공개 주소 — 초대 문구에 들어갑니다. */
 export const APP_URL = 'https://koreaecoclean.github.io/app/';
@@ -137,6 +137,63 @@ export const CATEGORY_META = {
     icon: 'fitness',
     blurb: '땀과 습기, 냄새까지 잡는 배수구 관리',
     cleaningLabel: '헬스장 맞춤 청소',
+  },
+};
+
+/**
+ * 청소공정 매뉴얼 — 첨부 작업표 원본 그대로.
+ *  - time / timeNote : 청소 가능 시간
+ *  - days[]          : 요일별 작업표 (주 7일 동일한 현장은 하루짜리 '매일')
+ *  - days[].areas[]  : 구역(사무실·화장실·계단·주방·홀)과 작업 항목
+ * 팀장 · 부장의 현장 보고 화면이 이 값으로 체크리스트를 그립니다.
+ */
+export const CLEANING_MANUALS = {
+  site_cheongnyangni_dongbang: {
+    time: '20:00 ~ 07:00',
+    timeNote: '오후 8시 이후 ~ 익일 오전 7시 이전',
+    days: [
+      {
+        key: 'mon',
+        label: '월',
+        areas: [
+          { label: '사무실 청소', floors: '2~5층', items: ['쓰레기 비우기', '바닥 청소', '세절기 비우기 (2·4층)'] },
+          { label: '화장실 청소', floors: '2~5층', items: ['쓰레기 비우기', '바닥 청소', '세면대 청소', '소변기 · 양변기 청소'] },
+          { label: '계단 청소', floors: '1~5층 · 지하층 계단 제외', items: ['계단 청소'] },
+        ],
+      },
+      {
+        key: 'wed',
+        label: '수',
+        areas: [
+          { label: '사무실 청소', floors: '2·4층', items: ['쓰레기 비우기', '바닥 청소', '세절기 비우기'] },
+          { label: '화장실 청소', floors: '2·4층', items: ['쓰레기 비우기', '바닥 청소', '세면대 청소', '소변기 · 양변기 청소'] },
+          { label: '계단 청소', floors: '1~2층 · 지하층 계단 제외', items: ['계단 청소'] },
+        ],
+      },
+      {
+        key: 'fri',
+        label: '금',
+        areas: [
+          { label: '사무실 청소', floors: '2·4층', items: ['쓰레기 비우기', '바닥 청소', '세절기 비우기'] },
+          { label: '화장실 청소', floors: '2·4층', items: ['쓰레기 비우기', '바닥 청소', '세면대 청소', '소변기 · 양변기 청소'] },
+          { label: '계단 청소', floors: '1~2층 · 지하층 계단 제외', items: ['계단 청소'] },
+        ],
+      },
+    ],
+  },
+  site_cheongnyangni_marugame: {
+    time: '22:30 ~ 05:30',
+    timeNote: '오후 10시 30분 이후 ~ 익일 오전 5시 30분 이전',
+    days: [
+      {
+        key: 'daily',
+        label: '매일',
+        areas: [
+          { label: '주방 청소', floors: '', items: ['쓰레기통 비우기', '직원실 바닥 청소', '주방 바닥 청소', '집수정 청소'] },
+          { label: '홀 청소', floors: '', items: ['바닥 건식 청소', '바닥 습식 청소'] },
+        ],
+      },
+    ],
   },
 };
 
@@ -437,6 +494,92 @@ export function buildSites() {
         deepClean: baselineStage('', '첫 대청소 후 사진을 등록해 주세요.', []),
       },
     },
+    {
+      // 청량리 동방노보펌빌딩 — 도급 현장(이용구 부장 담당). 청소공정은 첨부 작업표 기준.
+      id: 'site_cheongnyangni_dongbang',
+      code: 'EC-5824',
+      name: '청량리 동방노보펌빌딩 (사무실)',
+      clientName: '동방노보펌빌딩',
+      category: 'office',
+      address: '',
+      area: '',
+      frequency: '주 3회 (월 · 수 · 금)',
+      intervalDays: 2,
+      startDate: daysAgo(0),
+      manager: '이용구',
+      managerRole: '부장',
+      accessNote: '',
+      contactName: '',
+      bizNumber: '',
+      ceoName: '',
+      taxEmail: '',
+      contract: {
+        contractAmount: 0,
+        subcontractAmount: 350000,
+        feeAmount: 0,
+        contractDate: daysAgo(0),
+        billingDay: '익월 15일',
+        note: '도급 현장 · 월 350,000원(부가세 별도) · 주 3회(월·수·금)',
+      },
+      ops: {
+        process:
+          '청소 가능 20:00~07:00 · 월: 사무실·화장실 2~5층 + 계단 1~5층 / 수·금: 사무실·화장실 2·4층 + 계단 1~2층 (지하층 계단 제외)',
+        accessMethod: '',
+        trashLocation: '',
+        parkingMethod: '',
+      },
+      manual: CLEANING_MANUALS.site_cheongnyangni_dongbang,
+      checklist: DEFAULT_CHECKLISTS.office,
+      locked: true,
+      annexHours: '30분',
+      baseline: {
+        quote: baselineStage('', '', []),
+        deepClean: baselineStage('', '', []),
+      },
+    },
+    {
+      // 청량리 롯데몰 마루가메우동 — 도급 현장(이용구 부장 담당). 주 7일, 매일 같은 작업.
+      id: 'site_cheongnyangni_marugame',
+      code: 'EC-7149',
+      name: '청량리 롯데몰 마루가메우동 (식당)',
+      clientName: '마루가메우동',
+      category: 'retail',
+      address: '',
+      area: '',
+      frequency: '주 7회 (월 ~ 일)',
+      intervalDays: 1,
+      startDate: daysAgo(0),
+      manager: '이용구',
+      managerRole: '부장',
+      accessNote: '',
+      contactName: '',
+      bizNumber: '',
+      ceoName: '',
+      taxEmail: '',
+      contract: {
+        contractAmount: 0,
+        subcontractAmount: 1600000,
+        feeAmount: 0,
+        contractDate: daysAgo(0),
+        billingDay: '익월 15일',
+        note: '도급 현장 · 월 1,600,000원(부가세 별도) · 주 7회(월~일)',
+      },
+      ops: {
+        process:
+          '청소 가능 22:30~05:30 · 매일: 주방(쓰레기통·직원실·주방 바닥·집수정) + 홀(바닥 건식·습식)',
+        accessMethod: '',
+        trashLocation: '',
+        parkingMethod: '',
+      },
+      manual: CLEANING_MANUALS.site_cheongnyangni_marugame,
+      checklist: DEFAULT_CHECKLISTS.retail,
+      locked: true,
+      annexHours: '1시간 (2인 기준)',
+      baseline: {
+        quote: baselineStage('', '', []),
+        deepClean: baselineStage('', '', []),
+      },
+    },
   ];
 }
 
@@ -513,6 +656,21 @@ export const DEMO_ACCOUNTS = [
     leaderCode: 'TL-1638',
     assignedSiteIds: ['site_hangwoon_tower', 'site_haneul_clinic', 'site_bodycamp', 'site_lighthouse'],
     canManageStaff: true,
+    active: true,
+  },
+  {
+    // 청량리 동방노보펌빌딩 · 롯데몰 마루가메우동 담당 부장 (도급).
+    id: 'acc_leader_younggu',
+    role: 'leader',
+    name: '이용구',
+    title: '부장',
+    phone: '01057883683',
+    phonePretty: '010-5788-3683',
+    password: 'team3683',
+    leaderCode: 'TL-3941',
+    assignedSiteIds: ['site_cheongnyangni_dongbang', 'site_cheongnyangni_marugame'],
+    staffAccess: true,
+    employmentType: 'contract',
     active: true,
   },
   {
@@ -797,6 +955,51 @@ export function buildQuotes() {
 
 export function buildStaffContracts() {
   return [
+    {
+      // 이용구 부장 도급계약서 — 계정과 연결되어 본인 계약서로 보입니다.
+      id: 'staff_lee_subcontract',
+      no: 'S-2026-005',
+      accountId: 'acc_leader_younggu',
+      name: '이용구',
+      phone: '01057883683',
+      employmentType: 'contract',
+      roleTitle: '부장',
+      companyName: '이용구',
+      ceoName: '이용구',
+      residentId: '660115-1011218',
+      birthDate: '1966-01-15',
+      bizNumber: '660115-1011218',
+      address: '',
+      bankName: '우체국',
+      bankAccount: '010751-02-039183',
+      accountHolder: '이용구',
+      siteIds: ['site_cheongnyangni_dongbang', 'site_cheongnyangni_marugame'],
+      startDate: daysAgo(0),
+      endDate: daysAgo(-364),
+      monthlyAmount: 1950000,
+      dailyAmount: 0,
+      hourlyAmount: 0,
+      feeRate: 0,
+      settlementDay: '15',
+      workDays: '주 3회 (월·수·금) · 주 7회 (월~일)',
+      workHours: '',
+      scope: '',
+      process: '',
+      safety: '',
+      specialTerms: '',
+      status: 'sent',
+      inviteCode: 'S-XME628',
+      inviteIssuedAt: daysAgoISO(0),
+      inviteUsedAt: '',
+      inviteUsedBy: '',
+      signature: '',
+      signedDate: '',
+      signedByName: '',
+      signedAt: '',
+      createdAt: daysAgoISO(0),
+      updatedAt: daysAgoISO(0),
+      source: 'seed',
+    },
     {
       id: 'staff_kim_contract',
       no: 'S-2026-001',
