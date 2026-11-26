@@ -9,7 +9,7 @@
  * "데모 계정" panel.
  */
 
-export const SEED_VERSION = 9;
+export const SEED_VERSION = 10;
 
 /** 앱 공개 주소 — 초대 문구에 들어갑니다. */
 export const APP_URL = 'https://koreaecoclean.github.io/app/';
@@ -191,6 +191,93 @@ export const CLEANING_MANUALS = {
         areas: [
           { label: '주방 청소', floors: '', items: ['쓰레기통 비우기', '직원실 바닥 청소', '주방 바닥 청소', '집수정 청소'] },
           { label: '홀 청소', floors: '', items: ['바닥 건식 청소', '바닥 습식 청소'] },
+        ],
+      },
+    ],
+  },
+  /**
+   * 패스트파이브 강남3호점 — 주 5회(월~금) 사무실 정기청소.
+   * 대표가 2026-11-27에 보낸 요일별 업무요청 그대로 넣었습니다.
+   *  · 주 1회 비움 : 그날 비우는 층 · 호실
+   *  · 바닥 청소   : 사무실 + 공용부를 밀대로 진행하는 구역
+   *  · 냉장고 케어 : 매주 금요일 새벽, 스티커 색으로 교체 주기를 관리
+   */
+  site_fastfive_gangnam3: {
+    time: '',
+    timeNote: '',
+    days: [
+      {
+        key: 'mon',
+        label: '월',
+        areas: [
+          { label: '추가 비움', floors: '', items: ['추가 비움 있을 경우 (호실 별도 사진 공유)'] },
+          { label: '주 1회 비움', floors: '', items: ['4층 (401호~435호)'] },
+          {
+            label: '바닥 청소',
+            floors: '사무실+공용부 = 밀대 진행',
+            items: ['4층 다이닝룸 바닥 케어', '4층 (401호~435호)'],
+          },
+        ],
+      },
+      {
+        key: 'tue',
+        label: '화',
+        areas: [
+          { label: '추가 비움', floors: '', items: ['추가 비움 있을 경우 (호실 별도 사진 공유)'] },
+          { label: '주 1회 비움', floors: '', items: ['5층 (501~535호)'] },
+          {
+            label: '바닥 청소',
+            floors: '사무실+공용부 = 밀대 진행',
+            items: ['5층 (501~535호)'],
+          },
+        ],
+      },
+      {
+        key: 'wed',
+        label: '수',
+        areas: [
+          { label: '추가 비움', floors: '', items: ['추가 비움 있을 경우 (호실 별도 사진 공유)'] },
+          { label: '주 1회 비움', floors: '', items: ['5층 (536~553호), 6층 (601~616호)'] },
+          {
+            label: '바닥 청소',
+            floors: '사무실+공용부 = 밀대 진행',
+            items: ['5층 (536~553호), 6층 (601~616호) / 다이닝룸 바닥'],
+          },
+        ],
+      },
+      {
+        key: 'thu',
+        label: '목',
+        areas: [
+          { label: '추가 비움', floors: '', items: ['추가 비움 있을 경우 (호실 별도 사진 공유)'] },
+          { label: '주 1회 비움', floors: '', items: ['6층 (617~638호), 7층 (701~713호)'] },
+          {
+            label: '바닥 청소',
+            floors: '사무실+공용부 = 밀대 진행',
+            items: ['6층 (617~638호), 7층 (701~713호) / 스튜디오 케어'],
+          },
+        ],
+      },
+      {
+        key: 'fri',
+        label: '금',
+        areas: [
+          { label: '추가 비움', floors: '', items: ['추가 비움 있을 경우 (호실 별도 사진 공유)'] },
+          { label: '주 1회 비움', floors: '', items: ['7층 (714~743호)'] },
+          {
+            label: '바닥 청소',
+            floors: '사무실+공용부 = 밀대 진행',
+            items: ['7층 (714~743호)'],
+          },
+          {
+            label: '냉장고 케어',
+            floors: '매주 금요일 새벽 케어',
+            items: [
+              '노란색 스티커 11/27 → 스티커 부착 X / 사진 공유만',
+              '흰색 스티커 ~11/25 → 노란색 스티커에 12/4 부착',
+              '아무것도 안 붙어있으면 → 흰색 스티커 11/27 부착',
+            ],
+          },
         ],
       },
     ],
@@ -580,6 +667,48 @@ export function buildSites() {
         deepClean: baselineStage('', '', []),
       },
     },
+    {
+      // 패스트파이브 강남3호점 — 도급 현장(이아름 팀장 담당). 주 5회(월~금), 요일별 층별 작업.
+      id: 'site_fastfive_gangnam3',
+      code: 'EC-8362',
+      name: '패스트파이브 강남3호점',
+      clientName: '패스트파이브',
+      category: 'office',
+      address: '',
+      area: '',
+      frequency: '주 5회 (월 ~ 금)',
+      intervalDays: 1,
+      startDate: daysAgo(0),
+      manager: '이아름',
+      managerRole: '팀장',
+      accessNote: '',
+      contactName: '',
+      bizNumber: '',
+      ceoName: '',
+      taxEmail: '',
+      contract: {
+        contractAmount: 0,
+        subcontractAmount: 1200000,
+        feeAmount: 0,
+        contractDate: daysAgo(0),
+        billingDay: '익월 15일',
+        note: '도급 현장 · 월 1,200,000원(부가세 별도) · 주 5회(월~금)',
+      },
+      ops: {
+        process:
+          '주 5회(월~금) · 월: 4층(401~435호) / 화: 5층(501~535호) / 수: 5층(536~553호)·6층(601~616호) / 목: 6층(617~638호)·7층(701~713호) / 금: 7층(714~743호) + 냉장고 케어(매주 금요일 새벽) · 추가 비움 발생 시 호실 별도 사진 공유',
+        accessMethod: '',
+        trashLocation: '',
+        parkingMethod: '',
+      },
+      manual: CLEANING_MANUALS.site_fastfive_gangnam3,
+      checklist: DEFAULT_CHECKLISTS.office,
+      locked: true,
+      baseline: {
+        quote: baselineStage('', '', []),
+        deepClean: baselineStage('', '', []),
+      },
+    },
   ];
 }
 
@@ -672,6 +801,23 @@ export const DEMO_ACCOUNTS = [
     staffAccess: true,
     employmentType: 'contract',
     // 실제 직원 계정 — 공개 로그인 화면의 ‘데모 계정 보기’에는 올리지 않습니다.
+    demoHidden: true,
+    active: true,
+  },
+  {
+    // 패스트파이브 강남3호점 담당 팀장 (도급). 비밀번호·고유코드는 대표 지시(2026-11-27)로
+    // 전화번호와 무관한 값으로 만들었습니다.
+    id: 'acc_leader_areum',
+    role: 'leader',
+    name: '이아름',
+    title: '팀장',
+    phone: '01099708492',
+    phonePretty: '010-9970-8492',
+    password: 'clean5827',
+    leaderCode: 'TL-5163',
+    assignedSiteIds: ['site_fastfive_gangnam3'],
+    staffAccess: true,
+    employmentType: 'contract',
     demoHidden: true,
     active: true,
   },
@@ -957,6 +1103,56 @@ export function buildQuotes() {
 
 export function buildStaffContracts() {
   return [
+    {
+      // 이아름 팀장 도급계약서 — 도급(하도급) 계약 1순위 서식. 계정과 연결되어 본인 계약서로 보입니다.
+      id: 'staff_areum_subcontract',
+      no: 'S-2026-006',
+      accountId: 'acc_leader_areum',
+      name: '이아름',
+      phone: '01099708492',
+      employmentType: 'contract',
+      roleTitle: '팀장',
+      companyName: '',
+      ceoName: '이아름',
+      residentId: '',
+      birthDate: '',
+      bizNumber: '',
+      address: '',
+      bankName: '',
+      bankAccount: '',
+      accountHolder: '이아름',
+      siteIds: ['site_fastfive_gangnam3'],
+      startDate: daysAgo(0),
+      endDate: daysAgo(-364),
+      monthlyAmount: 1200000,
+      dailyAmount: 0,
+      hourlyAmount: 0,
+      feeRate: 0,
+      settlementDay: '15',
+      workDays: '주 5회 (월~금)',
+      workHours: '',
+      scope:
+        '패스트파이브 강남3호점 사무실 정기청소 (요일별 층별 비움 · 사무실+공용부 바닥 청소 · 금요일 냉장고 케어)',
+      process:
+        '월: 4층(401~435호) / 화: 5층(501~535호) / 수: 5층(536~553호)·6층(601~616호) / 목: 6층(617~638호)·7층(701~713호) / 금: 7층(714~743호) + 냉장고 케어',
+      safety: '약품 희석 농도 준수, 젖은 바닥 미끄럼 방지 표지판 설치',
+      specialTerms: '',
+      status: 'sent',
+      annexAck: '',
+      annexAckedAt: '',
+      inviteCode: 'S-F5G309',
+      inviteIssuedAt: daysAgoISO(0),
+      inviteUsedAt: '',
+      inviteUsedBy: '',
+      signature: '',
+      signedDate: '',
+      signedByName: '',
+      signedAt: '',
+      createdAt: daysAgoISO(0),
+      updatedAt: daysAgoISO(0),
+      source: 'seed',
+      demoHidden: true,
+    },
     {
       // 이용구 부장 도급계약서 — 계정과 연결되어 본인 계약서로 보입니다.
       id: 'staff_lee_subcontract',

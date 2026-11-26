@@ -955,11 +955,15 @@ export function createLeaderView(container) {
           <h2>${icons.check} 청소공정 매뉴얼</h2>
           <p data-manual-subtitle>${esc(subtitle)}</p>
         </div>
-        <p class="manual-time">
+        ${
+          manual.time || manual.timeNote
+            ? `<p class="manual-time">
           <span class="manual-time__label">청소 가능 시간</span>
           <strong>${esc(manual.time || '')}</strong>
           ${manual.timeNote ? `<span class="manual-time__note">${esc(manual.timeNote)}</span>` : ''}
-        </p>
+        </p>`
+            : ''
+        }
         <div data-manual-body>${manualBodyTemplate(site, draft)}</div>
       </section>
     `;
