@@ -2248,7 +2248,8 @@ body.sheet-open { overflow: hidden; }
 .doc__sign-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; font-size: 11px; text-align: center; }
 .doc__sign-pair div { border: 1px solid var(--line); border-radius: 4px; padding: 8px; display: flex; flex-direction: column; gap: 3px; }
 .doc__sign-pair span { color: var(--muted); font-size: 10.5px; }
-.doc__sign-pair strong { font-size: 12px; }
+.doc__sign-pair strong { font-size: 12px; word-break: keep-all; }
+.doc__sign-pair .doc__seal-img { align-self: center; }
 
 .doc-input {
   width: 100%;
