@@ -20,7 +20,7 @@ import {
   managerDashboardTemplate,
   staffRoomTemplate,
 } from './admin-docs.js';
-import { openQuoteSheet, openAgreementSheet, openStaffContractSheet } from './quote-contract.js';
+import { openQuoteSheet, openAgreementSheet, openStaffContractSheet, openBlankSubcontractSheet } from './quote-contract.js';
 import {
   supplyAdminPanel,
   openSupplyReceipt,
@@ -1126,6 +1126,12 @@ export function createAdminView(container) {
 
   async function onClick(event) {
     /* ---------------- 청소장비 · 봉투 영수증 (대표) ---------------- */
+    const blankSubcontract = event.target.closest('[data-blank-subcontract]');
+    if (blankSubcontract) {
+      openBlankSubcontractSheet();
+      return;
+    }
+
     const issueFromRequest = event.target.closest('[data-supply-issue]');
     if (issueFromRequest) {
       const order = await store.getSupplyOrder(issueFromRequest.dataset.supplyIssue);

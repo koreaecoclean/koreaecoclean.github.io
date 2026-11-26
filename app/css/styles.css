@@ -2548,3 +2548,154 @@ body.sheet-open { overflow: hidden; }
   .receipt__thanks { margin-top: 4mm; }
   .receipt__table, .receipt__total, .receipt__foot { break-inside: avoid; }
 }
+
+/* ---------- 30. 전자서명 — 서명 박스 + 전용 서명 창 ---------- */
+.sign-pad__state { font-size: 10.5px; font-weight: 800; color: var(--muted); }
+.sign-pad[data-signed="true"] .sign-pad__state { color: var(--brand-600); }
+
+.sign-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 74px;
+  margin-top: 6px;
+  padding: 8px;
+  background: #fff;
+  border: 1.5px dashed #b7c6b5;
+  border-radius: 8px;
+  color: var(--muted);
+  transition: border-color .15s var(--ease), background .15s var(--ease);
+}
+.sign-box:active { border-color: var(--brand-500); background: var(--brand-50); }
+.sign-box__empty { font-size: 11.5px; font-weight: 700; color: var(--brand-700); letter-spacing: -.01em; }
+.sign-box__image { max-height: 96px; width: auto; object-fit: contain; }
+.sign-pad[data-signed="true"] .sign-box { border-style: solid; border-color: var(--brand-300); background: #fff; }
+
+body.sign-open { overflow: hidden; }
+
+.sign-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  display: flex;
+  flex-direction: column;
+  background: #eef1ea;
+}
+.sign-modal__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  padding-top: calc(9px + env(safe-area-inset-top));
+  background: var(--brand-800);
+  color: #fff;
+  flex: none;
+}
+.sign-modal__bar strong { flex: 1; text-align: center; font-size: 13.5px; font-weight: 800; letter-spacing: .02em; }
+.sign-modal__bar .btn--quiet { color: #fff; background: rgba(255, 255, 255, .14); }
+.sign-modal__bar .btn--ghost { color: var(--brand-950); background: #fff; border-color: #fff; }
+
+.sign-modal__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 12px 12px calc(14px + env(safe-area-inset-bottom));
+}
+.sign-modal__hint { font-size: 12px; color: var(--body); text-align: center; }
+.sign-modal__hint span { font-weight: 800; color: var(--brand-700); }
+
+.sign-modal__field {
+  position: relative;
+  flex: 1;
+  min-height: 220px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px -24px rgba(13, 58, 34, .6);
+  overflow: hidden;
+}
+.sign-modal__field canvas {
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  cursor: crosshair;
+}
+.sign-modal__guide {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  font-weight: 800;
+  color: #eef2ec;
+  letter-spacing: .5em;
+  pointer-events: none;
+}
+.sign-modal__line {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 22%;
+  height: 1px;
+  background: #e6ebe3;
+  z-index: 1;
+  pointer-events: none;
+}
+.sign-modal__actions { display: grid; grid-template-columns: 1fr 1.5fr; gap: 8px; flex: none; }
+.sign-modal__actions .btn { padding: 13px 10px; font-size: 14.5px; }
+
+@media print {
+  .sign-modal { display: none !important; }
+  .sign-box { border: 1px solid #999; min-height: 20mm; }
+}
+
+/* ---------- 31. 정기청소 도급계약서 (도급인 양식) + 별첨본 ---------- */
+.sub-parties { display: grid; gap: 8px; margin: 14px 0 4px; }
+.sub-party { padding: 8px 10px; border: 1px solid #cfd8cf; border-radius: 6px; background: #fbfcfa; }
+.sub-party h2 { margin-bottom: 4px; font-size: 11.5px; font-weight: 800; color: var(--brand-800); }
+.sub-party dl { display: grid; grid-template-columns: 92px 1fr; gap: 2px 8px; margin: 0; font-size: 11.5px; }
+.sub-party dt { color: var(--muted); font-weight: 700; }
+.sub-party dd { margin: 0; word-break: break-all; }
+.sub-party .doc-input { width: 100%; padding: 3px 5px; font-size: 11.5px; }
+.sub-party--me { border-color: var(--brand-300); background: var(--brand-50); }
+.sub-intro { margin: 12px 0 0; font-size: 12px; font-weight: 700; }
+.sub-sign { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; font-size: 11.5px; }
+.sub-sign__party { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px dashed #c8d3c5; border-radius: 6px; }
+.sub-sign__party strong { font-size: 12px; font-weight: 800; color: var(--brand-800); }
+
+.doc--sub-annex .annex-table { width: 100%; border-collapse: collapse; margin: 6px 0 10px; font-size: 10.5px; }
+.annex-table th,
+.annex-table td { padding: 4px 5px; border: 1px solid #7f8f7f; vertical-align: middle; }
+.annex-table thead th { background: #f1f4ef; font-weight: 800; text-align: center; }
+.annex-table__num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.annex-table tbody td { height: 22px; }
+.annex-table tfoot td { background: #f7f9f5; font-weight: 800; }
+.annex-table__total-label { text-align: right; }
+.annex-notes { display: grid; gap: 2px; margin-top: 10px; font-size: 10.5px; color: var(--ink-soft); text-align: center; }
+.annex-ask { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; font-size: 11.5px; font-weight: 700; }
+.annex-ask__box { padding: 2px 8px; border: 1px solid #9aa79a; border-radius: 3px; font-weight: 600; }
+.annex-sign { margin-top: 20px; }
+.annex-sign__date { margin-bottom: 10px; text-align: center; font-size: 11.5px; }
+.annex-sign__pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; font-size: 11px; }
+.annex-sign__party span { font-weight: 800; color: var(--brand-800); }
+.annex-sign__party p { margin: 2px 0; }
+.annex-sign__image { max-height: 62px; margin: 8px auto 0; }
+
+@media print {
+  .doc--sub-annex { break-before: page; }
+  .sub-party .doc-input { border: 1px solid #999; }
+  .annex-table { font-size: 9.5pt; }
+  .annex-table, .sub-sign, .annex-ask, .annex-sign { break-inside: avoid; }
+}

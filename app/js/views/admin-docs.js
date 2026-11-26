@@ -446,6 +446,9 @@ export function staffPanelTemplate({ staffContracts, staffChecks = [], sites, st
           <p>대표 전용 · 프리랜서(3.3%) · 도급 · 일용직 · 알바</p>
         </div>
       </div>
+      <div class="btn-row" style="margin-bottom:10px">
+        <button class="btn btn--ghost btn--sm" type="button" data-blank-subcontract>을 미정(공란) 도급계약서 생성 / 인쇄</button>
+      </div>
       <div class="admin-stats">
         <div><strong>${staffContracts.length}</strong><span>직원 계약</span></div>
         <div><strong>${waiting}</strong><span>서명 대기</span></div>

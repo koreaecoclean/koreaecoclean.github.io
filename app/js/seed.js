@@ -816,7 +816,7 @@ export function buildStaffContracts() {
       monthlyAmount: 1430000,
       dailyAmount: 0,
       feeRate: 0,
-      settlementDay: '10',
+      settlementDay: '15',
       workDays: '주 2회 (월 · 목)',
       workHours: '07:00 ~ 09:00',
       scope: '행운타워 5층 사무실 정기청소 (쓰레기 분리수거 · 바닥 · 화장실 · 카펫)',

@@ -102,62 +102,112 @@ async function photoUrls(photos) {
 }
 
 /* ------------------------------------------------------------------ */
-/* signature pad                                                       */
+/* signature pad — 전용 서명 창 (S펜 · 스타일러스 · 손가락 · 마우스)     */
 /* ------------------------------------------------------------------ */
 
-function setupSignaturePad(canvas) {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const rect = canvas.getBoundingClientRect();
-  const width = Math.max(260, Math.round(rect.width || canvas.clientWidth || 300));
-  const height = 170;
-  canvas.width = Math.round(width * dpr);
-  canvas.height = Math.round(height * dpr);
-  canvas.style.height = `${height}px`;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
-  ctx.lineWidth = 2.2;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.strokeStyle = '#111c15';
+let signModal = null;
+let signSession = null;
 
+/**
+ * 캔버스 필기판. PointerEvent + setPointerCapture + touch-action:none 로
+ * S펜(pointerType 'pen'), 손가락('touch'), 마우스('mouse')를 모두 받습니다.
+ * devicePixelRatio 를 반영해 고해상도로 그립니다.
+ */
+function createSignaturePad(canvas) {
+  const ctx = canvas.getContext('2d');
   let drawing = false;
   let dirty = false;
   let last = null;
 
-  const point = (event) => {
+  const strokeWidth = (event) => {
+    if (event && event.pointerType === 'pen') {
+      const pressure = Number(event.pressure) > 0 ? Number(event.pressure) : 0.5;
+      return 1.7 + pressure * 2.6;
+    }
+    return 2.8;
+  };
+
+  const pointOf = (event) => {
     const box = canvas.getBoundingClientRect();
     return { x: event.clientX - box.left, y: event.clientY - box.top };
   };
 
+  const fit = () => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const rect = canvas.getBoundingClientRect();
+    const width = Math.max(240, Math.round(rect.width || 300));
+    const height = Math.max(200, Math.round(rect.height || 240));
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#111c15';
+    dirty = false;
+    drawing = false;
+    last = null;
+  };
+
   canvas.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.preventDefault();
-    canvas.setPointerCapture?.(event.pointerId);
+    try {
+      canvas.setPointerCapture(event.pointerId);
+    } catch (error) {
+      /* 캡처를 못 해도 그리기는 계속합니다. */
+    }
     drawing = true;
-    last = point(event);
+    last = pointOf(event);
+    ctx.lineWidth = strokeWidth(event);
     ctx.beginPath();
     ctx.moveTo(last.x, last.y);
+    ctx.lineTo(last.x + 0.1, last.y + 0.1);
+    ctx.stroke();
+    dirty = true;
   });
+
   canvas.addEventListener('pointermove', (event) => {
     if (!drawing) return;
     event.preventDefault();
-    const next = point(event);
+    const next = pointOf(event);
+    ctx.lineWidth = strokeWidth(event);
+    ctx.beginPath();
+    ctx.moveTo(last.x, last.y);
     ctx.lineTo(next.x, next.y);
     ctx.stroke();
     last = next;
     dirty = true;
   });
-  const end = () => {
+
+  const stop = (event) => {
+    if (!drawing) return;
     drawing = false;
     last = null;
+    try {
+      if (event && event.pointerId !== undefined && canvas.hasPointerCapture?.(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+      }
+    } catch (error) {
+      /* 무시 */
+    }
   };
-  canvas.addEventListener('pointerup', end);
-  canvas.addEventListener('pointerleave', end);
-  canvas.addEventListener('pointercancel', end);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+  canvas.addEventListener('pointerleave', stop);
+  // 팜 리젝션 대신 스크롤·확대를 막습니다.
+  canvas.addEventListener('touchstart', (event) => event.preventDefault(), { passive: false });
 
   return {
+    fit,
     clear() {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
       dirty = false;
+      drawing = false;
+      last = null;
     },
     isEmpty() {
       return !dirty;
@@ -166,6 +216,154 @@ function setupSignaturePad(canvas) {
       return dirty ? canvas.toDataURL('image/png') : '';
     },
   };
+}
+
+function ensureSignModal() {
+  if (signModal) return signModal;
+  signModal = document.createElement('div');
+  signModal.className = 'sign-modal';
+  signModal.id = 'sign-modal';
+  signModal.hidden = true;
+  signModal.innerHTML = `
+    <div class="sign-modal__bar">
+      <button class="btn btn--sm btn--quiet" type="button" data-sign="cancel">취소</button>
+      <strong>전자서명</strong>
+      <button class="btn btn--sm btn--ghost" type="button" data-sign="apply">서명 적용</button>
+    </div>
+    <div class="sign-modal__body">
+      <p class="sign-modal__hint"><span data-sign-label>전자서명</span> — S펜·스타일러스, 손가락, 마우스로 서명해 주세요.</p>
+      <div class="sign-modal__field">
+        <span class="sign-modal__guide" aria-hidden="true">서 명</span>
+        <canvas id="sign-modal-canvas" aria-label="전자서명 패드"></canvas>
+        <span class="sign-modal__line" aria-hidden="true"></span>
+      </div>
+      <div class="sign-modal__actions">
+        <button class="btn btn--quiet" type="button" data-sign="clear">지우기</button>
+        <button class="btn btn--primary" type="button" data-sign="apply">서명 적용</button>
+      </div>
+    </div>`;
+  signModal.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-sign]')?.dataset.sign;
+    if (action) onSignAction(action);
+  });
+  document.body.appendChild(signModal);
+  return signModal;
+}
+
+function openSignModal(holder) {
+  const box = ensureSignModal();
+  box.hidden = false;
+  document.body.classList.add('sign-open');
+  const canvas = $('#sign-modal-canvas', box);
+  const pad = createSignaturePad(canvas);
+  pad.fit();
+  signSession = { holder, pad };
+  const label = $('[data-sign-label]', box);
+  if (label) label.textContent = holder.dataset.signLabel || '전자서명';
+  // 이미 서명한 서식이면 새로 서명합니다.
+  canvas.focus?.();
+}
+
+function closeSignModal() {
+  if (!signModal) return;
+  signModal.hidden = true;
+  document.body.classList.remove('sign-open');
+  signSession = null;
+}
+
+function updateSignaturePreview(holder) {
+  const field = holder.pad;
+  const image = $('[data-sign-preview]', holder);
+  const empty = $('[data-sign-empty]', holder);
+  const state = $('[data-sign-state]', holder);
+  const value = field ? field.toDataURL() : '';
+  if (image) {
+    image.hidden = !value;
+    if (value) image.src = value;
+    else image.removeAttribute('src');
+  }
+  if (empty) empty.hidden = !!value;
+  if (state) state.textContent = value ? '서명 완료' : '미서명';
+  holder.dataset.signed = value ? 'true' : 'false';
+}
+
+function onSignAction(action) {
+  if (!signSession) return;
+  const { holder, pad } = signSession;
+  if (action === 'cancel') {
+    closeSignModal();
+    return;
+  }
+  if (action === 'clear') {
+    pad.clear();
+    return;
+  }
+  if (action === 'apply') {
+    if (pad.isEmpty()) {
+      toast('먼저 서명을 해 주세요.', { tone: 'error' });
+      return;
+    }
+    if (holder.pad) holder.pad.signature = pad.toDataURL();
+    updateSignaturePreview(holder);
+    closeSignModal();
+    toast('서명을 넣었습니다. 아래 체결 버튼을 눌러 주세요.');
+  }
+}
+
+/** 서명 박스(미리보기) — 누르면 전용 서명 창이 열립니다. */
+function createSignatureField(holder) {
+  const field = {
+    signature: '',
+    isEmpty() {
+      return !field.signature;
+    },
+    toDataURL() {
+      return field.signature;
+    },
+    clear() {
+      field.signature = '';
+      updateSignaturePreview(holder);
+    },
+    open() {
+      openSignModal(holder);
+    },
+  };
+  holder.pad = field;
+  const box = $('[data-open-signature]', holder);
+  if (box) {
+    box.addEventListener('click', (event) => {
+      event.preventDefault();
+      field.open();
+    });
+  }
+  updateSignaturePreview(holder);
+  return field;
+}
+
+function signatureFieldTemplate(label, hint) {
+  return `
+    <div class="sign-pad" data-signature-pad data-sign-label="${esc(label)}">
+      <div class="sign-pad__head">
+        <span>${esc(label)}</span>
+        <span class="sign-pad__state" data-sign-state>미서명</span>
+      </div>
+      <button class="sign-box" type="button" data-open-signature aria-label="${esc(label)} — 서명 창 열기">
+        <span class="sign-box__empty" data-sign-empty>✍ 눌러서 서명 — S펜 · 손가락 · 마우스</span>
+        <img class="sign-box__image" data-sign-preview alt="${esc(label)} 미리보기" hidden>
+      </button>
+      <p class="sign-pad__hint">${esc(hint || '서명 박스를 누르면 넓은 서명 창이 열립니다.')}</p>
+    </div>`;
+}
+
+/**
+ * 서명 창 크기가 바뀌면(회전·창 크기 변경) 캔버스를 다시 맞칩니다.
+ * 그린 내용은 사라지므로 안내합니다.
+ */
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('resize', () => {
+    if (!signSession || !signModal || signModal.hidden) return;
+    signSession.pad.fit();
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -424,15 +622,7 @@ function signatureBlock(agreement, role, editable) {
   if (!editable || role !== 'customer') {
     return `<div class="sign-pad sign-pad--empty"><span>갑(고객) 서명란 — 고객이 서명하면 이 자리에 서명 이미지가 표시됩니다.</span></div>`;
   }
-  return `
-    <div class="sign-pad" data-signature-pad>
-      <div class="sign-pad__head">
-        <span>갑(고객) 전자서명</span>
-        <button class="link-btn" type="button" data-doc-action="clear-sign">지우기</button>
-      </div>
-      <canvas id="sign-canvas" aria-label="전자서명 패드"></canvas>
-      <p class="sign-pad__hint">손가락이나 마우스로 서명해 주세요.</p>
-    </div>`;
+  return signatureFieldTemplate('갑(고객) 전자서명');
 }
 
 export function agreementSheetHtml(agreement, { role = 'admin' } = {}) {
@@ -552,10 +742,8 @@ export async function openAgreementSheet(agreementId, options = {}) {
       html: agreementSheetHtml(agreement, { role }),
       actions,
       afterMount: (box) => {
-        const canvas = $('#sign-canvas', box);
-        const pad = canvas ? setupSignaturePad(canvas) : null;
         const holder = $('[data-signature-pad]', box);
-        if (holder && pad) holder.pad = pad;
+        if (holder) createSignatureField(holder);
       },
     });
   }
@@ -727,6 +915,358 @@ export function staffSheetHtml(contract, siteNames = []) {
     </article>`;
 }
 
+/* ------------------------------------------------------------------ */
+/* 정기청소 도급계약서 (도급 유형 전용 · 실제 양식)                       */
+/* ------------------------------------------------------------------ */
+
+const SUBCONTRACT_ISSUER = {
+  company: '코리아 에코크린',
+  ceo: '채종병',
+  bizNumber: '281-46-00169',
+  address: '서울시 양천구 남부순환로36길 30, 1층 B01호 상가(신월동)',
+  phone: '010-9900-8369',
+};
+
+function vatOf(amount) {
+  return Math.round((Number(amount) || 0) * 0.1);
+}
+
+/** 제1조 ~ 제11조 — 도급인 양식 PDF 원문 그대로. */
+function subcontractClauses(contract) {
+  const start = fmtDateDot(contract.startDate) || '____.__.__.';
+  const end = fmtDateDot(contract.endDate) || '____.__.__.';
+  const day = String(contract.settlementDay || '15').replace(/[^0-9]/g, '') || '15';
+  const amount = Number(contract.monthlyAmount) || 0;
+  const vat = vatOf(amount);
+  const amountLine = amount
+    ? `최초 금 [일금 ${fmtKoreanAmount(amount)}원정] (₩${fmtNumber(amount)} / 부가세 별도 · 세액 ₩${fmtNumber(vat)})`
+    : '최초 금 [____________] (₩____________ / 부가세 [별도])';
+  const accountLine =
+    contract.bankAccount || contract.accountHolder
+      ? `* 계좌번호: [${contract.bankName || '은행명'} ${contract.bankAccount || '계좌번호'} / 예금주 ${contract.accountHolder || '예금주'}]`
+      : '* 계좌번호: [은행명 계좌번호 / 예금주]';
+  return [
+    {
+      no: 1,
+      title: '목적',
+      paras: [
+        '본 계약은 "갑"이 지정한 대상물의 청소 업무를 "을"에게 위탁하고, "을"은 이를 자신의 책임하에 완성하여 "갑"에게 쾌적하고 위생적인 환경을 제공하는 것을 목적으로 한다.',
+      ],
+    },
+    {
+      no: 2,
+      title: '청소 대상물 및 범위 : 별첨',
+      paras: [
+        '1. 대상물 소재지: 별첨',
+        '2. 대상 범위: [예: 사무실 내부, 화장실, 탕비실, 복도 등 구체적으로 기재] 별첨',
+        '3. 청소 주기 및 작업시간: [예: 주 3회(월, 수, 금)] 별첨',
+        '4. 도급대상의 도급 금액: (별첨)',
+      ],
+    },
+    {
+      no: 3,
+      title: '계약 기간',
+      paras: [
+        `1. 본 계약의 기간은 ${start}부터 ${end}까지로 한다.`,
+        '2. 계약 만료 1개월 전까지 쌍방의 서면 거부가 없을 경우, 본 계약은 동일한 조건으로 1년간 자동 연장되는 것으로 본다.',
+      ],
+    },
+    {
+      no: 4,
+      title: '도급 대금 및 지급 방법',
+      paras: [
+        `1. 월 도급 금액은 ${amountLine}으로 하며 도급대상 도급 금액 변동시 제2조 별첨본을 최우선으로 한다.`,
+        `2. "을"은 매월 말일까지의 해당 월의 용역에 대한 현금영수증 또는 세금계산서를 발행하고, "갑"은 익월 [${day}]일까지 "을"이 지정한 금융 계좌로 대금을 현금 지급한다.`,
+        accountLine,
+      ],
+    },
+    {
+      no: 5,
+      title: '업무의 수행 및 지휘감독',
+      paras: [
+        '1. "을"은 독립된 자격으로서 자신의 책임과 지휘하에 인력을 배치하여 청소 업무를 완성해야 한다.',
+        '2. "갑"은 "을"의 근로자에게 직접적인 업무 지시나 근무 시간 관리를 할 수 없으며, 요구사항이 있을 경우 "을"의 관리자 또는 대표자를 통하여 협의하여야 한다.',
+        '3. "갑"과 "을"은 상호 원활한 소통을 위한 협의된 사안에 대해서는 신의 성실하게 협력한다.',
+      ],
+    },
+    {
+      no: 6,
+      title: '장비 및 자재',
+      paras: [
+        '청소 업무 수행에 필요한 장비 및 세제 등의 소모품은 소요 비용이 큰 특수 장비를 제외하고는 원칙적으로 ["을"]의 부담으로 준비한다.',
+      ],
+    },
+    {
+      no: 7,
+      title: '비밀유지 및 손해배상',
+      paras: [
+        '1. "을"과 "을"의 근로자는 업무 중 알게 된 "갑"의 업무상 비밀을 제3자에게 누설해서는 안 된다.',
+        '2. "을"의 근로자가 청소 업무 중 과실로 인하여 "갑"의 시설물을 파손하거나 손해를 입힌 경우, "을"은 이를 원상복구 하거나 배상하여야 한다.',
+      ],
+    },
+    {
+      no: 8,
+      title: '계약의 해지 및 무단 중단 금지',
+      paras: [
+        '1. "갑" 또는 "을"이 본 계약을 해지하고자 할 때는 최소 1개월 전에 상대방에게 서면으로 통보하여야 한다.',
+        '2. "을"은 "갑"의 사전 서면 동의 없이 일방적으로 청소 업무를 중단하거나 계약을 파기할 수 없다.',
+        '3. "을"이 전항을 위반하여 일방적으로 업무를 중단하는 경우, "갑"은 최고(독촉) 없이 즉시 계약을 해지할 수 있다.',
+      ],
+    },
+    {
+      no: 9,
+      title: '을의 무단 이행거부에 따른 위약벌 및 상계 처리',
+      paras: [
+        '1. "을"이 제8조 제2항을 위반하여 일방적으로 업무를 수행하지 않거나 계약을 파기한 경우, "을"은 "갑"에게 위약벌로 [당해 월 도급대금의 2배]에 해당하는 금액을 즉시 지급하여야 한다.',
+        '2. "을"의 일방적인 업무 중단으로 인해 "갑"이 임시 대체 인력을 고용하거나 타 업체와 긴급 계약을 체결하면서 발생한 추가 비용(대체 비용 일체)은 전액 "을"이 부담한다.',
+        '3. "갑"은 "을"에게 지급해야 할 미지급 도급 대금이 있는 경우, 본 조에 따른 위약벌 및 손해배상액을 우선적으로 공제(상계)한 후 남은 금액만 지급할 수 있다. 만약 공제 후에도 부족한 금액이 있을 경우 "갑"은 "을"에게 추가로 청구할 수 있다.',
+      ],
+    },
+    {
+      no: 10,
+      title: '기타 사항',
+      paras: [
+        '본 계약서에 명시되지 않은 사항은 관계 법령 및 일반적인 상관례에 따르며, 쌍방이 합의하여 별도의 특약 사항을 서면으로 작성할 수 있도록 한다. 본 계약의 성립을 증명하기 위하여 계약서 2부를 작성하고, "갑"과 "을"이 상호 서명 또는 날인한 후 각 1부씩 보관한다.',
+      ],
+    },
+    {
+      no: 11,
+      title: '소송관할',
+      paras: [
+        '본 계약내용의 해석에 관한 이견이 발생한 경우에는 관계법령 및 관행에 따라 "갑"과 "을"이 협의하여 정하며 분쟁발생시의 소송 관할은 "갑"의 본사 소재지 관할법원으로 한다.',
+      ],
+    },
+  ];
+}
+
+function subcontractField(id, label, value, editable, { placeholder = '', type = 'text' } = {}) {
+  if (!editable) return `<dd><strong>${esc(value || '미정')}</strong></dd>`;
+  return `<dd><input class="doc-input" id="${id}" type="${type}" value="${esc(value || '')}" placeholder="${esc(placeholder)}"></dd>`;
+}
+
+function subcontractPartiesHtml(contract, editable) {
+  return `
+    <div class="sub-parties">
+      <section class="sub-party">
+        <h2>도급인 (이하 "갑"이라 한다)</h2>
+        <dl>
+          <dt>성명(법인명)</dt><dd><strong>${esc(SUBCONTRACT_ISSUER.company)}</strong></dd>
+          <dt>대표자</dt><dd><strong>${esc(SUBCONTRACT_ISSUER.ceo)}</strong></dd>
+          <dt>사업자등록번호</dt><dd><strong>${esc(SUBCONTRACT_ISSUER.bizNumber)}</strong></dd>
+          <dt>주소</dt><dd><strong>${esc(SUBCONTRACT_ISSUER.address)}</strong></dd>
+          <dt>연락처</dt><dd><strong>${esc(SUBCONTRACT_ISSUER.phone)}</strong></dd>
+        </dl>
+      </section>
+
+      <section class="sub-party sub-party--me">
+        <h2>수급인 (이하 "을"이라 한다)</h2>
+        <dl>
+          <dt>성명(법인명)</dt>${subcontractField('sub-company', '성명(법인명)', contract.companyName || contract.name, editable, { placeholder: '예: 홍길동 (개인) / ○○청소 (법인)' })}
+          <dt>대표자</dt>${subcontractField('sub-name', '대표자', contract.name, editable, { placeholder: '성명' })}
+          <dt>사업자등록번호<br>/ 생년월일</dt>${subcontractField('sub-biz', '사업자등록번호', contract.bizNumber || contract.birthDate, editable, { placeholder: '000-00-00000 (개인이면 생년월일)' })}
+          <dt>주소</dt>${subcontractField('sub-address', '주소', contract.address, editable, { placeholder: '사업장 또는 거주지 주소' })}
+          <dt>연락처</dt>${subcontractField('sub-phone', '연락처', contract.phone, editable, { placeholder: '010-0000-0000' })}
+          <dt>입금 계좌</dt>${subcontractField('sub-account', '입금 계좌', `${contract.bankName || ''} ${contract.bankAccount || ''}`.trim() ? `${contract.bankName || ''} ${contract.bankAccount || ''} (${contract.accountHolder || ''})`.trim() : '', editable, { placeholder: '은행명 계좌번호 / 예금주' })}
+        </dl>
+      </section>
+    </div>`;
+}
+
+/** 별첨본 표의 행 — 배정된 현장에서 만들고, 모자라면 빈 행을 넣습니다. */
+function annexRows(contract, sites, blank) {
+  const rows = (sites || []).slice(0, 8).map((site) => ({
+    name: site.name || '',
+    address: site.address || '',
+    cycle: site.frequency || '',
+    hours: contract.workHours || '협의',
+    scope: contract.scope || (CATEGORY_META[site.category] || {}).label || '정기청소 일체',
+  }));
+  const total = Number(contract.monthlyAmount) || 0;
+  if (total && rows.length) {
+    const base = Math.floor(total / rows.length / 1000) * 1000;
+    rows.forEach((row, index) => {
+      row.supply = base;
+      if (index === rows.length - 1) row.supply += total - base * rows.length;
+      row.vat = vatOf(row.supply);
+      row.sum = row.supply + row.vat;
+    });
+  }
+  const want = blank ? 6 : Math.max(3, rows.length);
+  while (rows.length < want) rows.push({ name: '', address: '', cycle: '', hours: '', scope: '' });
+  return rows;
+}
+
+function subcontractAnnexHtml(contract, sites, { blank = false } = {}) {
+  const rows = annexRows(contract, sites, blank);
+  const totalSupply = rows.reduce((sum, row) => sum + (row.supply || 0), 0);
+  const totalVat = rows.reduce((sum, row) => sum + (row.vat || 0), 0);
+  const totalSum = totalSupply + totalVat;
+  const signed = !!contract.signature;
+  return `
+    <article class="sheet doc doc--contract doc--sub-annex" data-doc="subcontract-annex">
+      <header class="doc__head">
+        <h1>정기청소 도급 계약서 (별첨본)</h1>
+        <p class="doc__sub">${esc(contract.no || '')}${contract.name ? ` · ${esc(contract.name)}` : ''}</p>
+      </header>
+
+      <p class="doc__h2">1. 청소 대상 및 범위</p>
+      <table class="annex-table">
+        <thead>
+          <tr>
+            <th rowspan="2">대상물명</th>
+            <th rowspan="2">소재지</th>
+            <th rowspan="2">주기</th>
+            <th rowspan="2">시간</th>
+            <th rowspan="2">청소 범위</th>
+            <th colspan="3">도급액 (VAT 별도)</th>
+          </tr>
+          <tr>
+            <th class="annex-table__num">공급가</th>
+            <th class="annex-table__num">세액</th>
+            <th class="annex-table__num">합계</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map(
+              (row) => `
+            <tr>
+              <td>${esc(row.name || '')}</td>
+              <td>${esc(row.address || '')}</td>
+              <td>${esc(row.cycle || '')}</td>
+              <td>${esc(row.hours || '')}</td>
+              <td>${esc(row.scope || '')}</td>
+              <td class="annex-table__num">${row.supply ? fmtNumber(row.supply) : ''}</td>
+              <td class="annex-table__num">${row.vat ? fmtNumber(row.vat) : ''}</td>
+              <td class="annex-table__num">${row.sum ? fmtNumber(row.sum) : ''}</td>
+            </tr>`,
+            )
+            .join('')}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="5" class="annex-table__total-label">총괄금액</td>
+            <td class="annex-table__num">${totalSupply ? fmtNumber(totalSupply) : ''}</td>
+            <td class="annex-table__num">${totalVat ? fmtNumber(totalVat) : ''}</td>
+            <td class="annex-table__num">${totalSum ? fmtNumber(totalSum) : ''}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <div class="annex-notes">
+        <p>위 정기청소 도급계약서 별첨본은 정기청소 도급계약서 제2조와 제4조의 세부 내역이며 갑과 을이 상호 협의시 변경 될 수 있으며</p>
+        <p>청소 지점일 외에 작업 수행을 못하거나 추가 작업,그래처 변동이 있을 경우 별도 협의를 통해 도급 대금 정산이 적용하도록 하며</p>
+        <p>중도 투입 작업 또는 종료시, 법정휴무나 그래처 사정으로 인한 미작업시 도급액÷월 평균 작업일×총 작업일로 정산하여 지급한다.</p>
+        <p>대상물의 주기,종료시에는 쌍방 협의 하여 별첨본 수정하여 작성 날인한다.</p>
+      </div>
+
+      <p class="annex-ask">
+        "을"은 정기청소 수행업무에 대한 모든 내용을 확인하였습니까?
+        <span class="annex-ask__box">□ 아니오 (서명)</span>
+        <span class="annex-ask__box">${signed ? '☑' : '□'} 네 (서명)</span>
+      </p>
+
+      <div class="annex-sign">
+        <p class="annex-sign__date">${esc(contract.signedDate || contract.startDate ? `${contract.signedDate || contract.startDate}`.slice(0, 4) : '')}년 ${esc((contract.signedDate || contract.startDate || '').slice(5, 7) || '')}월 ${esc((contract.signedDate || contract.startDate || '').slice(8, 10) || '')}일</p>
+        <div class="annex-sign__pair">
+          <div class="annex-sign__party">
+            <span>갑 (도급인)</span>
+            <p>성명: ${esc(SUBCONTRACT_ISSUER.company)}</p>
+            <p>서명: <span class="doc__seal">(인)</span></p>
+          </div>
+          <div class="annex-sign__party">
+            <span>을 (수급인)</span>
+            <p>성명: ${esc(contract.name || '')}</p>
+            <p>서명: ${contract.signature ? '서명 완료' : ''}</p>
+          </div>
+        </div>
+        ${contract.signature ? `<img class="sign-pad__image annex-sign__image" src="${esc(contract.signature)}" alt="을 전자서명">` : ''}
+      </div>
+    </article>`;
+}
+
+export function subcontractSheetHtml(contract, { sites = [], editable = false, blank = false } = {}) {
+  const clauses = subcontractClauses(contract)
+    .map(
+      (clause) =>
+        `<section class="doc__clause"><h3>제${clause.no}조 (${esc(clause.title)})</h3>${clause.paras
+          .map((para) => `<p class="preserve">${esc(para)}</p>`)
+          .join('')}</section>`,
+    )
+    .join('');
+  const signedDate = contract.signedDate || contract.startDate || '';
+  return `
+    <article class="sheet doc doc--contract doc--subcontract" data-doc="subcontract">
+      <header class="doc__head">
+        <h1>정기청소 도급계약서</h1>
+        <p class="doc__sub">${esc(contract.no || (blank ? '을 미정 (공란)' : ''))}${contract.status === 'signed' ? ' · 체결 완료' : ''}</p>
+      </header>
+
+      ${subcontractPartiesHtml(contract, editable)}
+
+      <p class="sub-intro">"갑"과 "을"은 아래 건물(또는 시설)의 정기청소 업무에 관하여 다음과 같이 도급계약을 체결한다.</p>
+
+      ${clauses}
+
+      <section class="doc__clause doc__clause--sign">
+        <p class="doc__sign-date">${signedDate ? `${esc(signedDate.slice(0, 4))}년 ${esc(signedDate.slice(5, 7))}월 ${esc(signedDate.slice(8, 10))}일` : '____년 ____월 ____일'}</p>
+        <div class="sub-sign">
+          <div class="sub-sign__party">
+            <strong>갑 (도급인)</strong>
+            <span>회사명: ${esc(SUBCONTRACT_ISSUER.company)}</span>
+            <span>대표자: ${esc(SUBCONTRACT_ISSUER.ceo)} <span class="doc__seal">(인)</span></span>
+            <span>사업자등록번호: ${esc(SUBCONTRACT_ISSUER.bizNumber)}</span>
+          </div>
+          <div class="sub-sign__party">
+            <strong>을 (수급인)</strong>
+            <span>회사명: ${esc(contract.companyName || contract.name || '')}</span>
+            <span>대표자: ${esc(contract.name || '')} ${contract.signature ? '<span class="doc__signed">서명 완료</span>' : '<span class="doc__seal">(인)</span>'}</span>
+            <span>사업자등록번호: ${esc(contract.bizNumber || contract.birthDate || '')}</span>
+          </div>
+        </div>
+        ${contract.signature ? `<div class="sign-pad sign-pad--done"><div class="sign-pad__head"><span>을 전자서명</span><span>${esc(fmtDateDot(contract.signedDate))}</span></div><img class="sign-pad__image" src="${esc(contract.signature)}" alt="직원 전자서명"></div>` : ''}
+      </section>
+    </article>
+    ${subcontractAnnexHtml(contract, sites, { blank })}`;
+}
+
+/** 대표: 을 미정(공란) 도급계약서 — 바로 인쇄/PDF 저장. */
+export function openBlankSubcontractSheet() {
+  const today = new Date();
+  const iso = today.toISOString().slice(0, 10);
+  const end = new Date(today);
+  end.setFullYear(end.getFullYear() + 1);
+  end.setDate(end.getDate() - 1);
+  const contract = {
+    id: '',
+    no: '',
+    name: '',
+    companyName: '',
+    phone: '',
+    address: '',
+    bizNumber: '',
+    bankName: '',
+    bankAccount: '',
+    accountHolder: '',
+    employmentType: 'contract',
+    status: 'draft',
+    startDate: iso,
+    endDate: end.toISOString().slice(0, 10),
+    monthlyAmount: 0,
+    settlementDay: '15',
+    siteIds: [],
+    signature: '',
+  };
+  openDocumentSheet({
+    title: '을 미정 도급계약서 (공란)',
+    html: subcontractSheetHtml(contract, { sites: [], blank: true }),
+    actions: `
+      <p class="sheet-actions__note">을(수급인) 칸을 비워 둔 공란 계약서입니다. 인쇄해 수기로 작성하거나 PDF로 저장해 보내세요.</p>
+      <button class="btn btn--primary" type="button" data-sheet="print">인쇄 / PDF 저장</button>
+      <button class="btn btn--quiet" type="button" data-sheet="close">닫기</button>`,
+  });
+}
+
 export async function openStaffContractSheet(staffId, options = {}) {
   const role = options.role || 'admin';
   const reload = options.onChanged || (() => {});
@@ -761,7 +1301,27 @@ export async function openStaffContractSheet(staffId, options = {}) {
           toast('서명란에 서명해 주세요.', { tone: 'error' });
           return;
         }
-        contract = await store.signStaffContract(contract.id, { signature: pad.pad.toDataURL() });
+        const profile = {};
+        if (contract.employmentType === 'contract') {
+          profile.companyName = $('#sub-company', modal)?.value.trim() || '';
+          profile.name = $('#sub-name', modal)?.value.trim() || '';
+          profile.bizNumber = $('#sub-biz', modal)?.value.trim() || '';
+          profile.address = $('#sub-address', modal)?.value.trim() || '';
+          profile.phone = $('#sub-phone', modal)?.value.trim() || '';
+          const account = $('#sub-account', modal)?.value.trim() || '';
+          if (account) {
+            profile.bankAccount = account;
+            profile.accountHolder = profile.name || contract.accountHolder;
+          }
+          if (!profile.name) {
+            toast('수급인(을) 성명을 입력해 주세요.', { tone: 'error' });
+            return;
+          }
+        }
+        contract = await store.signStaffContract(contract.id, {
+          signature: pad.pad.toDataURL(),
+          ...profile,
+        });
         toast('직원 계약서 서명이 완료되었습니다.');
         await reload();
         draw();
@@ -788,26 +1348,19 @@ export async function openStaffContractSheet(staffId, options = {}) {
     renderSheet({
       title: `${meta.short} 계약서 · ${contract.name}`,
       html:
-        staffSheetHtml(contract, siteNames) +
+        (contract.employmentType === 'contract'
+          ? subcontractSheetHtml(contract, {
+              sites: sites.filter((site) => contract.siteIds.includes(site.id)),
+              editable,
+            })
+          : staffSheetHtml(contract, siteNames)) +
         (editable
-          ? `
-        <div class="sheet-actions__pad">
-          <div class="sign-pad" data-signature-pad>
-            <div class="sign-pad__head">
-              <span>내 전자서명</span>
-              <button class="link-btn" type="button" data-doc-action="clear-sign">지우기</button>
-            </div>
-            <canvas id="sign-canvas" aria-label="전자서명 패드"></canvas>
-            <p class="sign-pad__hint">손가락이나 마우스로 서명해 주세요.</p>
-          </div>
-        </div>`
+          ? `<div class="sheet-actions__pad">${signatureFieldTemplate('내 전자서명 (을)', '서명 박스를 누르면 넓은 서명 창이 열립니다.')}</div>`
           : ''),
       actions,
       afterMount: (box) => {
-        const canvas = $('#sign-canvas', box);
-        const pad = canvas ? setupSignaturePad(canvas) : null;
         const holder = $('[data-signature-pad]', box);
-        if (holder && pad) holder.pad = pad;
+        if (holder) createSignatureField(holder);
       },
     });
   }
@@ -815,9 +1368,14 @@ export async function openStaffContractSheet(staffId, options = {}) {
   draw();
 }
 
-/* 키보드로 닫기 */
+/* 키보드로 닫기 — 서명 창이 열려 있으면 서명 창만 닫습니다. */
 if (typeof document !== 'undefined') {
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && modal && !modal.hidden) closeSheet();
+    if (event.key !== 'Escape') return;
+    if (signModal && !signModal.hidden) {
+      closeSignModal();
+      return;
+    }
+    if (modal && !modal.hidden) closeSheet();
   });
 }

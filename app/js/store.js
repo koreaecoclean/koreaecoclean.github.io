@@ -342,6 +342,8 @@ export function normalizeStaffContract(input) {
     residentId: toText(source.residentId),
     birthDate: toText(source.birthDate),
     bizNumber: toText(source.bizNumber),
+    companyName: toText(source.companyName),
+    address: toText(source.address),
     bankName: toText(source.bankName) || PAYMENT_ACCOUNT.bankName,
     bankAccount: toText(source.bankAccount),
     accountHolder: toText(source.accountHolder) || toText(source.name),
@@ -1584,6 +1586,10 @@ export class Store {
     if (agreement.status === 'signed' && agreement.siteId) {
       return { agreement, site: await this.getSite(agreement.siteId) };
     }
+    // 서명 창에서 [서명 적용]을 누른 서명만 계약서에 들어갑니다.
+    if (!toText(payload.signature)) {
+      throw new StoreError('signature-empty', '서명란에 서명해 주세요.');
+    }
 
     const quote = agreement.quoteId ? await this.getQuote(agreement.quoteId) : null;
     const client = {
@@ -1904,9 +1910,22 @@ export class Store {
     const contract = await this.getStaffContract(id);
     if (!contract) throw new StoreError('no-staff-contract', '직원 계약서를 찾을 수 없습니다.');
     if (contract.status === 'signed') return contract;
+    if (!toText(payload.signature)) {
+      throw new StoreError('signature-empty', '서명란에 서명해 주세요.');
+    }
     const now = new Date().toISOString();
     const next = normalizeStaffContract({
       ...contract,
+      // 도급 계약서 — 직원이 직접 확인·입력한 수급인(을) 정보를 함께 저장합니다.
+      name: toText(payload.name) || contract.name,
+      companyName: toText(payload.companyName) || contract.companyName,
+      phone: toText(payload.phone) || contract.phone,
+      address: toText(payload.address) || contract.address,
+      bizNumber: toText(payload.bizNumber) || contract.bizNumber,
+      birthDate: toText(payload.birthDate) || contract.birthDate,
+      bankName: toText(payload.bankName) || contract.bankName,
+      bankAccount: toText(payload.bankAccount) || contract.bankAccount,
+      accountHolder: toText(payload.accountHolder) || contract.accountHolder,
       status: 'signed',
       signature: toText(payload.signature) || contract.signature,
       signedDate: toText(payload.signedDate) || todayISO(),
