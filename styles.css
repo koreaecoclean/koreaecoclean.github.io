@@ -2080,14 +2080,17 @@ button { font-family: inherit; }
   opacity: 0;
   transform: translateY(26px);
   transition:
-    opacity .85s var(--ease),
-    transform .85s var(--ease);
-  transition-delay: calc(var(--d, 0) * 85ms);
+    opacity .5s var(--ease),
+    transform .5s var(--ease);
   will-change: opacity, transform;
 }
 .reveal-ready .reveal.is-in {
   opacity: 1;
   transform: none;
+  transition:
+    opacity .85s var(--ease),
+    transform .85s var(--ease);
+  transition-delay: calc(var(--d, 0) * 85ms);
 }
 
 /* ---------------- Responsive ---------------- */

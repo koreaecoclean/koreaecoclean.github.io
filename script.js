@@ -89,7 +89,7 @@
     });
   }
 
-  /* ---------- 스크롤 등장 애니메이션 ---------- */
+  /* ---------- 스크롤 등장 애니메이션 (위·아래 어느 방향으로 스크롤해도 매번 재생) ---------- */
   var revealEls = Array.prototype.slice.call(doc.querySelectorAll('[data-reveal]'));
 
   function revealAll() {
@@ -99,14 +99,20 @@
   if (!('IntersectionObserver' in window) || reduceMotion) {
     revealAll();
   } else {
+    /* 화면에 들어오면 나타나고, 화면에서 완전히 벗어나면 다시 숨김 상태로 되돌립니다.
+       threshold 를 0 으로 두어 화면보다 큰 섹션도 조금이라도 걸치면 보이게 하고,
+       판정 영역은 위 2%·아래 10%를 뺀 만큼만 써서 경계에서 깜빡이지 않게 합니다.
+       (한 번 보이면 끝나던 unobserve 를 없애 스크롤 방향과 상관없이 반복됩니다) */
     var revealIO = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
+        var el = entry.target;
         if (entry.isIntersecting) {
-          entry.target.classList.add('is-in');
-          revealIO.unobserve(entry.target);
+          el.classList.add('is-in');
+        } else {
+          el.classList.remove('is-in');
         }
       });
-    }, { threshold: 0.1, rootMargin: '0px 0px -6% 0px' });
+    }, { threshold: 0, rootMargin: '-2% 0px -10% 0px' });
 
     revealEls.forEach(function (el) { revealIO.observe(el); });
 
@@ -132,6 +138,8 @@
       return;
     }
 
+    if (el._countRaf) window.cancelAnimationFrame(el._countRaf);
+
     var duration = 1500;
     var startTime = null;
 
@@ -140,10 +148,10 @@
       var p = Math.min(1, (now - startTime) / duration);
       var eased = 1 - Math.pow(1 - p, 3);
       el.textContent = Math.round(target * eased) + suffix;
-      if (p < 1) window.requestAnimationFrame(step);
-      else el.textContent = target + suffix;
+      if (p < 1) el._countRaf = window.requestAnimationFrame(step);
+      else { el._countRaf = null; el.textContent = target + suffix; }
     }
-    window.requestAnimationFrame(step);
+    el._countRaf = window.requestAnimationFrame(step);
   }
 
   if (counters.length) {
@@ -152,14 +160,12 @@
         el.textContent = el.getAttribute('data-count') + (el.getAttribute('data-suffix') || '');
       });
     } else {
+      /* 숫자도 화면에 다시 들어올 때마다 새로 세어 올라갑니다(화면 아래 12% 지점에서 시작) */
       var countIO = new IntersectionObserver(function (entries) {
         entries.forEach(function (entry) {
-          if (entry.isIntersecting) {
-            runCount(entry.target);
-            countIO.unobserve(entry.target);
-          }
+          if (entry.isIntersecting) runCount(entry.target);
         });
-      }, { threshold: 0.5 });
+      }, { threshold: 0, rootMargin: '0px 0px -12% 0px' });
       counters.forEach(function (el) { countIO.observe(el); });
     }
   }
