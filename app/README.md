@@ -128,6 +128,10 @@
 
 **모두싸인형 원클릭 링크** — 링크를 받은 사람은 코드를 입력할 필요가 없습니다.
 
+| 초대 링크 입장 (코드 자동 입력) | 도급계약서 · 손가락 서명 | 기기 A — 다른 폰이 서명한 결과 |
+| --- | --- | --- |
+| ![초대 링크](docs/screenshots/v250-invite-entry.jpg) | ![서명](docs/screenshots/v250-contract-sign.jpg) | ![교차 확인](docs/screenshots/v250-cross-device.jpg) |
+
 ```
 https://koreaecoclean.github.io/app/#invite=S-H3K9P2   도급처 · 직원 계약서 서명
 https://koreaecoclean.github.io/app/#invite=Q-G7K2M4   고객 견적서 · 계약서 서명
