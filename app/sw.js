@@ -7,7 +7,7 @@
    Bump CACHE_VERSION whenever shell files change.
    ============================================================ */
 
-const CACHE_VERSION = 'v2.6.3';
+const CACHE_VERSION = 'v2.6.4';
 const CACHE_NAME = `kec-shell-${CACHE_VERSION}`;
 
 const PRECACHE = [
@@ -22,6 +22,7 @@ const PRECACHE = [
   './js/invite.js',
   './js/auth.js',
   './js/seed.js',
+  './js/seal.js',
   './js/photos.js',
   './js/contract-text.js',
   './js/views/home.js',
@@ -32,6 +33,7 @@ const PRECACHE = [
   './js/views/admin-docs.js',
   './js/views/supply.js',
   './assets/logo.png',
+  './assets/company-seal.png',
   './assets/favicon.svg',
   './assets/icon-192.png',
   './assets/icon-512.png',

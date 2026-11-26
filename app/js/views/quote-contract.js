@@ -18,6 +18,7 @@ import {
 } from '../ui.js';
 import { store, QUOTE_STATUS, AGREEMENT_STATUS } from '../store.js';
 import { CATEGORY_META, STAFF_TYPES, SUPPLIER, PAYMENT_ACCOUNT } from '../seed.js';
+import { companySealImg } from '../seal.js';
 import { inviteUrl } from '../invite.js';
 import {
   CONTRACT_TITLE,
@@ -463,7 +464,7 @@ export function quoteSheetHtml(quote, photos = []) {
 
       <footer class="doc__foot">
         <p>${esc(CONTRACT_FOOTER)}</p>
-        <p class="doc__sign-line">코리아 에코크린 · 대표 ${esc(SUPPLIER.ceo)} <span class="doc__seal">(인)</span></p>
+        <p class="doc__sign-line">코리아 에코크린 · 대표 ${esc(SUPPLIER.ceo)} ${companySealImg({ className: 'doc__seal-img doc__seal-img--inline' })}</p>
       </footer>
     </article>`;
 }
@@ -615,7 +616,7 @@ function partyRows(agreement, editable) {
     <tr><th rowspan="5" class="doc-table__side">을</th><th>주&nbsp;&nbsp;소</th><td>${esc(agreement.supplierAddress)}</td></tr>
     <tr><th>사 업 자 명</th><td>${esc(agreement.supplierBusinessName)}</td></tr>
     <tr><th>사업자등록번호</th><td>${esc(agreement.supplierBizNumber)}</td></tr>
-    <tr><th>대&nbsp;&nbsp;표&nbsp;&nbsp;자</th><td>${esc(agreement.supplierCeo)} &nbsp;<span class="doc__seal">(인)</span></td></tr>
+    <tr><th>대&nbsp;&nbsp;표&nbsp;&nbsp;자</th><td>${esc(agreement.supplierCeo)} ${companySealImg({ className: 'doc__seal-img doc__seal-img--inline' })}</td></tr>
     <tr><th>업&nbsp;&nbsp;태 / 종목</th><td>${esc(agreement.supplierUpjong)} / ${esc(agreement.supplierJongmok)}</td></tr>
   `;
 }
@@ -910,7 +911,7 @@ export function staffSheetHtml(contract, siteNames = []) {
       <section class="doc__clause doc__clause--sign">
         <p class="doc__sign-date">${esc(fmtDateDot(contract.signedDate) || fmtDateDot(contract.startDate))}</p>
         <div class="doc__sign-pair">
-          <div><span>사업주 (갑)</span><strong>코리아 에코크린 대표 ${esc(SUPPLIER.ceo)}</strong><span class="doc__seal">(인)</span></div>
+          <div><span>사업주 (갑)</span><strong>코리아 에코크린 대표 ${esc(SUPPLIER.ceo)}</strong>${companySealImg({ className: 'doc__seal-img' })}</div>
           <div><span>직원 (을)</span><strong>${esc(contract.name)}</strong>${signed ? '<span class="doc__signed">서명 완료</span>' : ''}</div>
         </div>
         ${
@@ -1070,9 +1071,9 @@ function subcontractPartiesHtml(contract, editable) {
       <section class="sub-party sub-party--me">
         <h2>수급인 (이하 "을"이라 한다)</h2>
         <dl>
-          <dt>성명(법인명)</dt>${subcontractField('sub-company', '성명(법인명)', contract.companyName || contract.name, editable, { placeholder: '예: 홍길동 (개인) / ○○청소 (법인)' })}
+          <dt>회사명(상호)</dt>${subcontractField('sub-company', '회사명(상호)', contract.companyName || contract.name, editable, { placeholder: '예: 블링블링크린 / ○○청소 (법인)' })}
           <dt>대표자</dt>${subcontractField('sub-name', '대표자', contract.name, editable, { placeholder: '성명' })}
-          <dt>사업자등록번호<br>/ 생년월일</dt>${subcontractField('sub-biz', '사업자등록번호', contract.bizNumber || contract.birthDate, editable, { placeholder: '000-00-00000 (개인이면 생년월일)' })}
+          <dt>사업자등록번호<br>/ 주민등록번호</dt>${subcontractField('sub-biz', '사업자등록번호(주민번호)', contract.bizNumber || contract.residentId, editable, { placeholder: '000-00-00000 (없으면 비워 두세요)' })}
           <dt>주소</dt>${subcontractField('sub-address', '주소', contract.address, editable, { placeholder: '사업장 또는 거주지 주소' })}
           <dt>연락처</dt>${subcontractField('sub-phone', '연락처', contract.phone, editable, { placeholder: '010-0000-0000' })}
           <dt>입금 계좌</dt>${subcontractField('sub-account', '입금 계좌', `${contract.bankName || ''} ${contract.bankAccount || ''}`.trim() ? `${contract.bankName || ''} ${contract.bankAccount || ''} (${contract.accountHolder || ''})`.trim() : '', editable, { placeholder: '은행명 계좌번호 / 예금주' })}
@@ -1104,8 +1105,9 @@ function annexRows(contract, sites, blank) {
       row.supply = base;
       if (index === rest.length - 1) row.supply += remainder - base * rest.length;
     });
-  } else if (!fixed.length && total && rows.length) {
+  } else if (!fixed.length && total && rows.length && contract.status !== 'signed') {
     // 현장별 도급액이 없으면 월 도급액을 현장 수로 나눕니다(기존 방식).
+    // 체결된 계약서는 서명 당시 금액을 지키기 위해 나누지 않습니다(새 업장은 금액 공란).
     const base = Math.floor(total / rows.length / 1000) * 1000;
     rows.forEach((row, index) => {
       row.supply = base;
@@ -1122,12 +1124,25 @@ function annexRows(contract, sites, blank) {
   return rows;
 }
 
+/**
+ * 별첨본 확인 질문의 선택 칸 — 누르면 체크(☑)가 되고 계약서 데이터에 저장됩니다.
+ * 체결 전에는 대표·을 모두 누를 수 있고, 체결된 계약서는 저장된 표시만 보여 줍니다.
+ */
+function annexAckBox(contract, value, label) {
+  const ack = contract.annexAck || (contract.signature ? 'yes' : '');
+  const on = ack === value;
+  const text = `${on ? '☑' : '□'} ${label}`;
+  if (!contract.id || contract.signature) {
+    return `<span class="annex-ask__box${on ? ' is-checked' : ''}">${esc(text)}</span>`;
+  }
+  return `<button class="annex-ask__box${on ? ' is-checked' : ''}" type="button" data-doc-action="annex-ack-${value}" data-annex-ack="${value}" data-annex-label="${esc(label)}" aria-pressed="${on}">${esc(text)}</button>`;
+}
+
 function subcontractAnnexHtml(contract, sites, { blank = false } = {}) {
   const rows = annexRows(contract, sites, blank);
   const totalSupply = rows.reduce((sum, row) => sum + (row.supply || 0), 0);
   const totalVat = rows.reduce((sum, row) => sum + (row.vat || 0), 0);
   const totalSum = totalSupply + totalVat;
-  const signed = !!contract.signature;
   return `
     <article class="sheet doc doc--contract doc--sub-annex" data-doc="subcontract-annex">
       <header class="doc__head">
@@ -1188,8 +1203,8 @@ function subcontractAnnexHtml(contract, sites, { blank = false } = {}) {
 
       <p class="annex-ask">
         "을"은 정기청소 수행업무에 대한 모든 내용을 확인하였습니까?
-        <span class="annex-ask__box">□ 아니오 (서명)</span>
-        <span class="annex-ask__box">${signed ? '☑' : '□'} 네 (서명)</span>
+        ${annexAckBox(contract, 'no', '아니오 (서명)')}
+        ${annexAckBox(contract, 'yes', '네 (서명)')}
       </p>
 
       <div class="annex-sign">
@@ -1198,7 +1213,7 @@ function subcontractAnnexHtml(contract, sites, { blank = false } = {}) {
           <div class="annex-sign__party">
             <span>갑 (도급인)</span>
             <p>성명: ${esc(SUBCONTRACT_ISSUER.company)}</p>
-            <p>서명: <span class="doc__seal">(인)</span></p>
+            <p>서명: ${companySealImg({ className: 'doc__seal-img annex-sign__seal' })}</p>
           </div>
           <div class="annex-sign__party">
             <span>을 (수급인)</span>
@@ -1240,14 +1255,14 @@ export function subcontractSheetHtml(contract, { sites = [], editable = false, b
           <div class="sub-sign__party">
             <strong>갑 (도급인)</strong>
             <span>회사명: ${esc(SUBCONTRACT_ISSUER.company)}</span>
-            <span>대표자: ${esc(SUBCONTRACT_ISSUER.ceo)} <span class="doc__seal">(인)</span></span>
+            <span>대표자: ${esc(SUBCONTRACT_ISSUER.ceo)} ${companySealImg({ className: 'doc__seal-img doc__seal-img--inline' })}</span>
             <span>사업자등록번호: ${esc(SUBCONTRACT_ISSUER.bizNumber)}</span>
           </div>
           <div class="sub-sign__party">
             <strong>을 (수급인)</strong>
             <span>회사명: ${esc(contract.companyName || contract.name || '')}</span>
-            <span>대표자: ${esc(contract.name || '')} ${contract.signature ? '<span class="doc__signed">서명 완료</span>' : '<span class="doc__seal">(인)</span>'}</span>
-            <span>사업자등록번호: ${esc(contract.bizNumber || contract.birthDate || '')}</span>
+            <span>대표자: ${esc(contract.name || '')} ${contract.signature ? '<span class="doc__signed">서명 완료</span>' : '<span class="doc__seal-slot">(인)</span>'}</span>
+            <span>사업자등록번호: ${esc(contract.bizNumber || contract.residentId || '')}</span>
           </div>
         </div>
         ${contract.signature ? `<div class="sign-pad sign-pad--done"><div class="sign-pad__head"><span>을 전자서명</span><span>${esc(fmtDateDot(contract.signedDate))}</span></div><img class="sign-pad__image" src="${esc(contract.signature)}" alt="직원 전자서명"></div>` : ''}
@@ -1293,6 +1308,18 @@ export function openBlankSubcontractSheet() {
   });
 }
 
+/** 별첨본 확인 칸을 시트를 다시 그리지 않고 그 자리에서 체크 표시만 바꿉니다(읽던 위치 유지). */
+function paintAnnexAck(value) {
+  const box = modal ? modal.querySelector('[data-sheet-body]') : null;
+  if (!box) return;
+  box.querySelectorAll('[data-annex-ack]').forEach((btn) => {
+    const on = btn.dataset.annexAck === value;
+    btn.classList.toggle('is-checked', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.textContent = `${on ? '☑' : '□'} ${btn.dataset.annexLabel || ''}`.trim();
+  });
+}
+
 export async function openStaffContractSheet(staffId, options = {}) {
   const role = options.role || 'admin';
   const reload = options.onChanged || (() => {});
@@ -1302,6 +1329,12 @@ export async function openStaffContractSheet(staffId, options = {}) {
     return;
   }
   const sites = await store.listSites();
+  // 별첨은 계약서의 siteIds + 팀장 계정에 배정된 업장을 합쳐 그립니다.
+  const annexSiteIds = new Set(contract.siteIds || []);
+  if (contract.accountId) {
+    const account = await store.getAccount(contract.accountId);
+    ((account && account.assignedSiteIds) || []).forEach((id) => annexSiteIds.add(id));
+  }
   const siteNames = contract.siteIds
     .map((id) => (sites.find((site) => site.id === id) || {}).name)
     .filter(Boolean);
@@ -1312,6 +1345,23 @@ export async function openStaffContractSheet(staffId, options = {}) {
       if (action === 'clear-sign') {
         const pad = $('[data-signature-pad]', modal);
         if (pad && pad.pad) pad.pad.clear();
+        return;
+      }
+      if (action === 'annex-ack-yes' || action === 'annex-ack-no') {
+        if (contract.status === 'signed') {
+          toast('체결된 계약서는 확인 표시를 바꿀 수 없습니다.', { tone: 'error' });
+          return;
+        }
+        const value = action === 'annex-ack-yes' ? 'yes' : 'no';
+        // 같은 칸을 다시 누르면 체크를 취소합니다.
+        const nextValue = contract.annexAck === value ? '' : value;
+        try {
+          contract = await store.updateStaffContract(contract.id, { annexAck: nextValue });
+        } catch (error) {
+          toast(error && error.message ? error.message : '확인 표시를 저장하지 못했습니다.', { tone: 'error' });
+          return;
+        }
+        paintAnnexAck(nextValue);
         return;
       }
       if (action === 'send-staff') {
@@ -1376,7 +1426,7 @@ export async function openStaffContractSheet(staffId, options = {}) {
       html:
         (contract.employmentType === 'contract'
           ? subcontractSheetHtml(contract, {
-              sites: sites.filter((site) => contract.siteIds.includes(site.id)),
+              sites: sites.filter((site) => annexSiteIds.has(site.id)),
               editable,
             })
           : staffSheetHtml(contract, siteNames)) +

@@ -108,6 +108,11 @@ export function createLeaderView(container) {
     myContracts: [],
     myChecks: [],
     leaderTab: 'sites',
+    // 관리자(대표·부관리자) 화면 — 팀장 목록 → 그 팀장의 관리업장
+    managerMode: false,
+    teamLeads: [],
+    teamContracts: [],
+    teamLeadId: '',
     siteStaff: [],
     staffCodes: [],
     supplyOrders: [],
@@ -262,6 +267,176 @@ export function createLeaderView(container) {
       </section>`;
   }
 
+  /* ---------------- 관리팀장별 관리업장 (대표 · 부관리자) ---------------- */
+
+  function siteRowsTemplate(sites) {
+    const today = toISODate();
+    return Promise.all(
+      sites.map(async (site) => {
+        const reports = await store.listReports({ siteId: site.id, limit: 1 });
+        const last = reports[0];
+        const doneToday = last && last.date === today;
+        const meta = CATEGORY_META[site.category] || {};
+        let badge = '<span class="badge">기록 없음</span>';
+        if (doneToday) badge = '<span class="badge badge--done">오늘 보고 완료</span>';
+        else if (last) {
+          const due = daysBetween(last.date) >= (site.intervalDays || 7) - 1;
+          badge = due
+            ? '<span class="badge badge--wait">방문 예정</span>'
+            : `<span class="badge">${daysBetween(last.date)}일 전 방문</span>`;
+        }
+        return `
+          <button class="pick" type="button" data-pick-site="${esc(site.id)}">
+            <span>
+              <strong>${esc(site.name)}</strong>
+              <span>${esc(meta.short || '')} · ${esc(site.code)} · ${esc(site.frequency)}</span>
+            </span>
+            <span class="pick__right">${badge}<span class="site-item__code">담당 ${esc(site.manager || '-')}</span></span>
+          </button>`;
+      }),
+    );
+  }
+
+  /** 그 팀장과 연결된 계약서 — 관리자는 바로 열어 봅니다. */
+  function leadContractTemplate(lead, session) {
+    const contract =
+      state.teamContracts.find((row) => row.accountId && row.accountId === lead.id) ||
+      state.teamContracts.find((row) => row.name === lead.name) ||
+      null;
+    const canOpen = session.role === 'admin';
+    if (!contract) {
+      return `
+        <section class="panel lead-contract" data-lead-contract="${esc(lead.id)}">
+          <div class="section-head"><h2>팀장과의 계약서</h2><p>${esc(lead.name)} ${esc(lead.title || '')}</p></div>
+          <p class="tiny muted">이 팀장과 연결된 계약서가 없습니다. 관리 → 직원 · 계약 관리에서 만들 수 있습니다.</p>
+        </section>`;
+    }
+    const meta = STAFF_TYPES[contract.employmentType] || STAFF_TYPES.freelancer;
+    const status = STAFF_STATUS[contract.status] || STAFF_STATUS.draft;
+    return `
+      <section class="panel lead-contract" data-lead-contract="${esc(contract.id)}">
+        <div class="section-head">
+          <h2>팀장과의 계약서</h2>
+          <p>${esc(meta.label)} · ${esc(contract.no)}</p>
+        </div>
+        <div class="my-doc-row" data-team-contract-row="${esc(contract.id)}">
+          <div class="my-doc-row__who">
+            <strong>${esc(contract.name)} ${esc(contract.roleTitle || '')}</strong>
+            <span>${esc(contract.no)} · ${esc(contract.startDate || '')} ~ ${esc(contract.endDate || '')} · 업장 ${contract.siteIds.length}곳</span>
+          </div>
+          <div class="my-doc-row__right">
+            <span class="badge ${status.badge}">${esc(status.label)}</span>
+            ${
+              canOpen
+                ? `<button class="btn btn--sm btn--ghost" type="button" data-team-contract="${esc(contract.id)}">계약서 열기</button>`
+                : ''
+            }
+          </div>
+        </div>
+        <p class="hint">이 팀장에게 새 업장이 배정되면 별첨(관리업장 표)에 자동으로 추가됩니다.</p>
+      </section>`;
+  }
+
+  /** 관리자용 팀장 계약서 목록 — 금액은 보여주지 않습니다(부관리자 화면 공통). */
+  function teamContractsTemplate(rows, session) {
+    if (!rows || !rows.length) return '';
+    const canOpen = session.role === 'admin';
+    return `
+      <section class="panel" data-team-docs>
+        <div class="section-head">
+          <h2>팀장 계약서</h2>
+          <p>${rows.length}건</p>
+        </div>
+        ${rows
+          .map((contract) => {
+            const meta = STAFF_TYPES[contract.employmentType] || STAFF_TYPES.freelancer;
+            const status = STAFF_STATUS[contract.status] || STAFF_STATUS.draft;
+            return `
+              <div class="my-doc-row" data-team-contract-row="${esc(contract.id)}">
+                <div class="my-doc-row__who">
+                  <strong>${esc(contract.name)} ${esc(contract.roleTitle || '')}</strong>
+                  <span>${esc(meta.short)} · ${esc(contract.no)} · 업장 ${contract.siteIds.length}곳</span>
+                </div>
+                <div class="my-doc-row__right">
+                  <span class="badge ${status.badge}">${esc(status.label)}</span>
+                  ${
+                    canOpen
+                      ? `<button class="btn btn--sm btn--ghost" type="button" data-team-contract="${esc(contract.id)}">계약서 열기</button>`
+                      : ''
+                  }
+                </div>
+              </div>`;
+          })
+          .join('')}
+        <p class="hint">팀장과의 계약서는 팀장이 맡은 관리업장과 함께 별첨이 맞춰집니다.</p>
+      </section>`;
+  }
+
+  /** 관리자 화면의 관리업장 — 팀장 목록 → 팀장별 업장. */
+  async function managerSitesTemplate(session, sites) {
+    const leads = state.teamLeads;
+    const pickedId = state.teamLeadId;
+    const picked = leads.find((lead) => lead.id === pickedId) || null;
+
+    if (!pickedId) {
+      return `
+        <section data-lead-directory>
+          <div class="section-head">
+            <h2>관리팀장</h2>
+            <p>${leads.length}명 · 팀장을 고르면 담당 업장이 열립니다</p>
+          </div>
+          <div class="lead-grid">
+            ${leads
+              .map(
+                (lead) => `
+              <button class="lead-card" type="button" data-pick-lead="${esc(lead.id)}">
+                <span class="lead-card__avatar" aria-hidden="true">${esc(lead.name.slice(0, 1))}</span>
+                <span class="lead-card__who">
+                  <strong>${esc(lead.name)} ${esc(lead.title || '팀장')}</strong>
+                  <span>${esc(lead.sites.map((site) => site.name).slice(0, 2).join(' · ') || '배정 업장 없음')}${lead.sites.length > 2 ? ` 외 ${lead.sites.length - 2}` : ''}</span>
+                </span>
+                <span class="lead-card__count">${lead.sites.length}<em>곳</em></span>
+              </button>`,
+              )
+              .join('')}
+            <button class="lead-card lead-card--all" type="button" data-pick-lead="__all__">
+              <span class="lead-card__avatar" aria-hidden="true">
+                ${esc(session.name.slice(0, 1))}
+              </span>
+              <span class="lead-card__who">
+                <strong>전체 업장 보기</strong>
+                <span>팀장 구분 없이 모든 현장을 봅니다</span>
+              </span>
+              <span class="lead-card__count">${sites.length}<em>곳</em></span>
+            </button>
+          </div>
+          <p class="hint" style="margin-top:10px">팀장을 고르면 그 팀장의 관리업장·계약서가 함께 열립니다.</p>
+        </section>
+        <section class="panel">
+          <div class="section-head"><h2>최근 7일</h2></div>
+          <div class="kv" id="week-summary"><dt>불러오는 중</dt><dd>-</dd></div>
+        </section>`;
+    }
+
+    const list = picked ? picked.sites : sites;
+    const rows = await siteRowsTemplate(list);
+    return `
+      <section data-lead-sites="${esc(pickedId)}">
+        <button class="btn btn--sm btn--quiet lead-back" type="button" data-lead-back>← 팀장 목록</button>
+        <div class="section-head">
+          <h2>${esc(picked ? `${picked.name} ${picked.title || ''}` : '전체 업장')} · 관리업장</h2>
+          <p>${list.length}곳</p>
+        </div>
+        <div class="pick-list">${rows.join('')}</div>
+        <p class="hint" style="margin-top:10px">현장을 고르면 사진·점검 항목을 기록하는 보고서가 열립니다.</p>
+      </section>
+      ${picked ? leadContractTemplate(picked, session) : ''}
+      <section class="panel">
+        <div class="section-head"><h2>최근 7일</h2></div>
+        <div class="kv" id="week-summary"><dt>불러오는 중</dt><dd>-</dd></div>
+      </section>`;
+  }
+
   async function sitePickerTemplate(session, sites) {
     const today = toISODate();
     const rows = await Promise.all(
@@ -295,8 +470,11 @@ export function createLeaderView(container) {
       ${employeeTabsTemplate(tab, session)}
       ${
         tab === 'contracts'
-          ? myDocsTemplate(state.myContracts) ||
-            `<section class="panel">${`<div class="empty"><strong>아직 계약서가 없습니다</strong><span>대표가 계약서를 보내면 이곳에 표시됩니다.</span></div>`}</section>`
+          ? state.managerMode
+            ? teamContractsTemplate(state.teamContracts, session) ||
+              `<section class="panel">${`<div class="empty"><strong>아직 팀장 계약서가 없습니다</strong><span>관리 → 직원 · 계약 관리에서 만들 수 있습니다.</span></div>`}</section>`
+            : myDocsTemplate(state.myContracts) ||
+              `<section class="panel">${`<div class="empty"><strong>아직 계약서가 없습니다</strong><span>대표가 계약서를 보내면 이곳에 표시됩니다.</span></div>`}</section>`
           : tab === 'attitude'
             ? attitudeTemplate(state.myChecks)
             : tab === 'supply'
@@ -306,7 +484,9 @@ export function createLeaderView(container) {
                   session,
                   state: { supply: { open: state.supplyRequestOpen } },
                 })
-              : `<section>
+              : state.managerMode
+                ? await managerSitesTemplate(session, sites)
+                : `<section>
                  <div class="section-head">
                    <h2>관리업장</h2>
                    <p>${sites.length}곳 배정</p>
@@ -330,7 +510,7 @@ export function createLeaderView(container) {
         <div class="leader-bar__who">
           <span class="avatar" aria-hidden="true">${esc(session.name.slice(0, 1))}</span>
           <div>
-            <strong>${esc(session.name)} ${esc(session.title || '팀장')}${isAdmin ? ' · 대표' : ''}</strong>
+            <strong>${esc(session.name)} ${esc(session.title || '팀장')}${isAdmin && !/대표/.test(session.title || '') ? ' · 대표' : ''}</strong>
             <span>${esc(session.phone || '')} · ${esc(fmtDateLong(toISODate()))}</span>
           </div>
         </div>
@@ -933,18 +1113,52 @@ export function createLeaderView(container) {
       state.siteStaff = [];
       state.supplyCatalog = [];
       state.supplyOrders = [];
+      state.managerMode = false;
+      state.teamLeads = [];
+      state.teamContracts = [];
+      state.teamLeadId = '';
       state.staffCodes = await demoStaffCodes().catch(() => []);
       container.innerHTML = gateTemplate();
       return;
     }
 
     const sites = await store.listSites();
+    // 대표 · 부관리자 — 관리자 화면: 팀장을 골라 그 팀장의 관리업장을 봅니 다.
+    state.managerMode =
+      state.session.role === 'admin' ||
+      !!(state.session.account && state.session.account.canManageStaff) ||
+      /본부장/.test(state.session.title || '');
     const assigned = state.session.assignedSiteIds || [];
-    const allowed = assigned.length
-      ? sites.filter((site) => assigned.includes(site.id))
-      : state.session.role === 'admin'
-        ? sites
-        : [];
+    const allowed = state.managerMode ? sites : assigned.length ? sites.filter((site) => assigned.includes(site.id)) : [];
+    if (state.managerMode) {
+      const accounts = await store.listAccounts({ role: 'leader' });
+      state.teamLeads = accounts
+        .filter((account) => account.active !== false)
+        .filter((account) => !account.canManageStaff && !/본부장/.test(account.title || ''))
+        .map((account) => ({
+          id: account.id,
+          name: account.name,
+          title: account.title || '팀장',
+          phone: account.phonePretty || account.phone,
+          sites: sites.filter(
+            (site) =>
+              (account.assignedSiteIds || []).includes(site.id) || (site.manager && site.manager === account.name),
+          ),
+        }))
+        .filter((lead) => lead.sites.length);
+      state.teamContracts = await store.listStaffContracts();
+      if (
+        state.teamLeadId &&
+        state.teamLeadId !== '__all__' &&
+        !state.teamLeads.some((lead) => lead.id === state.teamLeadId)
+      ) {
+        state.teamLeadId = '';
+      }
+    } else {
+      state.teamLeads = [];
+      state.teamContracts = [];
+      state.teamLeadId = '';
+    }
     state.myContracts = await store.listStaffContracts({ accountId: state.session.accountId });
     state.myChecks = await store.listStaffChecks({ accountId: state.session.accountId });
 
@@ -1377,6 +1591,30 @@ export function createLeaderView(container) {
       return;
     }
 
+    const pickLead = event.target.closest('[data-pick-lead]');
+    if (pickLead) {
+      state.teamLeadId = pickLead.dataset.pickLead;
+      state.siteId = null;
+      state.draft = null;
+      await render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    const leadBack = event.target.closest('[data-lead-back]');
+    if (leadBack) {
+      state.teamLeadId = '';
+      await render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    const teamContract = event.target.closest('[data-team-contract]');
+    if (teamContract) {
+      await openStaffContractSheet(teamContract.dataset.teamContract, { role: 'admin', onChanged: render });
+      return;
+    }
+
     const pick = event.target.closest('[data-pick-site]');
     if (pick) {
       state.siteId = pick.dataset.pickSite;
@@ -1434,6 +1672,7 @@ export function createLeaderView(container) {
       state.siteId = null;
       state.draft = null;
       state.sent = null;
+      state.teamLeadId = '';
       await render();
       toast('로그아웃했습니다.');
       return;

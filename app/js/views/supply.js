@@ -12,6 +12,7 @@
 import { esc, fmtWon, fmtNumber, toast, confirmDialog, toISODate } from '../ui.js';
 import { store, SUPPLY_STATUS, supplyTotals } from '../store.js';
 import { RECEIPT_ISSUER, SUPPLY_GROUPS } from '../seed.js';
+import { companySealImg } from '../seal.js';
 import { openDocumentSheet } from './quote-contract.js';
 
 /* ------------------------------------------------------------------ */
@@ -95,14 +96,7 @@ export function refreshSupplyTotal(root) {
 /* 영수증 시트                                                          */
 /* ------------------------------------------------------------------ */
 
-const SEAL_SVG = `
-  <svg viewBox="0 0 100 100" role="img" aria-label="코리아에코크린 대표 직인">
-    <circle cx="50" cy="50" r="46" fill="none" stroke="#c0392b" stroke-width="4"></circle>
-    <circle cx="50" cy="50" r="38.5" fill="none" stroke="#c0392b" stroke-width="1.2"></circle>
-    <text x="50" y="32" text-anchor="middle" font-size="10.5" font-weight="700" fill="#c0392b" letter-spacing=".5">코리아에코크린</text>
-    <text x="50" y="56" text-anchor="middle" font-size="15" font-weight="800" fill="#c0392b">대표</text>
-    <text x="50" y="76" text-anchor="middle" font-size="14" font-weight="800" fill="#c0392b">채종병</text>
-  </svg>`;
+/* 영수증 도장은 대표가 준 실제 직인 이미지(assets/company-seal.png)를 씁니다. */
 
 export function supplyReceiptHtml(order) {
   const rows = order.items || [];
@@ -163,7 +157,7 @@ export function supplyReceiptHtml(order) {
         <p class="receipt__confirm">위 금액을 정히 영수합니다.</p>
         <div class="receipt__sign">
           <span>코리아에코크린 대표 ${esc(RECEIPT_ISSUER.ceo)}</span>
-          <span class="receipt__seal" aria-hidden="true">${SEAL_SVG}</span>
+          <span class="receipt__seal">${companySealImg({ className: 'receipt__seal-img', alt: '코리아 에코크린 대표 직인' })}</span>
         </div>
         <p class="receipt__thanks">감사합니다</p>
       </div>

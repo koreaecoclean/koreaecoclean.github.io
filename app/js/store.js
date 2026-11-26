@@ -373,6 +373,9 @@ export function normalizeStaffContract(input) {
     process: toText(source.process),
     safety: toText(source.safety),
     specialTerms: toText(source.specialTerms),
+    // 별첨본 확인 질문("을"은 내용을 확인하였습니까?) — 'yes' / 'no' / 빈 값.
+    annexAck: source.annexAck === 'yes' || source.annexAck === 'no' ? source.annexAck : '',
+    annexAckedAt: toText(source.annexAckedAt),
     status: AGREEMENT_STATUS[source.status] ? source.status : 'draft',
     inviteCode: toText(source.inviteCode),
     inviteIssuedAt: toText(source.inviteIssuedAt),
@@ -1223,6 +1226,8 @@ export class Store {
 
     await this.adapter.put('sites', site);
     await this.assignLeadersToSite(site.id, input.leaderIds || []);
+    // 새 업장은 담당 팀장의 도급계약서 별첨에도 바로 올립니다.
+    await this.syncStaffContractSites(site.id);
     this._notify();
     return site;
   }
@@ -1234,7 +1239,13 @@ export class Store {
     if (patch.baseline) next.baseline = normalizeBaseline(patch.baseline);
     if (patch.contract !== undefined) next.contract = normalizeContract(patch.contract);
     if (patch.ops !== undefined) next.ops = normalizeOps(patch.ops);
+    delete next.leaderIds;
     await this.adapter.put('sites', next);
+    if (Array.isArray(patch.leaderIds)) await this.assignLeadersToSite(site.id, patch.leaderIds);
+    // 담당 팀장이 바뀌면 팀장 계약서 별첨도 함께 맞춥니다.
+    if (Array.isArray(patch.leaderIds) || 'manager' in patch || 'managerRole' in patch) {
+      await this.syncStaffContractSites(site.id);
+    }
     this._notify();
     return next;
   }
@@ -1274,6 +1285,8 @@ export class Store {
     }
     next.updatedAt = new Date().toISOString();
     await this.adapter.put('sites', next);
+    // 담당 팀장을 바꾸면 팀장 계약서 별첨도 함께 맞춥니다.
+    if ('manager' in patch || 'managerRole' in patch) await this.syncStaffContractSites(siteId);
     this._notify();
     return next;
   }
@@ -1300,6 +1313,60 @@ export class Store {
       updated.push(next);
     }
     return updated;
+  }
+
+  /**
+   * 현장 담당 팀장 계정 — 배정(assignedSiteIds) 또는 담당자 이름으로 찾습니다.
+   * (이름만 적어 둔 예전 현장도 팀장 계정과 이어지게 합니다.)
+   */
+  async _siteManagers(site) {
+    const accounts = await this.adapter.getAll('accounts');
+    return accounts.filter((account) => {
+      if (account.role !== 'leader') return false;
+      if ((account.assignedSiteIds || []).includes(site.id)) return true;
+      return !!site.manager && account.name === site.manager;
+    });
+  }
+
+  /**
+   * 현장을 담당 팀장의 계약서 별첨(siteIds)에 반영합니다.
+   *  - 담당 팀장의 계약서에는 이 현장을 더합니다(체결된 계약서도 별첨 줄만 더하고
+   *    금액·서명·기간은 건드리지 않습니다).
+   *  - 담당이 아닌 팀장의 ‘미체결’ 계약서에서는 이 현장을 뺍니다.
+   *    (체결된 계약서는 서명 당시 조건을 지키기 위해 그대로 둡니다.)
+   */
+  async syncStaffContractSites(siteId) {
+    const site = await this.getSite(siteId);
+    if (!site) return [];
+    const managers = await this._siteManagers(site);
+    const managerIds = new Set(managers.map((account) => account.id));
+    const rows = (await this.adapter.getAll('staffContracts')).map(normalizeStaffContract);
+    const changed = [];
+    for (const contract of rows) {
+      const mine = contract.accountId
+        ? managerIds.has(contract.accountId)
+        : managers.some((account) => account.name === contract.name);
+      const has = contract.siteIds.includes(site.id);
+      if (mine && !has) {
+        const next = normalizeStaffContract({
+          ...contract,
+          siteIds: [...contract.siteIds, site.id],
+          updatedAt: new Date().toISOString(),
+        });
+        await this.adapter.put('staffContracts', next);
+        changed.push({ id: contract.id, action: 'added' });
+      } else if (!mine && has && contract.status !== 'signed') {
+        const next = normalizeStaffContract({
+          ...contract,
+          siteIds: contract.siteIds.filter((id) => id !== site.id),
+          updatedAt: new Date().toISOString(),
+        });
+        await this.adapter.put('staffContracts', next);
+        changed.push({ id: contract.id, action: 'removed' });
+      }
+    }
+    if (changed.length) this._notify();
+    return changed;
   }
 
   /** Save the 첫 견적(오염) or 첫 청소(대청소) record of a site. */
@@ -1820,9 +1887,16 @@ export class Store {
     }
 
     const now = new Date().toISOString();
+    // 팀장 계정과 연결된 계약서는 그 팀장이 맡은 업장을 별첨에 그대로 이어받습니다.
+    const account = input.accountId ? await this.getAccount(input.accountId) : null;
+    const siteIds =
+      Array.isArray(input.siteIds) && input.siteIds.length
+        ? input.siteIds.filter(Boolean)
+        : (account && Array.isArray(account.assignedSiteIds) ? account.assignedSiteIds.slice() : []);
     const contract = normalizeStaffContract({
       ...input,
       id: uid('staff'),
+      siteIds,
       no: toText(input.no) || (await this._nextDocNumber('staffContracts', 'S')),
       name,
       phone,
@@ -1850,13 +1924,16 @@ export class Store {
     if (contract.status === 'signed') {
       throw new StoreError('already-signed', '체결된 계약서는 수정할 수 없습니다.');
     }
+    const now = new Date().toISOString();
     const next = normalizeStaffContract({
       ...contract,
       ...patch,
+      // 별첨본 확인 표시를 바꾸면 그 시각도 함께 남깁니다.
+      ...('annexAck' in patch ? { annexAckedAt: toText(patch.annexAck) ? now : '' } : {}),
       id: contract.id,
       inviteCode: contract.inviteCode,
       createdAt: contract.createdAt,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
     });
     await this.adapter.put('staffContracts', next);
     this._notify();

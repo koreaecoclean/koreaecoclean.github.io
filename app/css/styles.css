@@ -1062,6 +1062,45 @@ body {
 .pick span { font-size: 12px; color: var(--muted); }
 .pick__right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
 
+/* 관리자(대표·부관리자) 관리업장 — 팀장별로 먼저 고릅니다. */
+.lead-grid { display: grid; gap: 8px; }
+.lead-card {
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.lead-card:hover, .lead-card:focus-visible { border-color: var(--brand-500); }
+.lead-card__avatar {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--brand-50);
+  color: var(--brand-800);
+  font-size: 15px;
+  font-weight: 800;
+}
+.lead-card__who { min-width: 0; }
+.lead-card__who strong { display: block; font-size: 14px; font-weight: 800; letter-spacing: -.02em; }
+.lead-card__who span { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lead-card__count { flex: none; font-size: 18px; font-weight: 800; color: var(--brand-800); }
+.lead-card__count em { margin-left: 1px; font-style: normal; font-size: 11px; font-weight: 700; color: var(--muted); }
+.lead-card--all { border-style: dashed; }
+.lead-card--all .lead-card__avatar { background: var(--line); color: var(--ink); }
+.section-head [data-lead-back] { margin-bottom: 6px; }
+.lead-back { margin-bottom: 8px; }
+.lead-contract { margin-top: 14px; }
+
 .upload-zone {
   display: flex;
   flex-direction: column;
@@ -2198,6 +2237,10 @@ body.sheet-open { overflow: hidden; }
 .doc__foot p { font-size: 10.5px; color: var(--muted); }
 .doc__sign-line { margin-top: 6px; font-size: 12px; color: var(--ink); font-weight: 700; }
 .doc__seal { display: inline-block; width: 22px; height: 22px; line-height: 20px; border: 1px solid #c05a4a; border-radius: 50%; color: #c05a4a; font-size: 10px; text-align: center; vertical-align: middle; }
+/* 회사 직인 이미지 — 대표가 준 도장 사진에서 검은 배경을 투명하게 뺀 PNG */
+.doc__seal-slot { display: inline-block; min-width: 40px; padding: 1px 6px; border: 1px dashed #c3cdc3; border-radius: 4px; color: var(--muted); font-size: 10px; text-align: center; vertical-align: middle; }
+.doc__seal-img { display: inline-block; width: 40px; height: 40px; object-fit: contain; vertical-align: middle; }
+.doc__seal-img--inline { width: 36px; height: 36px; margin-left: 2px; }
 .doc__signed { margin-left: 6px; font-size: 10.5px; color: var(--brand-700); font-weight: 800; }
 
 .doc__clause--sign { margin-top: 22px; }
@@ -2339,6 +2382,9 @@ body.sheet-open { overflow: hidden; }
     line-height: 1.55;
   }
   .doc__clause, .doc-table, .doc__amount, .doc__photos, .doc__parties, .sign-pad { break-inside: avoid; }
+  /* 직인 이미지는 종이에 빨간 인영 그대로 인쇄되게 합니다. */
+  .doc__seal-img, .receipt__seal img { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .annex-ask__box { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   .doc__head h1 { font-size: 18pt; }
   .doc__photos img { max-height: 58mm; width: auto; }
   .doc-input,
@@ -2598,7 +2644,7 @@ body.sheet-open { overflow: hidden; }
 .receipt__sign { display: inline-flex; align-items: center; gap: 10px; margin-top: 12px; }
 .receipt__sign > span:first-child { font-size: 13px; font-weight: 700; }
 .receipt__seal { display: inline-block; width: 54px; height: 54px; flex: none; }
-.receipt__seal svg { width: 100%; height: 100%; }
+.receipt__seal img { width: 100%; height: 100%; object-fit: contain; }
 .receipt__thanks { margin-top: 14px; font-size: 12px; color: #6b6b6b; letter-spacing: .12em; }
 
 /* 하단 톱니 테두리 — 시트 바닥을 오려낸 것처럼 흰 삼각형을 이어 붙입니다. */
@@ -2774,13 +2820,17 @@ body.sign-open { overflow: hidden; }
 .annex-table__total-label { text-align: right; }
 .annex-notes { display: grid; gap: 2px; margin-top: 10px; font-size: 10.5px; color: var(--ink-soft); text-align: center; }
 .annex-ask { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; font-size: 11.5px; font-weight: 700; }
-.annex-ask__box { padding: 2px 8px; border: 1px solid #9aa79a; border-radius: 3px; font-weight: 600; }
+.annex-ask__box { padding: 3px 10px; border: 1px solid #9aa79a; border-radius: 4px; font: inherit; font-weight: 600; color: inherit; background: #fff; }
+button.annex-ask__box { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+button.annex-ask__box:hover { border-color: var(--brand-600); }
+.annex-ask__box.is-checked { border-color: var(--brand-800); background: var(--brand-50); color: var(--brand-900); font-weight: 800; }
 .annex-sign { margin-top: 20px; }
 .annex-sign__date { margin-bottom: 10px; text-align: center; font-size: 11.5px; }
 .annex-sign__pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; font-size: 11px; }
 .annex-sign__party span { font-weight: 800; color: var(--brand-800); }
 .annex-sign__party p { margin: 2px 0; }
 .annex-sign__image { max-height: 62px; margin: 8px auto 0; }
+.annex-sign__seal { width: 52px; height: 52px; }
 
 @media print {
   .doc--sub-annex { break-before: page; }
