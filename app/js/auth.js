@@ -268,8 +268,10 @@ export async function demoRegisteredCustomers() {
 /** 미사용 직원 초대코드 (직원관리방 입장 테스트용). */
 export async function demoStaffCodes() {
   const contracts = await store.listStaffContracts();
+  // 실제 직원(공개 데모 목록에서 빠진 계정)의 초대코드는 공개 목록에 올리지 않습니다.
+  const hiddenAccountIds = new Set(DEMO_ACCOUNTS.filter((account) => account.demoHidden).map((account) => account.id));
   return contracts
-    .filter((row) => !row.inviteUsedAt && row.status !== 'draft')
+    .filter((row) => !row.inviteUsedAt && row.status !== 'draft' && !hiddenAccountIds.has(row.accountId))
     .map((row) => ({
       name: row.name,
       phone: prettyPhone(row.phone),
