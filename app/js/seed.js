@@ -9,7 +9,7 @@
  * "데모 계정" panel.
  */
 
-export const SEED_VERSION = 10;
+export const SEED_VERSION = 11;
 
 /** 앱 공개 주소 — 초대 문구에 들어갑니다. */
 export const APP_URL = 'https://koreaecoclean.github.io/app/';
@@ -141,10 +141,122 @@ export const CATEGORY_META = {
 };
 
 /**
+ * 패스트파이브 강남3호점 매뉴얼 구조판. 구역·항목 구성이 바뀔 때마다 올리면,
+ * 이미 저장된 기기·서버(store.js _migrateSiteManuals)도 같은 매뉴얼로 맞춰집니다.
+ */
+export const FASTFIVE_MANUAL_REVISION = 2;
+
+/** M/D 표기 (예: 11/27, 12/4). */
+function monthDay(date) {
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+/**
+ * 금요일 냉장고 케어 기준 날짜.
+ *  - base   : 케어하는 금요일 (오늘이 금요일이면 오늘, 아니면 다가오는 금요일)
+ *  - white  : 흰색 스티커 기준일 (금요일 −2일 = 수요일)
+ *  - next   : 노란색 스티커를 새로 붙이는 다음 케어 금요일 (+7일)
+ * 2026-11-27 케어에서는 11/27 · 11/25 · 12/4 가 나옵니다.
+ */
+export function fridgeCareDates(now = new Date()) {
+  const base = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0, 0);
+  base.setDate(base.getDate() + ((5 - base.getDay() + 7) % 7));
+  const white = new Date(base);
+  white.setDate(white.getDate() - 2);
+  const next = new Date(base);
+  next.setDate(next.getDate() + 7);
+  return {
+    fridayISO: toISO(base),
+    friday: monthDay(base),
+    white: monthDay(white),
+    next: monthDay(next),
+  };
+}
+
+/**
+ * 패스트파이브 강남3호점 — 주 5회(월~금) 사무실 정기청소.
+ * 2026-11-27 대표 요청: 월·수·금 **다이닝룸 청소를 별도 구역으로** 빼고,
+ * 금요일에 **냉장고 케어**(매주 금요일 새벽 · 스티커 색 교체)를 따로 둡니다.
+ *  · 주 1회 비움 : 그날 비우는 층 · 호실
+ *  · 바닥 청소   : 사무실 + 공용부를 밀대로 진행하는 구역
+ *  · 다이닝룸 청소 : 바닥 청소와 섞지 않고 따로 체크하는 구역
+ *  · 냉장고 케어 : 스티커 날짜는 케어하는 금요일 기준으로 매주 자동 계산
+ */
+export function buildFastfiveManual(now = new Date()) {
+  const fridge = fridgeCareDates(now);
+  const extraEmpty = () => ({ label: '추가 비움', floors: '', items: ['추가 비움 있을 경우 (호실 별도 사진 공유)'] });
+  const weeklyEmpty = (label) => ({ label: '주 1회 비움', floors: '', items: [label] });
+  const floorCare = (label) => ({ label: '바닥 청소', floors: '사무실+공용부 = 밀대 진행', items: [label] });
+  const dining = (label, floors = '') => ({ label: '다이닝룸 청소', floors, items: [label] });
+
+  return {
+    revision: FASTFIVE_MANUAL_REVISION,
+    fridgeWeek: fridge.fridayISO,
+    time: '',
+    timeNote: '',
+    days: [
+      {
+        key: 'mon',
+        label: '월',
+        areas: [
+          extraEmpty(),
+          weeklyEmpty('4층 (401호~435호)'),
+          floorCare('4층 (401호~435호)'),
+          dining('4층 다이닝룸 바닥 케어', '4층'),
+        ],
+      },
+      {
+        key: 'tue',
+        label: '화',
+        areas: [extraEmpty(), weeklyEmpty('5층 (501~535호)'), floorCare('5층 (501~535호)')],
+      },
+      {
+        key: 'wed',
+        label: '수',
+        areas: [
+          extraEmpty(),
+          weeklyEmpty('5층 (536~553호), 6층 (601~616호)'),
+          floorCare('5층 (536~553호), 6층 (601~616호)'),
+          dining('다이닝룸 바닥 청소'),
+        ],
+      },
+      {
+        key: 'thu',
+        label: '목',
+        areas: [
+          extraEmpty(),
+          weeklyEmpty('6층 (617~638호), 7층 (701~713호)'),
+          floorCare('6층 (617~638호), 7층 (701~713호) / 스튜디오 케어'),
+        ],
+      },
+      {
+        key: 'fri',
+        label: '금',
+        areas: [
+          extraEmpty(),
+          weeklyEmpty('7층 (714~743호)'),
+          floorCare('7층 (714~743호)'),
+          dining('다이닝룸 바닥 청소'),
+          {
+            label: '냉장고 케어',
+            floors: '매주 금요일 새벽 케어',
+            items: [
+              `노란색 스티커 ${fridge.friday} → 스티커 부착 X / 사진 공유만`,
+              `흰색 스티커 ~${fridge.white} → 노란색 스티커에 ${fridge.next} 부착`,
+              `아무것도 안 붙어있으면 → 흰색 스티커 ${fridge.friday} 부착`,
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
  * 청소공정 매뉴얼 — 첨부 작업표 원본 그대로.
  *  - time / timeNote : 청소 가능 시간
  *  - days[]          : 요일별 작업표 (주 7일 동일한 현장은 하루짜리 '매일')
- *  - days[].areas[]  : 구역(사무실·화장실·계단·주방·홀)과 작업 항목
+ *  - days[].areas[]  : 구역(사무실·화장실·계단·주방·홀·다이닝룸·냉장고)과 작업 항목
  * 팀장 · 부장의 현장 보고 화면이 이 값으로 체크리스트를 그립니다.
  */
 export const CLEANING_MANUALS = {
@@ -195,93 +307,8 @@ export const CLEANING_MANUALS = {
       },
     ],
   },
-  /**
-   * 패스트파이브 강남3호점 — 주 5회(월~금) 사무실 정기청소.
-   * 대표가 2026-11-27에 보낸 요일별 업무요청 그대로 넣었습니다.
-   *  · 주 1회 비움 : 그날 비우는 층 · 호실
-   *  · 바닥 청소   : 사무실 + 공용부를 밀대로 진행하는 구역
-   *  · 냉장고 케어 : 매주 금요일 새벽, 스티커 색으로 교체 주기를 관리
-   */
-  site_fastfive_gangnam3: {
-    time: '',
-    timeNote: '',
-    days: [
-      {
-        key: 'mon',
-        label: '월',
-        areas: [
-          { label: '추가 비움', floors: '', items: ['추가 비움 있을 경우 (호실 별도 사진 공유)'] },
-          { label: '주 1회 비움', floors: '', items: ['4층 (401호~435호)'] },
-          {
-            label: '바닥 청소',
-            floors: '사무실+공용부 = 밀대 진행',
-            items: ['4층 다이닝룸 바닥 케어', '4층 (401호~435호)'],
-          },
-        ],
-      },
-      {
-        key: 'tue',
-        label: '화',
-        areas: [
-          { label: '추가 비움', floors: '', items: ['추가 비움 있을 경우 (호실 별도 사진 공유)'] },
-          { label: '주 1회 비움', floors: '', items: ['5층 (501~535호)'] },
-          {
-            label: '바닥 청소',
-            floors: '사무실+공용부 = 밀대 진행',
-            items: ['5층 (501~535호)'],
-          },
-        ],
-      },
-      {
-        key: 'wed',
-        label: '수',
-        areas: [
-          { label: '추가 비움', floors: '', items: ['추가 비움 있을 경우 (호실 별도 사진 공유)'] },
-          { label: '주 1회 비움', floors: '', items: ['5층 (536~553호), 6층 (601~616호)'] },
-          {
-            label: '바닥 청소',
-            floors: '사무실+공용부 = 밀대 진행',
-            items: ['5층 (536~553호), 6층 (601~616호) / 다이닝룸 바닥'],
-          },
-        ],
-      },
-      {
-        key: 'thu',
-        label: '목',
-        areas: [
-          { label: '추가 비움', floors: '', items: ['추가 비움 있을 경우 (호실 별도 사진 공유)'] },
-          { label: '주 1회 비움', floors: '', items: ['6층 (617~638호), 7층 (701~713호)'] },
-          {
-            label: '바닥 청소',
-            floors: '사무실+공용부 = 밀대 진행',
-            items: ['6층 (617~638호), 7층 (701~713호) / 스튜디오 케어'],
-          },
-        ],
-      },
-      {
-        key: 'fri',
-        label: '금',
-        areas: [
-          { label: '추가 비움', floors: '', items: ['추가 비움 있을 경우 (호실 별도 사진 공유)'] },
-          { label: '주 1회 비움', floors: '', items: ['7층 (714~743호)'] },
-          {
-            label: '바닥 청소',
-            floors: '사무실+공용부 = 밀대 진행',
-            items: ['7층 (714~743호)'],
-          },
-          {
-            label: '냉장고 케어',
-            floors: '매주 금요일 새벽 케어',
-            items: [
-              '노란색 스티커 11/27 → 스티커 부착 X / 사진 공유만',
-              '흰색 스티커 ~11/25 → 노란색 스티커에 12/4 부착',
-              '아무것도 안 붙어있으면 → 흰색 스티커 11/27 부착',
-            ],
-          },
-        ],
-      },
-    ],
-  },
+  /** 패스트파이브 강남3호점 — 월·수·금 다이닝룸 분리 + 금요일 냉장고 케어 (buildFastfiveManual). */
+  site_fastfive_gangnam3: buildFastfiveManual(),
 };
 
 export const DEFAULT_CHECKLISTS = {

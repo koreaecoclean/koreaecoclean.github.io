@@ -34,6 +34,7 @@ import {
   SEED_VERSION,
   DEMO_ACCOUNTS,
   CLEANING_MANUALS,
+  buildFastfiveManual,
   DEFAULT_CHECKLISTS,
   STAFF_TYPES,
   SUPPLIER,
@@ -879,6 +880,7 @@ export class Store {
     await this._ensureSiteBaseline();
     await this._ensureSiteContractOps();
     await this._ensureSiteManual();
+    await this._migrateSiteManuals();
     await this._ensureSeedQuotes();
     await this._ensureSeedStaffContracts();
     await this._ensureSeedStaffChecks();
@@ -1056,6 +1058,30 @@ export class Store {
       }
       next.updatedAt = new Date().toISOString();
       await this.adapter.put('sites', next);
+    }
+  }
+
+  /**
+   * 청소공정 매뉴얼의 구조가 바뀐 현장은 새 매뉴얼로 갱신합니다.
+   * (2026-11-27 패스트파이브 강남3호점 — 월·수·금 다이닝룸 분리 · 금요일 냉장고 케어)
+   * 저장된 매뉴얼의 revision 또는 케어 기준 주(fridgeWeek)가 시드와 다를 때만
+   * 그 현장의 manual 만 새로 쓰고, 나머지 현장 정보·보고 기록은 건드리지 않습니다.
+   * 케어 기준 주가 넘어가면(다음 금요일) 스티커 날짜만 새 날짜로 맞춥니다.
+   */
+  async _migrateSiteManuals() {
+    const sites = await this.adapter.getAll('sites');
+    if (!sites.length) return;
+    for (const site of sites) {
+      if (site.id !== 'site_fastfive_gangnam3') continue;
+      const current = site.manual;
+      const fresh = buildFastfiveManual();
+      if (!current || typeof current !== 'object') continue; // _ensureSiteManual 이 채웁니다
+      if (current.revision === fresh.revision && current.fridgeWeek === fresh.fridgeWeek) continue;
+      await this.adapter.put('sites', {
+        ...site,
+        manual: JSON.parse(JSON.stringify(fresh)),
+        updatedAt: new Date().toISOString(),
+      });
     }
   }
 

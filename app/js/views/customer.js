@@ -319,7 +319,7 @@ export function createCustomerView(container) {
           </div>
           <div class="report__title">
             <strong>${esc(fmtTime(report.time))} 완료${rel ? ` · ${esc(rel)}` : ''}</strong>
-            <span>${esc(report.leader)} ${esc(report.leaderRole || '팀장')}${report.durationMin ? ` · ${report.durationMin}분` : ''}</span>
+            <span>${esc(report.leader)} ${esc(report.leaderRole || '팀장')}${report.durationMin ? ` · ${report.durationMin}분` : ''}${report.manualDay ? ` · ${esc(report.manualDay)}요일 청소공정` : ''}</span>
           </div>
           <span class="badge badge--done">${icons.check} 완료</span>
         </header>
