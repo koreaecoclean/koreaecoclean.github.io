@@ -6,7 +6,7 @@
  * - 고객 계정과 방 입장 상태 확인
  */
 
-import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber } from '../ui.js';
+import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate } from '../ui.js';
 import { store, netProfit } from '../store.js';
 import { CATEGORY_META } from '../seed.js';
 import { preparePhoto } from '../photos.js';
@@ -21,6 +21,15 @@ import {
   staffRoomTemplate,
 } from './admin-docs.js';
 import { openQuoteSheet, openAgreementSheet, openStaffContractSheet } from './quote-contract.js';
+import {
+  supplyAdminPanel,
+  openSupplyReceipt,
+  submitSupplyIssue,
+  saveSupplyPrice,
+  addSupplyItemFromForm,
+  removeSupplyItem,
+  refreshSupplyTotal,
+} from './supply.js';
 
 export function createAdminView(container) {
   const state = {
@@ -38,6 +47,16 @@ export function createAdminView(container) {
     newStaffError: '',
     staffDetail: '',
     openDetails: '',
+    supply: {
+      open: false,
+      catalogOpen: false,
+      requestId: '',
+      toAccountId: '',
+      toName: '',
+      date: '',
+      note: '',
+      quantities: {},
+    },
   };
   let mounted = false;
   let renderToken = 0;
@@ -486,6 +505,8 @@ export function createAdminView(container) {
     const agreements = await store.listAgreements();
     const staffContracts = await store.listStaffContracts();
     const staffChecks = await store.listStaffChecks();
+    const supplyCatalog = await store.listSupplyCatalog();
+    const supplyOrders = await store.listSupplyOrders();
 
     const unusedTotal = codes.filter((code) => !code.usedAt).length;
     const usedTotal = codes.filter((code) => code.usedAt).length;
@@ -516,6 +537,8 @@ export function createAdminView(container) {
       ${quotePanelTemplate({ quotes, agreements, state })}
 
       ${staffPanelTemplate({ staffContracts, staffChecks, sites, state })}
+
+      ${supplyAdminPanel({ catalog: supplyCatalog, orders: supplyOrders, accounts, state })}
 
       <section>
         <div class="section-head">
@@ -934,6 +957,13 @@ export function createAdminView(container) {
   }
 
   async function onChange(event) {
+    if (event.target.id === 'sup-to') {
+      const nameInput = $('#sup-to-name', container);
+      const option = event.target.selectedOptions && event.target.selectedOptions[0];
+      if (nameInput && event.target.value && option) nameInput.value = String(option.textContent || '').trim();
+      return;
+    }
+
     const quotePhoto = event.target.closest('[data-new-quote-photo]');
     if (quotePhoto) {
       const files = Array.from(quotePhoto.files || []);
@@ -987,6 +1017,11 @@ export function createAdminView(container) {
   }
 
   function onInput(event) {
+    const supplyQty = event.target.closest('[data-supply-qty]');
+    if (supplyQty) {
+      refreshSupplyTotal(supplyQty.closest('form') || container);
+      return;
+    }
     const form = event.target.closest('[data-site-details-form]');
     if (!form) return;
     const amount = (key) => Number($(`[data-contract-field="${key}"]`, form)?.value) || 0;
@@ -1000,6 +1035,35 @@ export function createAdminView(container) {
   /* ---------------- events ---------------- */
 
   async function onSubmit(event) {
+    if (event.target.id === 'supply-issue-form') {
+      event.preventDefault();
+      const order = await submitSupplyIssue(state.session, container, {
+        onDone: async () => {
+          state.supply = {
+            ...state.supply,
+            open: false,
+            requestId: '',
+            toAccountId: '',
+            toName: '',
+            date: '',
+            note: '',
+            quantities: {},
+          };
+          await render();
+        },
+      });
+      if (order) await openSupplyReceipt(order.id);
+      return;
+    }
+    if (event.target.id === 'supply-item-form') {
+      event.preventDefault();
+      const item = await addSupplyItemFromForm(state.session, event.target);
+      if (item) {
+        state.supply.catalogOpen = true;
+        await render();
+      }
+      return;
+    }
     if (event.target.matches('[data-site-details-form]')) {
       event.preventDefault();
       await submitSiteDetails(event.target);
@@ -1061,6 +1125,53 @@ export function createAdminView(container) {
   }
 
   async function onClick(event) {
+    /* ---------------- 청소장비 · 봉투 영수증 (대표) ---------------- */
+    const issueFromRequest = event.target.closest('[data-supply-issue]');
+    if (issueFromRequest) {
+      const order = await store.getSupplyOrder(issueFromRequest.dataset.supplyIssue);
+      if (!order) return;
+      state.supply = {
+        ...state.supply,
+        open: true,
+        requestId: order.id,
+        toAccountId: order.toAccountId || '',
+        toName: order.toName || order.requesterName || '',
+        date: toISODate(),
+        note: order.note || '',
+        quantities: Object.fromEntries((order.items || []).map((line) => [line.catalogId, line.qty])),
+      };
+      await render();
+      const panel = $('[data-supply-issue-panel]', container);
+      if (panel) {
+        panel.open = true;
+        panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+      return;
+    }
+
+    const viewReceipt = event.target.closest('[data-supply-view]');
+    if (viewReceipt) {
+      await openSupplyReceipt(viewReceipt.dataset.supplyView);
+      return;
+    }
+
+    const savePrice = event.target.closest('[data-supply-price-save]');
+    if (savePrice) {
+      const id = savePrice.dataset.supplyPriceSave;
+      const input = $(`[data-supply-price-input="${id}"]`, container);
+      const item = await saveSupplyPrice(state.session, id, input ? input.value : 0);
+      if (item) await render();
+      return;
+    }
+
+    const removeItem = event.target.closest('[data-supply-remove]');
+    if (removeItem) {
+      const item = await store.getSupplyItem(removeItem.dataset.supplyRemove);
+      if (!item) return;
+      if (await removeSupplyItem(state.session, item)) await render();
+      return;
+    }
+
     const openStaffRoom = event.target.closest('[data-open-staff-room]');
     if (openStaffRoom) {
       state.staffDetail = openStaffRoom.dataset.openStaffRoom;
@@ -1298,6 +1409,16 @@ export function createAdminView(container) {
     container.addEventListener('click', onClick);
     container.addEventListener('change', onChange);
     container.addEventListener('input', onInput);
+    // 단가 관리 상자를 열어 둔 채로 저장해도 그대로 열려 있게 합니다.
+    container.addEventListener(
+      'toggle',
+      (event) => {
+        if (event.target.matches && event.target.matches('[data-supply-catalog]')) {
+          state.supply.catalogOpen = !!event.target.open;
+        }
+      },
+      true,
+    );
     mounted = true;
   }
 

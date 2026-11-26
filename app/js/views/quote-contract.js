@@ -67,6 +67,15 @@ export function closeSheet() {
   active = null;
 }
 
+/**
+ * 다른 화면이 같은 서식 시트를 열 수 있는 통로 (청소장비 · 봉투 영수증 등).
+ * `actions` 는 시트 아래에 붙고, data-sheet="print"/"close" 는 이 모달이 직접 처리합니다.
+ */
+export function openDocumentSheet({ title, html, actions = '', onAction = null }) {
+  active = { onAction };
+  renderSheet({ title, html, actions });
+}
+
 function renderSheet({ title, html, actions = '', afterMount = null }) {
   const box = ensureModal();
   box.hidden = false;

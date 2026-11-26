@@ -26,6 +26,8 @@ import {
   buildQuotes,
   buildStaffContracts,
   buildStaffChecks,
+  buildSupplyCatalog,
+  buildSupplyOrders,
   SEED_VERSION,
   DEMO_ACCOUNTS,
   DEFAULT_CHECKLISTS,
@@ -39,7 +41,7 @@ import {
 } from './seed.js';
 
 const DB_NAME = 'korea-ecoclean';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const TABLES = [
   'sites',
   'reports',
@@ -52,6 +54,8 @@ const TABLES = [
   'contracts',
   'staffContracts',
   'staffChecks',
+  'supplyCatalog',
+  'supplyOrders',
   'meta',
 ];
 const LS_PREFIX = 'kec:';
@@ -404,6 +408,108 @@ function normalizeSite(site) {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* 청소장비 · 배접봉투 구입 (대표 · 구입 당사자 직원)                  */
+/* ------------------------------------------------------------------ */
+
+export const SUPPLY_STATUS = {
+  requested: { label: '발행 대기', badge: 'badge--wait' },
+  issued: { label: '영수증 발행', badge: 'badge--done' },
+};
+
+/** 품목 · 단가 마스터 한 줄. 단가가 0원이면 ‘미정'. */
+export function normalizeSupplyItem(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    id: toText(source.id),
+    group: source.group === 'bag' ? 'bag' : 'equipment',
+    name: toText(source.name),
+    price: toAmount(source.price),
+    unit: toText(source.unit) || '개',
+    note: toText(source.note),
+    sort: Number.isFinite(Number(source.sort)) ? Math.round(Number(source.sort)) : 999,
+    active: source.active !== false,
+    createdAt: toText(source.createdAt),
+    updatedAt: toText(source.updatedAt),
+    source: toText(source.source) || 'app',
+  };
+}
+
+/** 영수증 · 구입 신청 한 건 — 품목은 이름·단가를 그대로 복사해 둡니다. */
+export function normalizeSupplyOrder(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const items = (Array.isArray(source.items) ? source.items : []).map((row) => {
+    const price = toAmount(row && row.price);
+    const qty = Math.max(0, Math.round(Number(row && row.qty) || 0));
+    return {
+      catalogId: toText(row && row.catalogId),
+      name: toText(row && row.name) || toText(row && row.catalogId),
+      note: toText(row && row.note),
+      unit: toText(row && row.unit),
+      price,
+      qty,
+      amount: price * qty,
+    };
+  });
+  return {
+    id: toText(source.id),
+    no: toText(source.no),
+    status: SUPPLY_STATUS[source.status] ? source.status : 'requested',
+    requesterAccountId: toText(source.requesterAccountId),
+    requesterName: toText(source.requesterName),
+    toAccountId: toText(source.toAccountId),
+    toName: toText(source.toName) || toText(source.requesterName),
+    date: toText(source.date),
+    requestedAt: toText(source.requestedAt),
+    issuedAt: toText(source.issuedAt),
+    items,
+    total: items.reduce((sum, row) => sum + row.amount, 0),
+    note: toText(source.note),
+    createdAt: toText(source.createdAt),
+    updatedAt: toText(source.updatedAt),
+    source: toText(source.source) || 'app',
+  };
+}
+
+/** 영수증 합계 — 단가가 미정(0원)인 품목이 남아 있는지도 알려 줍니다. */
+export function supplyTotals(items) {
+  const rows = Array.isArray(items) ? items : [];
+  return {
+    total: rows.reduce((sum, row) => sum + toAmount(row && row.price) * Math.max(0, Number(row && row.qty) || 0), 0),
+    pending: rows.some((row) => Number(row && row.qty) > 0 && !toAmount(row && row.price)),
+  };
+}
+
+/** 대표(최고관리자)만 장비 · 봉투의 단가와 영수증을 다룹니다. */
+export function canManageSupply(session) {
+  return !!session && session.role === 'admin';
+}
+
+/**
+ * 구입 신청과 내 영수증은 구입 당사자 직원과 대표만 봅니다.
+ * 부관리자(본부장)와 고객 화면에는 금액이 일체 나오지 않습니다.
+ */
+export function canUseSupply(session) {
+  if (!session) return false;
+  if (session.role === 'admin') return true;
+  if (session.role !== 'leader') return false;
+  if (session.account && session.account.canManageStaff) return false;
+  if (/본부장/.test(session.title || '')) return false;
+  return true;
+}
+
+function requireSupplyEditor(actor) {
+  if (!canManageSupply(actor)) {
+    throw new StoreError('supply-denied', '청소장비 · 봉투 영수증은 대표(최고관리자)만 발행할 수 있습니다.');
+  }
+}
+
+function requireSupplyUser(actor) {
+  if (!canUseSupply(actor)) {
+    throw new StoreError('supply-denied', '청소장비 · 봉투는 구입 당사자 직원과 대표만 다룰 수 있습니다.');
+  }
+}
+
 function isQuotaError(error) {
   if (!error) return false;
   return (
@@ -500,6 +606,14 @@ export class IndexedDbAdapter {
           const store = db.createObjectStore('staffChecks', { keyPath: 'id' });
           store.createIndex('staffContractId', 'staffContractId', { unique: false });
           store.createIndex('accountId', 'accountId', { unique: false });
+        }
+        if (!db.objectStoreNames.contains('supplyCatalog')) {
+          db.createObjectStore('supplyCatalog', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('supplyOrders')) {
+          const store = db.createObjectStore('supplyOrders', { keyPath: 'id' });
+          store.createIndex('toAccountId', 'toAccountId', { unique: false });
+          store.createIndex('status', 'status', { unique: false });
         }
         if (!db.objectStoreNames.contains('meta')) {
           db.createObjectStore('meta', { keyPath: 'key' });
@@ -735,6 +849,31 @@ export class Store {
     await this._ensureSeedQuotes();
     await this._ensureSeedStaffContracts();
     await this._ensureSeedStaffChecks();
+    await this._ensureSeedSupply();
+  }
+
+  /**
+   * 청소장비 · 배접봉투 품목과 데모 영수증이 기존 기기에도 생깁니다.
+   * 이미 저장된 품목·단가는 절대 덮어쓰지 않고, 없는 품목만 추가합니다.
+   * 데모 영수증은 영수증 표가 비어 있을 때만 넣어, 사용자가 지운 기록을 되살리지 않습니다.
+   */
+  async _ensureSeedSupply() {
+    const catalog = await this.adapter.getAll('supplyCatalog');
+    const ids = new Set(catalog.map((row) => row.id));
+    for (const item of buildSupplyCatalog()) {
+      if (ids.has(item.id)) continue;
+      await this.adapter.put('supplyCatalog', JSON.parse(JSON.stringify(item)));
+      ids.add(item.id);
+    }
+    // 데모 영수증은 한 번만 — 대표가 지운 영수증을 다시 살리지 않습니다.
+    if (await this.getSetting('supplyOrdersSeeded', false)) return;
+    const orders = await this.adapter.getAll('supplyOrders');
+    if (!orders.length) {
+      for (const order of buildSupplyOrders()) {
+        await this.adapter.put('supplyOrders', JSON.parse(JSON.stringify(order)));
+      }
+    }
+    await this.setSetting('supplyOrdersSeeded', true);
   }
 
   /** Seeded staff contracts reach devices that already hold data. */
@@ -948,7 +1087,7 @@ export class Store {
   }
 
   async _writeSeed() {
-    const { sites, reports, accounts, roomCodes, grants, quotes, contracts, staffContracts, staffChecks } = buildSeedData();
+    const { sites, reports, accounts, roomCodes, grants, quotes, contracts, staffContracts, staffChecks, supplyCatalog, supplyOrders } = buildSeedData();
     for (const site of sites) await this.adapter.put('sites', site);
     for (const report of reports) await this.adapter.put('reports', report);
     for (const account of accounts) await this.adapter.put('accounts', account);
@@ -958,6 +1097,9 @@ export class Store {
     for (const contract of contracts) await this.adapter.put('contracts', contract);
     for (const staff of staffContracts) await this.adapter.put('staffContracts', staff);
     for (const check of staffChecks) await this.adapter.put('staffChecks', check);
+    for (const item of supplyCatalog) await this.adapter.put('supplyCatalog', item);
+    for (const order of supplyOrders) await this.adapter.put('supplyOrders', order);
+    await this.setSetting('supplyOrdersSeeded', true);
     await this.setSetting('seedVersion', SEED_VERSION);
   }
 
@@ -1810,6 +1952,217 @@ export class Store {
     await this.adapter.put('staffChecks', check);
     this._notify();
     return check;
+  }
+
+  /* ---------------- 청소장비 · 배접봉투 (대표 · 구입 직원) ---------------- */
+
+  async listSupplyCatalog({ activeOnly = true } = {}) {
+    let rows = (await this.adapter.getAll('supplyCatalog')).map(normalizeSupplyItem);
+    if (activeOnly) rows = rows.filter((row) => row.active !== false);
+    return rows.sort(
+      (a, b) => a.sort - b.sort || String(a.name).localeCompare(String(b.name), 'ko'),
+    );
+  }
+
+  async getSupplyItem(id) {
+    const row = await this.adapter.get('supplyCatalog', id);
+    return row ? normalizeSupplyItem(row) : null;
+  }
+
+  /** 새 품목 등록 — 대표 전용. */
+  async addSupplyItem(input = {}, { actor } = {}) {
+    requireSupplyEditor(actor);
+    const name = toText(input.name);
+    if (!name) throw new StoreError('supply-name-empty', '품목명을 입력해 주세요.');
+    const rows = (await this.adapter.getAll('supplyCatalog')).map(normalizeSupplyItem);
+    if (rows.some((row) => row.name === name)) {
+      throw new StoreError('supply-name-taken', '같은 이름의 품목이 이미 있습니다.');
+    }
+    const now = new Date().toISOString();
+    const maxSort = rows.reduce((max, row) => Math.max(max, row.sort), 0);
+    const item = normalizeSupplyItem({
+      ...input,
+      id: uid('sup'),
+      name,
+      sort: Number.isFinite(Number(input.sort)) ? input.sort : maxSort + 1,
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+      source: 'app',
+    });
+    await this.adapter.put('supplyCatalog', item);
+    this._notify();
+    return item;
+  }
+
+  /** 단가 · 이름 · 비고 수정 — 대표 전용. */
+  async updateSupplyItem(id, patch = {}, { actor } = {}) {
+    requireSupplyEditor(actor);
+    const row = await this.adapter.get('supplyCatalog', id);
+    if (!row) throw new StoreError('no-supply-item', '품목을 찾지 못했습니다.');
+    const next = normalizeSupplyItem({
+      ...row,
+      ...patch,
+      id: row.id,
+      createdAt: row.createdAt,
+      updatedAt: new Date().toISOString(),
+    });
+    if (!next.name) throw new StoreError('supply-name-empty', '품목명을 입력해 주세요.');
+    await this.adapter.put('supplyCatalog', next);
+    this._notify();
+    return next;
+  }
+
+  /**
+   * 품목 삭제 — 이미 영수증·신청에 쓰인 품목은 지우지 않고 목록에서만 감춥니다(active:false).
+   * 지난 영수증의 품목·단가는 한 줄도 바뀌지 않습니다.
+   */
+  async removeSupplyItem(id, { actor } = {}) {
+    requireSupplyEditor(actor);
+    const row = await this.adapter.get('supplyCatalog', id);
+    if (!row) throw new StoreError('no-supply-item', '품목을 찾지 못했습니다.');
+    const orders = await this.adapter.getAll('supplyOrders');
+    const used = orders.some((order) => (order.items || []).some((line) => line.catalogId === id));
+    if (used) {
+      const next = normalizeSupplyItem({ ...row, active: false, updatedAt: new Date().toISOString() });
+      await this.adapter.put('supplyCatalog', next);
+      this._notify();
+      return { removed: false, item: next };
+    }
+    await this.adapter.remove('supplyCatalog', id);
+    this._notify();
+    return { removed: true, item: normalizeSupplyItem(row) };
+  }
+
+  async listSupplyOrders({ accountId = null, status = null } = {}) {
+    let rows = (await this.adapter.getAll('supplyOrders')).map(normalizeSupplyOrder);
+    if (accountId) rows = rows.filter((row) => row.toAccountId === accountId || row.requesterAccountId === accountId);
+    if (status) rows = rows.filter((row) => row.status === status);
+    return rows.sort((a, b) =>
+      String(b.issuedAt || b.requestedAt || b.createdAt).localeCompare(String(a.issuedAt || a.requestedAt || a.createdAt)),
+    );
+  }
+
+  async getSupplyOrder(id) {
+    const row = await this.adapter.get('supplyOrders', id);
+    return row ? normalizeSupplyOrder(row) : null;
+  }
+
+  /** 직원의 구입 신청 — 단가는 신청 시점의 품목 단가를 복사해 둡니다. */
+  async createSupplyRequest(input = {}, { actor } = {}) {
+    requireSupplyUser(actor);
+    const accountId = toText(input.accountId) || toText(actor && actor.accountId);
+    const name = toText(input.name) || toText(actor && actor.name) || '직원';
+    const catalog = new Map(
+      (await this.adapter.getAll('supplyCatalog')).map((row) => {
+        const item = normalizeSupplyItem(row);
+        return [item.id, item];
+      }),
+    );
+    const items = [];
+    for (const row of Array.isArray(input.items) ? input.items : []) {
+      const item = catalog.get(toText(row && row.catalogId));
+      const qty = Math.max(0, Math.round(Number(row && row.qty) || 0));
+      if (!item || !qty) continue;
+      items.push({ catalogId: item.id, name: item.name, note: item.note, unit: item.unit, price: item.price, qty });
+    }
+    if (!items.length) {
+      throw new StoreError('supply-items-empty', '구입할 품목과 수량을 하나 이상 골라 주세요.');
+    }
+    const now = new Date().toISOString();
+    const order = normalizeSupplyOrder({
+      id: uid('supply_order'),
+      no: await this._nextDocNumber('supplyOrders', 'R'),
+      status: 'requested',
+      requesterAccountId: accountId,
+      requesterName: name,
+      toAccountId: accountId,
+      toName: name,
+      requestedAt: todayISO(),
+      items,
+      note: toText(input.note),
+      createdAt: now,
+      updatedAt: now,
+      source: 'app',
+    });
+    await this.adapter.put('supplyOrders', order);
+    this._notify();
+    return order;
+  }
+
+  /**
+   * 영수증 발행 — 대표 전용. 직원 신청건이면 그 신청을 그대로 영수증으로 확정하고,
+   * 신청 없이 새로 발행할 수도 있습니다. 단가를 바꿔 발행하면 그 단가가 영수증에 남습니다.
+   */
+  async issueSupplyOrder(id, input = {}, { actor } = {}) {
+    requireSupplyEditor(actor);
+    const key = toText(id) || toText(input.id);
+    const row = key ? await this.adapter.get('supplyOrders', key) : null;
+    const catalog = new Map(
+      (await this.adapter.getAll('supplyCatalog')).map((item) => {
+        const normalized = normalizeSupplyItem(item);
+        return [normalized.id, normalized];
+      }),
+    );
+    const wanted = Array.isArray(input.items) && input.items.length ? input.items : row ? row.items : [];
+    const items = [];
+    for (const line of wanted) {
+      const item = catalog.get(toText(line && line.catalogId));
+      const qty = Math.max(0, Math.round(Number(line && line.qty) || 0));
+      if (!qty) continue;
+      const price =
+        line && line.price !== undefined && line.price !== '' && toAmount(line.price) > 0
+          ? toAmount(line.price)
+          : item
+            ? item.price
+            : 0;
+      items.push({
+        catalogId: toText(line && line.catalogId) || (item ? item.id : ''),
+        name: item ? item.name : toText(line && line.name),
+        note: item ? item.note : toText(line && line.note),
+        unit: item ? item.unit : toText(line && line.unit),
+        price,
+        qty,
+      });
+    }
+    if (!items.length) {
+      throw new StoreError('supply-items-empty', '영수증에 넣을 품목과 수량을 골라 주세요.');
+    }
+    const toName = toText(input.toName) || (row && row.toName) || '';
+    if (!toName) throw new StoreError('supply-buyer-empty', '구입자 이름을 입력해 주세요.');
+
+    const now = new Date().toISOString();
+    const order = normalizeSupplyOrder({
+      ...(row || {}),
+      id: row ? row.id : uid('supply_order'),
+      no: (row && row.no) || (await this._nextDocNumber('supplyOrders', 'R')),
+      status: 'issued',
+      requesterAccountId: (row && row.requesterAccountId) || toText(input.toAccountId),
+      requesterName: (row && row.requesterName) || toName,
+      toAccountId: toText(input.toAccountId) || (row && row.toAccountId) || '',
+      toName,
+      date: toText(input.date) || todayISO(),
+      requestedAt: (row && row.requestedAt) || todayISO(),
+      issuedAt: now,
+      items,
+      note: input.note !== undefined ? toText(input.note) : (row && row.note) || '',
+      createdAt: (row && row.createdAt) || now,
+      updatedAt: now,
+      source: (row && row.source) || 'app',
+    });
+    await this.adapter.put('supplyOrders', order);
+    this._notify();
+    return order;
+  }
+
+  /** 영수증 · 신청 삭제 — 대표 전용. */
+  async deleteSupplyOrder(id, { actor } = {}) {
+    requireSupplyEditor(actor);
+    const row = await this.adapter.get('supplyOrders', id);
+    if (!row) throw new StoreError('no-supply-order', '영수증을 찾지 못했습니다.');
+    await this.adapter.remove('supplyOrders', id);
+    this._notify();
+    return normalizeSupplyOrder(row);
   }
 
   /* ---------------- reports ---------------- */

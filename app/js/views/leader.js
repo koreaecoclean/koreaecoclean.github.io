@@ -22,11 +22,12 @@ import {
   nowHHMM,
   daysBetween,
 } from '../ui.js';
-import { store, StoreError, countReportPhotos, AGREEMENT_STATUS } from '../store.js';
+import { store, StoreError, countReportPhotos, AGREEMENT_STATUS, canUseSupply } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
 import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, demoStaffCodes } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
 import { openStaffContractSheet } from './quote-contract.js';
+import { supplyStaffPanel, openSupplyReceipt, submitSupplyRequest, refreshSupplyTotal } from './supply.js';
 
 const SAMPLE_POOL = {
   security: [['photo-lock', '출입문 잠금장치 · 손잡이 확인']],
@@ -70,6 +71,9 @@ export function createLeaderView(container) {
     leaderTab: 'sites',
     siteStaff: [],
     staffCodes: [],
+    supplyOrders: [],
+    supplyCatalog: [],
+    supplyRequestOpen: true,
     busy: false,
   };
   const sampleCursor = { security: 0, cleaning: 0, issue: 0 };
@@ -163,12 +167,16 @@ export function createLeaderView(container) {
 
   /* ---------------- site picker ---------------- */
 
-  function employeeTabsTemplate(active) {
+  function employeeTabsTemplate(active, session) {
     const tabs = [
       { key: 'sites', label: '관리업장' },
       { key: 'contracts', label: '계약서' },
       { key: 'attitude', label: '근무태도' },
     ];
+    // 청소장비 · 봉투는 구입 당사자 직원만 봅니다. 부관리자(본부장) 화면에는 나오지 않습니다.
+    if (session && session.role === 'leader' && canUseSupply(session)) {
+      tabs.push({ key: 'supply', label: '장비 · 봉투' });
+    }
     return `
       <nav class="room-tabs" aria-label="내 직원 방">
         ${tabs
@@ -239,14 +247,21 @@ export function createLeaderView(container) {
     const tab = state.leaderTab || 'sites';
     return `
       ${leaderBarTemplate(session)}
-      ${employeeTabsTemplate(tab)}
+      ${employeeTabsTemplate(tab, session)}
       ${
         tab === 'contracts'
           ? myDocsTemplate(state.myContracts) ||
             `<section class="panel">${`<div class="empty"><strong>아직 계약서가 없습니다</strong><span>대표가 계약서를 보내면 이곳에 표시됩니다.</span></div>`}</section>`
           : tab === 'attitude'
             ? attitudeTemplate(state.myChecks)
-            : `<section>
+            : tab === 'supply'
+              ? supplyStaffPanel({
+                  catalog: state.supplyCatalog,
+                  orders: state.supplyOrders,
+                  session,
+                  state: { supply: { open: state.supplyRequestOpen } },
+                })
+              : `<section>
                  <div class="section-head">
                    <h2>관리업장</h2>
                    <p>${sites.length}곳 배정</p>
@@ -727,7 +742,7 @@ export function createLeaderView(container) {
 
   async function render(options = {}) {
     mount();
-    if (options && options.tab && ['sites', 'contracts', 'attitude'].includes(options.tab)) {
+    if (options && options.tab && ['sites', 'contracts', 'attitude', 'supply'].includes(options.tab)) {
       state.leaderTab = options.tab;
     }
     const session = await getSession();
@@ -740,6 +755,8 @@ export function createLeaderView(container) {
       state.myChecks = [];
       state.leaderTab = 'sites';
       state.siteStaff = [];
+      state.supplyCatalog = [];
+      state.supplyOrders = [];
       state.staffCodes = await demoStaffCodes().catch(() => []);
       container.innerHTML = gateTemplate();
       return;
@@ -754,6 +771,17 @@ export function createLeaderView(container) {
         : [];
     state.myContracts = await store.listStaffContracts({ accountId: state.session.accountId });
     state.myChecks = await store.listStaffChecks({ accountId: state.session.accountId });
+
+    // 청소장비 · 봉투: 구입 당사자 직원(부관리자·대표 제외)에게만 열립니다.
+    const supplyAllowed = state.session.role === 'leader' && canUseSupply(state.session);
+    if (supplyAllowed) {
+      state.supplyCatalog = await store.listSupplyCatalog();
+      state.supplyOrders = await store.listSupplyOrders({ accountId: state.session.accountId });
+    } else {
+      state.supplyCatalog = [];
+      state.supplyOrders = [];
+      if (state.leaderTab === 'supply') state.leaderTab = 'sites';
+    }
 
     if (!state.siteId) {
       state.draft = null;
@@ -986,6 +1014,12 @@ export function createLeaderView(container) {
   }
 
   async function onSubmit(event) {
+    if (event.target.id === 'supply-request-form') {
+      event.preventDefault();
+      if (!state.session) return;
+      await submitSupplyRequest(state.session, container, { onDone: render });
+      return;
+    }
     if (event.target.id === 'staff-invite-form') {
       event.preventDefault();
       state.staffError = '';
@@ -1056,6 +1090,11 @@ export function createLeaderView(container) {
   }
 
   function onInput(event) {
+    const supplyQty = event.target.closest('[data-supply-qty]');
+    if (supplyQty) {
+      refreshSupplyTotal(supplyQty.closest('form') || container);
+      return;
+    }
     const target = event.target;
     const draft = state.draft;
     if (!draft) return;
@@ -1071,6 +1110,12 @@ export function createLeaderView(container) {
     if (leaderTab) {
       state.leaderTab = leaderTab.dataset.leaderTab;
       await render();
+      return;
+    }
+
+    const viewReceipt = event.target.closest('[data-supply-view]');
+    if (viewReceipt) {
+      await openSupplyReceipt(viewReceipt.dataset.supplyView);
       return;
     }
 

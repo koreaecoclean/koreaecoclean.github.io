@@ -9,7 +9,7 @@
  * "데모 계정" panel.
  */
 
-export const SEED_VERSION = 7;
+export const SEED_VERSION = 8;
 
 /** 앱 공개 주소 — 초대 문구에 들어갑니다. */
 export const APP_URL = 'https://koreaecoclean.github.io/app/';
@@ -36,6 +36,25 @@ export const PAYMENT_ACCOUNT = {
 
 /** 견적 유효기간 기본값(일). */
 export const QUOTE_VALID_DAYS = 30;
+
+/**
+ * 영수증에 인쇄되는 발행자 정보 — 첨부된 직원 청소도구 구입 영수증 사진과 같은 표기.
+ * (SUPPLIER 주소는 상가 표기가 붙어 있어 영수증에는 이 값을 씁니다.)
+ */
+export const RECEIPT_ISSUER = {
+  name: '코리아에코크린',
+  ceo: '채종병',
+  bizNumber: '281-46-00169',
+  address: '서울 양천구 남부순환로36길 30, 1층 B01호',
+  phone: '0507-1317-8369',
+  subtitle: '직원 청소도구 구입',
+};
+
+/** 청소장비 · 배접봉투 구입 품목 구분. */
+export const SUPPLY_GROUPS = {
+  equipment: { label: '청소장비', short: '장비' },
+  bag: { label: '배접봉투', short: '봉투' },
+};
 
 /** 직원 계약 3종 — 프리랜서(3.3%) · 도급(하도급) · 일용직. */
 export const STAFF_TYPES = {
@@ -982,5 +1001,118 @@ export function buildSeedData() {
     contracts: [],
     staffContracts: buildStaffContracts(),
     staffChecks: buildStaffChecks(),
+    supplyCatalog: buildSupplyCatalog(),
+    supplyOrders: buildSupplyOrders(),
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* 청소장비 · 배접봉투 구입 (대표 · 구입 당사자 직원)                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 품목 · 단가 마스터.
+ * 청소장비 6종은 첨부 사진의 단가·설명 그대로이고, 배접봉투 8종은
+ * 단가를 아직 정하지 않아 0원으로 두었습니다(대표가 관리 화면에서 입력).
+ */
+export function buildSupplyCatalog() {
+  return [
+    { id: 'sup_pole2', group: 'equipment', name: '2단 폴대 (마포대홀더)', price: 12000, unit: '개', note: '', sort: 1, active: true },
+    { id: 'sup_mapo_mop', group: 'equipment', name: '마포걸레', price: 3500, unit: '개', note: '', sort: 2, active: true },
+    { id: 'sup_risking_mop', group: 'equipment', name: '리스킹 걸레', price: 8000, unit: '개', note: '', sort: 3, active: true },
+    { id: 'sup_risking_head', group: 'equipment', name: '리스킹 헤드', price: 5000, unit: '개', note: '', sort: 4, active: true },
+    { id: 'sup_bucket', group: 'equipment', name: '짤통이', price: 44000, unit: '개', note: '', sort: 5, active: true },
+    {
+      id: 'sup_vacuum',
+      group: 'equipment',
+      name: '레칸 무선청소기 풀세트 (5Ah)',
+      price: 440000,
+      unit: '세트',
+      note: '본체+5Ah 배터리 2개+듀얼충전기',
+      sort: 6,
+      active: true,
+    },
+    { id: 'sup_bag_xl_black', group: 'bag', name: '배접봉투 특대 (검정색 · 10장 1묶음)', price: 0, unit: '1묶음', note: '', sort: 11, active: true },
+    { id: 'sup_bag_xl_white', group: 'bag', name: '배접봉투 특대 (백색 · 10장 1묶음)', price: 0, unit: '1묶음', note: '', sort: 12, active: true },
+    { id: 'sup_bag_l_black', group: 'bag', name: '배접봉투 대 (검정색 · 10장 1묶음)', price: 0, unit: '1묶음', note: '', sort: 13, active: true },
+    { id: 'sup_bag_l_white', group: 'bag', name: '배접봉투 대 (백색 · 10장 1묶음)', price: 0, unit: '1묶음', note: '', sort: 14, active: true },
+    { id: 'sup_bag_m_black', group: 'bag', name: '배접봉투 중 (검정색 · 10장 1묶음)', price: 0, unit: '1묶음', note: '', sort: 15, active: true },
+    { id: 'sup_bag_m_white', group: 'bag', name: '배접봉투 중 (백색 · 10장 1묶음)', price: 0, unit: '1묶음', note: '', sort: 16, active: true },
+    { id: 'sup_bag_s_black', group: 'bag', name: '배접봉투 소 (검정색 · 10장 1묶음)', price: 0, unit: '1묶음', note: '', sort: 17, active: true },
+    { id: 'sup_bag_s_white', group: 'bag', name: '배접봉투 소 (백색 · 10장 1묶음)', price: 0, unit: '1묶음', note: '', sort: 18, active: true },
+  ];
+}
+
+/**
+ * 데모 영수증 1건(김미영 팀장 · 첨부 사진과 같은 6개 품목 612,000원)과
+ * 발행을 기다리는 신청 1건(이정숙 팀장 · 배접봉투 · 마포걸레)을 넣어
+ * 설치 직후에 영수증 시트와 발행 흐름을 바로 눌러볼 수 있게 합니다.
+ */
+export function buildSupplyOrders() {
+  const catalog = new Map(buildSupplyCatalog().map((item) => [item.id, item]));
+  const line = (id, qty) => {
+    const item = catalog.get(id);
+    return {
+      catalogId: id,
+      name: item ? item.name : id,
+      note: item ? item.note : '',
+      unit: item ? item.unit : '',
+      price: item ? item.price : 0,
+      qty,
+      amount: (item ? item.price : 0) * qty,
+    };
+  };
+  const year = new Date().getFullYear();
+  const issuedDate = daysAgo(1);
+  const issuedStamp = daysAgoISO(1);
+  const requestedDate = daysAgo(0);
+  const requestedStamp = daysAgoISO(0);
+  const issued = [
+    line('sup_pole2', 3),
+    line('sup_mapo_mop', 2),
+    line('sup_risking_mop', 10),
+    line('sup_risking_head', 1),
+    line('sup_bucket', 1),
+    line('sup_vacuum', 1),
+  ];
+  const requested = [line('sup_bag_xl_black', 2), line('sup_mapo_mop', 2)];
+
+  return [
+    {
+      id: 'supply_order_kim',
+      no: `R-${year}-001`,
+      status: 'issued',
+      requesterAccountId: 'acc_leader_kim',
+      requesterName: '김미영',
+      toAccountId: 'acc_leader_kim',
+      toName: '김미영',
+      date: issuedDate,
+      requestedAt: issuedDate,
+      issuedAt: issuedStamp,
+      items: issued,
+      total: issued.reduce((sum, row) => sum + row.amount, 0),
+      note: '',
+      createdAt: issuedStamp,
+      updatedAt: issuedStamp,
+      source: 'seed',
+    },
+    {
+      id: 'supply_request_lee',
+      no: `R-${year}-002`,
+      status: 'requested',
+      requesterAccountId: 'acc_leader_lee',
+      requesterName: '이정숙',
+      toAccountId: 'acc_leader_lee',
+      toName: '이정숙',
+      date: '',
+      requestedAt: requestedDate,
+      issuedAt: '',
+      items: requested,
+      total: requested.reduce((sum, row) => sum + row.amount, 0),
+      note: '하늘치과 현장 봉투 소진',
+      createdAt: requestedStamp,
+      updatedAt: requestedStamp,
+      source: 'seed',
+    },
+  ];
 }

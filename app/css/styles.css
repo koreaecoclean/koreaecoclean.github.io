@@ -2354,3 +2354,197 @@ body.sheet-open { overflow: hidden; }
 .staff-room__section h3 { font-size: 14px; font-weight: 800; }
 .staff-room__section .section-head { margin-bottom: 8px; }
 .staff-room__section .btn { margin-top: 8px; align-self: flex-start; }
+
+/* ---------- 29. 청소장비 · 배접봉투 구입 · 영수증 ---------- */
+.supply-panel { display: flex; flex-direction: column; gap: 12px; }
+.supply-block { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px dashed var(--line-strong); }
+.supply-block:first-of-type { padding-top: 0; border-top: 0; }
+.supply-block .section-head { margin-bottom: 0; }
+.supply-block h3 { font-size: 14px; font-weight: 800; letter-spacing: -.01em; }
+
+.supply-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.supply-row__who { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.supply-row__who strong { display: flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 800; letter-spacing: -.01em; }
+.supply-row__who > span { font-size: 11px; color: var(--muted); line-height: 1.45; }
+.supply-row__items { color: var(--ink-soft) !important; word-break: keep-all; }
+.supply-row__right { display: flex; flex: none; flex-direction: column; align-items: flex-end; gap: 6px; }
+.supply-row__right > strong { font-size: 13px; font-weight: 800; color: var(--brand-800); white-space: nowrap; }
+
+.supply-group + .supply-group { margin-top: 12px; }
+.supply-group-title { margin: 4px 0 4px; font-size: 11.5px; font-weight: 800; color: var(--brand-700); letter-spacing: .02em; }
+.supply-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.supply-line:last-child { border-bottom: 0; }
+.supply-line__name { min-width: 0; }
+.supply-line__name strong { display: block; font-size: 13px; font-weight: 700; line-height: 1.4; }
+.supply-line__name span { display: block; font-size: 11px; color: var(--muted); line-height: 1.4; }
+.supply-line__qty { display: flex; flex: none; align-items: center; gap: 6px; }
+.supply-line__qty span { font-size: 10.5px; font-weight: 700; color: var(--muted); }
+.supply-line__qty .input { width: 62px; padding: 7px 4px; text-align: center; }
+
+.supply-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 12px 0 2px;
+  padding-top: 10px;
+  border-top: 2px solid var(--brand-700);
+}
+.supply-total span { font-size: 13.5px; font-weight: 800; }
+.supply-total strong { font-size: 19px; font-weight: 800; color: var(--brand-700); letter-spacing: -.02em; }
+.supply-pending { margin: 0 0 6px; color: var(--gold-600); }
+
+.supply-price-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.supply-price-row__name { min-width: 0; }
+.supply-price-row__name strong { display: block; font-size: 12.5px; font-weight: 700; line-height: 1.4; }
+.supply-price-row__name span { display: block; font-size: 10.5px; color: var(--muted); }
+.supply-price-row__edit { display: flex; flex: none; align-items: center; gap: 5px; }
+.supply-price-row__field { display: flex; align-items: center; gap: 4px; }
+.supply-price-row__field > span { font-size: 10px; font-weight: 700; color: var(--muted); }
+.supply-price-row__field .input { width: 86px; padding: 6px 6px; text-align: right; font-size: 12.5px; }
+.supply-price-row .btn { padding: 5px 8px; font-size: 11px; }
+.supply-new-item { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line-strong); }
+
+/* 영수증 시트 — 첨부 사진(직원 청소도구 구입) 서식 */
+.receipt {
+  position: relative;
+  padding: 28px 20px 38px;
+  color: #1c1c1c;
+  background: #fff;
+}
+.receipt__head { text-align: center; }
+.receipt__logo { width: 84px; height: 84px; margin: 0 auto; border-radius: 50%; }
+.receipt__title {
+  margin: 10px 0 0;
+  font-size: 38px;
+  font-weight: 800;
+  line-height: 1.14;
+  letter-spacing: .3em;
+  margin-left: .3em;
+  color: #141414;
+}
+.receipt__sub { margin-top: 6px; font-size: 13px; font-weight: 800; color: #1f7a43; letter-spacing: .01em; }
+
+.receipt__meta {
+  margin: 18px 0 0;
+  padding: 12px 0;
+  border-top: 1px dashed #b9c3b9;
+  border-bottom: 1px dashed #b9c3b9;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.receipt__meta > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 12.5px; }
+.receipt__meta dt { flex: none; color: #6b6b6b; }
+.receipt__meta dd { margin: 0; font-weight: 700; text-align: right; letter-spacing: .01em; }
+
+.receipt__buyer {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px dashed #b9c3b9;
+  font-size: 12.5px;
+}
+.receipt__buyer span { flex: none; color: #6b6b6b; }
+.receipt__buyer strong { flex: 1; padding: 0 4px 1px; border-bottom: 1px solid #4a4a4a; font-size: 14px; font-weight: 700; }
+
+.receipt__table { width: 100%; border-collapse: collapse; margin: 4px 0 0; font-size: 12.5px; }
+.receipt__table th {
+  padding: 8px 0;
+  border-bottom: 1px solid #9aa79a;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: left;
+  color: #1c1c1c;
+}
+.receipt__table td { padding: 9px 0; border-bottom: 1px dashed #d7ded7; vertical-align: top; text-align: left; }
+.receipt__table th:nth-child(2), .receipt__table td.receipt__qty { width: 52px; text-align: center; }
+.receipt__table th:nth-child(3), .receipt__table td.receipt__amount { width: 92px; text-align: right; }
+.receipt__item strong { display: block; font-size: 13.5px; font-weight: 800; line-height: 1.4; }
+.receipt__unit { display: block; margin-top: 1px; font-size: 11px; color: #6b6b6b; line-height: 1.45; }
+.receipt__qty { font-size: 14px; font-weight: 800; }
+.receipt__amount { font-size: 13.5px; font-weight: 800; white-space: nowrap; }
+
+.receipt__total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed #b9c3b9;
+}
+.receipt__total span { font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
+.receipt__total strong { font-size: 26px; font-weight: 800; color: #1f7a43; letter-spacing: -.03em; }
+.receipt__vat { margin-top: 3px; text-align: right; font-size: 11.5px; font-weight: 800; color: #c0392b; }
+.receipt__pending { margin-top: 3px; text-align: right; font-size: 11px; color: var(--gold-600); }
+.receipt__memo { margin-top: 10px; padding-top: 7px; border-top: 1px dashed #d7ded7; font-size: 11.5px; color: #4b5c52; }
+
+.receipt__foot { margin-top: 24px; padding-top: 16px; border-top: 1px dashed #b9c3b9; text-align: center; }
+.receipt__confirm { font-size: 13px; font-weight: 700; }
+.receipt__sign { display: inline-flex; align-items: center; gap: 10px; margin-top: 12px; }
+.receipt__sign > span:first-child { font-size: 13px; font-weight: 700; }
+.receipt__seal { display: inline-block; width: 54px; height: 54px; flex: none; }
+.receipt__seal svg { width: 100%; height: 100%; }
+.receipt__thanks { margin-top: 14px; font-size: 12px; color: #6b6b6b; letter-spacing: .12em; }
+
+/* 하단 톱니 테두리 — 시트 바닥을 오려낸 것처럼 흰 삼각형을 이어 붙입니다. */
+.receipt::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 12px;
+  border-radius: 0 0 8px 8px;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='12' viewBox='0 0 16 12'%3E%3Cpath d='M0 0h16L8 12z' fill='%23ffffff'/%3E%3C/svg%3E") repeat-x 0 0 / 16px 12px,
+    #eef1ea;
+}
+
+@media print {
+  .sheet-modal,
+  .sheet-modal__body { display: block !important; height: auto !important; }
+  .receipt { padding: 0 0 4mm; font-size: 9.5pt; line-height: 1.45; break-inside: avoid; }
+  .receipt::after { display: none; }
+  .receipt__logo { width: 18mm; height: 18mm; }
+  .receipt__title { margin-top: 4mm; font-size: 24pt; }
+  .receipt__sub { margin-top: 1mm; font-size: 10pt; }
+  .receipt__meta { margin-top: 4mm; padding: 2.5mm 0; gap: 0; }
+  .receipt__meta > div { font-size: 9.5pt; }
+  .receipt__buyer { padding: 2.5mm 0; font-size: 9.5pt; }
+  .receipt__table td { padding: 1.6mm 0; }
+  .receipt__table th { padding: 1.6mm 0; }
+  .receipt__item strong { font-size: 10pt; }
+  .receipt__total { margin-top: 3mm; padding-top: 3mm; }
+  .receipt__total span { font-size: 15pt; }
+  .receipt__total strong { font-size: 20pt; }
+  .receipt__foot { margin-top: 6mm; padding-top: 4mm; }
+  .receipt__seal { width: 15mm; height: 15mm; }
+  .receipt__thanks { margin-top: 4mm; }
+  .receipt__table, .receipt__total, .receipt__foot { break-inside: avoid; }
+}
