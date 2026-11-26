@@ -501,6 +501,14 @@ export async function openQuoteSheet(quoteId, options = {}) {
         return;
       }
       if (action === 'copy-invite') {
+        // 링크·문구를 보낸다는 것은 발송이라는 뜻 — 작성 중이면 발송 상태로 바꿉니다.
+        if (quote.status === 'draft') {
+          const sent = await store.sendQuote(quote.id);
+          await reload();
+          await copyInviteText(sent);
+          closeSheet();
+          return;
+        }
         await copyInviteText(quote);
         return;
       }

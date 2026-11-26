@@ -132,7 +132,7 @@ function setNetworkPill(online) {
 /* ------------------------------------------------------------------ */
 
 const SYNC_LABELS = {
-  synced: '서버 동기화 중',
+  synced: '서버 연결됨',
   syncing: '동기화 중…',
   offline: '오프라인 저장',
   error: '동기화 지연',
