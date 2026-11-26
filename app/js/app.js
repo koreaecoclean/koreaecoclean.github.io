@@ -62,6 +62,13 @@ export async function switchTab(tab, options = {}) {
   }
   await updateNav();
 
+  // 화면을 옮길 때 서버에 한 번 물어봅니다(다른 기기의 최신 내용을 곧 반영).
+  if (store.remote) {
+    Promise.resolve()
+      .then(() => store.remote.tick())
+      .catch(() => {});
+  }
+
   try {
     await views[name].render({ siteCode: options.siteCode || '' });
   } catch (error) {
