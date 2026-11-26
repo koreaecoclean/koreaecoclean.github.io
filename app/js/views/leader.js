@@ -22,7 +22,7 @@ import {
   nowHHMM,
   daysBetween,
 } from '../ui.js';
-import { store, StoreError, countReportPhotos, AGREEMENT_STATUS, canUseSupply } from '../store.js';
+import { store, StoreError, countReportPhotos, STAFF_STATUS, canUseSupply } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
 import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, demoStaffCodes } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
@@ -423,7 +423,7 @@ export function createLeaderView(container) {
         ${contracts
           .map((contract) => {
             const meta = STAFF_TYPES[contract.employmentType] || STAFF_TYPES.freelancer;
-            const status = AGREEMENT_STATUS[contract.status] || AGREEMENT_STATUS.draft;
+            const status = STAFF_STATUS[contract.status] || STAFF_STATUS.draft;
             return `
               <div class="my-doc-row" data-my-contract="${esc(contract.id)}">
                 <div class="my-doc-row__who">
@@ -455,7 +455,7 @@ export function createLeaderView(container) {
           ? contracts
               .map((contract) => {
                 const meta = STAFF_TYPES[contract.employmentType] || STAFF_TYPES.freelancer;
-                const status = AGREEMENT_STATUS[contract.status] || AGREEMENT_STATUS.draft;
+                const status = STAFF_STATUS[contract.status] || STAFF_STATUS.draft;
                 return `<div class="my-doc-row">
                     <div class="my-doc-row__who"><strong>${esc(contract.name)} ${esc(contract.roleTitle || '')}</strong><span>${esc(meta.short)} · ${esc(contract.workDays || '일정 협의')}</span></div>
                     <span class="badge ${status.badge}">${esc(status.label)}</span>

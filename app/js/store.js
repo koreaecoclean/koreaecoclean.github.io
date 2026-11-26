@@ -241,6 +241,13 @@ export const AGREEMENT_STATUS = {
   signed: { label: '체결 완료', badge: 'badge--done' },
 };
 
+/** 직원 계약 상태 — 같은 status 값이라도 ‘고객 확인’이 아니라 ‘서명 대기’입니다. */
+export const STAFF_STATUS = {
+  draft: { label: '작성 중', badge: 'badge--wait' },
+  sent: { label: '서명 대기', badge: 'badge--wait' },
+  signed: { label: '체결 완료', badge: 'badge--done' },
+};
+
 /** 견적 한 건 — 금액은 원 단위 정수, 부가세 포함 여부를 따로 둡니다. */
 export function normalizeQuote(input) {
   const source = input && typeof input === 'object' ? input : {};

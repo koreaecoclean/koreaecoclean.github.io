@@ -5,7 +5,7 @@
  */
 
 import { esc, fmtWon } from '../ui.js';
-import { QUOTE_STATUS, AGREEMENT_STATUS } from '../store.js';
+import { QUOTE_STATUS, AGREEMENT_STATUS, STAFF_STATUS } from '../store.js';
 import { CATEGORY_META, STAFF_TYPES, SUPPLIER, PAYMENT_ACCOUNT, APP_URL, DEFAULT_CHECKLISTS } from '../seed.js';
 import { inviteUrl } from '../invite.js';
 
@@ -412,7 +412,7 @@ export function staffFormTemplate(state, sites) {
 
 function staffCardTemplate(contract, sites, checks = []) {
   const meta = STAFF_TYPES[contract.employmentType] || STAFF_TYPES.freelancer;
-  const status = AGREEMENT_STATUS[contract.status] || AGREEMENT_STATUS.draft;
+  const status = STAFF_STATUS[contract.status] || STAFF_STATUS.draft;
   const siteNames = contract.siteIds
     .map((id) => (sites.find((site) => site.id === id) || {}).name)
     .filter(Boolean);
@@ -558,7 +558,7 @@ export function managerStaffTemplate({ staffContracts, checks, sites }) {
             ? staffContracts
                 .map((contract) => {
                   const meta = STAFF_TYPES[contract.employmentType] || STAFF_TYPES.freelancer;
-                  const status = AGREEMENT_STATUS[contract.status] || AGREEMENT_STATUS.draft;
+                  const status = STAFF_STATUS[contract.status] || STAFF_STATUS.draft;
                   const own = checks.filter((row) => row.staffContractId === contract.id);
                   const latest = own[0];
                   return `
@@ -657,7 +657,7 @@ export function managerDashboardTemplate({ session, sites, lastBySite, staffCont
 
 export function staffRoomTemplate({ contract, checks, sites, canSeeMoney, reportsBySite = {} }) {
   const meta = STAFF_TYPES[contract.employmentType] || STAFF_TYPES.freelancer;
-  const status = AGREEMENT_STATUS[contract.status] || AGREEMENT_STATUS.draft;
+  const status = STAFF_STATUS[contract.status] || STAFF_STATUS.draft;
   const siteName = (id) => (sites.find((site) => site.id === id) || {}).name || id;
   const own = checks.filter((row) => row.staffContractId === contract.id);
   const amount =
