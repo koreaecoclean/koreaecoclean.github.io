@@ -1087,19 +1087,36 @@ function annexRows(contract, sites, blank) {
     name: site.name || '',
     address: site.address || '',
     cycle: site.frequency || '',
-    hours: contract.workHours || '협의',
-    scope: contract.scope || (CATEGORY_META[site.category] || {}).label || '정기청소 일체',
+    // 현장마다 작업시간이 다르면 현장에 적어 둔 값을 씁니다(site.annexHours).
+    hours: site.annexHours || contract.workHours || '협의',
+    scope: site.annexScope || contract.scope || (CATEGORY_META[site.category] || {}).label || '정기청소 일체',
+    // 현장 계약 정보의 도급금액이 있으면 그 금액을 그대로 씁니다.
+    supply: Number((site.contract || {}).subcontractAmount) || 0,
   }));
   const total = Number(contract.monthlyAmount) || 0;
-  if (total && rows.length) {
+  const fixed = rows.filter((row) => row.supply > 0);
+  const rest = rows.filter((row) => !row.supply);
+  if (fixed.length && rest.length) {
+    // 도급액이 적힌 현장은 그대로 두고, 남은 금액을 나머지 현장에 나눕니다.
+    const remainder = Math.max(0, total - fixed.reduce((sum, row) => sum + row.supply, 0));
+    const base = Math.floor(remainder / rest.length / 1000) * 1000;
+    rest.forEach((row, index) => {
+      row.supply = base;
+      if (index === rest.length - 1) row.supply += remainder - base * rest.length;
+    });
+  } else if (!fixed.length && total && rows.length) {
+    // 현장별 도급액이 없으면 월 도급액을 현장 수로 나눕니다(기존 방식).
     const base = Math.floor(total / rows.length / 1000) * 1000;
     rows.forEach((row, index) => {
       row.supply = base;
       if (index === rows.length - 1) row.supply += total - base * rows.length;
-      row.vat = vatOf(row.supply);
-      row.sum = row.supply + row.vat;
     });
   }
+  rows.forEach((row) => {
+    if (!row.supply) return;
+    row.vat = vatOf(row.supply);
+    row.sum = row.supply + row.vat;
+  });
   const want = blank ? 6 : Math.max(3, rows.length);
   while (rows.length < want) rows.push({ name: '', address: '', cycle: '', hours: '', scope: '' });
   return rows;
