@@ -10,7 +10,7 @@
  */
 
 import { esc, fmtWon, fmtNumber, toast, confirmDialog, toISODate } from '../ui.js';
-import { store, SUPPLY_STATUS, supplyTotals, canUseSupply } from '../store.js';
+import { store, SUPPLY_STATUS, supplyTotals } from '../store.js';
 import { RECEIPT_ISSUER, SUPPLY_GROUPS } from '../seed.js';
 import { openDocumentSheet } from './quote-contract.js';
 
@@ -597,4 +597,3 @@ export async function removeSupplyItem(session, item) {
   }
 }
 
-export { canUseSupply };
