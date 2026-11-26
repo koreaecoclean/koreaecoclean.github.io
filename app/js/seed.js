@@ -9,7 +9,61 @@
  * "데모 계정" panel.
  */
 
-export const SEED_VERSION = 6;
+export const SEED_VERSION = 7;
+
+/** 앱 공개 주소 — 초대 문구에 들어갑니다. */
+export const APP_URL = 'https://koreaecoclean.github.io/app/';
+
+/** 공급자(을) 정보 — 견적서 · 도급 계약서에 그대로 인쇄됩니다. */
+export const SUPPLIER = {
+  name: '코리아 에코크린(KOREA ECO CLEAN)',
+  nameKo: '코리아 에코크린',
+  bizNumber: '281-46-00169',
+  ceo: '채종병',
+  phone: '0507-1317-8369',
+  email: 'koreaecoclean@naver.com',
+  address: '서울시 양천구 남부순환로36길 30, 1층 B01호 상가(신월동)',
+  upjong: '서비스업',
+  jongmok: '청소대행업',
+};
+
+/** 결제 계좌 — 대표 지시(2026-11-26)로 우리은행에서 카카오뱅크로 변경. */
+export const PAYMENT_ACCOUNT = {
+  bankName: '카카오뱅크',
+  accountNumber: '3333-15-4406523',
+  holder: '채종병(코리아 에코크린)',
+};
+
+/** 견적 유효기간 기본값(일). */
+export const QUOTE_VALID_DAYS = 30;
+
+/** 직원 계약 3종 — 프리랜서(3.3%) · 도급(하도급) · 일용직. */
+export const STAFF_TYPES = {
+  freelancer: {
+    label: '프리랜서 업무위수탁 계약서',
+    short: '프리랜서(3.3%)',
+    badge: 'badge--wait',
+    amountLabel: '월 정산금액',
+  },
+  contract: {
+    label: '도급(하도급) 계약서',
+    short: '도급',
+    badge: 'badge--done',
+    amountLabel: '월 도급금액',
+  },
+  daily: {
+    label: '일용직 근로계약서',
+    short: '일용직',
+    badge: 'badge--done',
+    amountLabel: '일당',
+  },
+  parttime: {
+    label: '아르바이트 근로계약서',
+    short: '알바',
+    badge: 'badge--done',
+    amountLabel: '시급',
+  },
+};
 
 /** The three required photo categories for every site report. */
 export const PHOTO_GROUPS = [
@@ -124,6 +178,31 @@ function daysAgoISO(days) {
   const date = new Date();
   date.setDate(date.getDate() - days);
   return date.toISOString();
+}
+
+/** 'YYYY-MM-DD' + 개월 (말일은 해당 월 말일로 맞춥니다). */
+export function addMonthsISO(iso, months) {
+  const [y, m, d] = String(iso || '').split('-').map(Number);
+  if (!y || !m || !d) return '';
+  const target = new Date(y, (m || 1) - 1 + (Number(months) || 0), 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(d, lastDay));
+  return toISO(target);
+}
+
+/** 'YYYY-MM-DD' + 일수. */
+export function addDaysISO(iso, days) {
+  const [y, m, d] = String(iso || '').split('-').map(Number);
+  if (!y || !m || !d) return '';
+  const date = new Date(y, m - 1, d + (Number(days) || 0));
+  return toISO(date);
+}
+
+/** '주 2회 (화 · 금)' → 3 (방문 간격 일수). 알 수 없으면 7. */
+export function intervalFromFrequency(text) {
+  const match = String(text || '').match(/주\s*([1-7])\s*회/);
+  if (!match) return 7;
+  return Math.max(1, Math.round(7 / Number(match[1])));
 }
 
 const PHOTO_BOX = {
@@ -414,6 +493,7 @@ export const DEMO_ACCOUNTS = [
     password: 'team1234',
     leaderCode: 'TL-1638',
     assignedSiteIds: ['site_hangwoon_tower', 'site_haneul_clinic', 'site_bodycamp', 'site_lighthouse'],
+    canManageStaff: true,
     active: true,
   },
   {
@@ -640,6 +720,256 @@ export function buildReports(sites) {
   ];
 }
 
+/* ------------------------------------------------------------------ */
+/* quotes — 견적 (대표 전용)                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 데모 견적 1건. 사용자가 관리자 화면에서 바로 초대 문구를 복사해
+ * 고객 방 → 견적서 → 계약서 → 현장 자동 등록까지 테스트할 수 있습니다.
+ * 초대코드 `Q-G7K2M4`는 한 번만 사용할 수 있습니다.
+ */
+export function buildQuotes() {
+  const startDate = daysAgo(-10);
+  return [
+    {
+      id: 'quote_greenpeace',
+      no: 'Q-2026-101',
+      siteId: '',
+      clientCompany: '그린피스 오피스 신정점',
+      clientCategory: 'office',
+      clientAddress: '서울 양천구 신정로 123, 그린피스빌딩 8층',
+      clientContact: '서지훈 과장',
+      clientPhone: '01024107788',
+      clientBizNumber: '',
+      clientTaxEmail: '',
+      frequency: '주 2회 (화 · 금)',
+      scope: '쓰레기 분리수거, 바닥 청소, 책상·모니터 주변 먼지 제거, 탕비실·정수기 주변, 공용 화장실 세정·소독',
+      extraScope: '회의실 카펫 흡입, 출입구 유리',
+      area: '약 110㎡ (33평)',
+      amount: 1900000,
+      vatIncluded: false,
+      billingDay: '1',
+      periodMonths: 12,
+      startDate,
+      endDate: addMonthsISO(startDate, 12),
+      terms: '계약 첫 달은 대청소를 포함하여 진행합니다.',
+      memo: '주차는 건물 방문 주차 1시간 지원 예정입니다.',
+      validUntil: daysAgo(-(10 + QUOTE_VALID_DAYS)),
+      status: 'sent',
+      photos: [photo('photo-quote-office', '견적 방문 · 바닥 오염 상태')],
+      inviteCode: 'Q-G7K2M4',
+      inviteIssuedAt: daysAgoISO(1),
+      inviteUsedAt: '',
+      inviteUsedBy: '',
+      invitedPhone: '',
+      createdAt: daysAgoISO(2),
+      updatedAt: daysAgoISO(1),
+      sentAt: daysAgoISO(1),
+      contractedAt: '',
+      source: 'seed',
+    },
+  ];
+}
+
+/* ------------------------------------------------------------------ */
+/* staff contracts — 직원 계약 (프리랜서 · 도급 · 일용직)               */
+/* ------------------------------------------------------------------ */
+
+export function buildStaffContracts() {
+  return [
+    {
+      id: 'staff_kim_contract',
+      no: 'S-2026-001',
+      accountId: 'acc_leader_kim',
+      name: '김미영',
+      phone: '01033001042',
+      employmentType: 'contract',
+      roleTitle: '팀장',
+      birthDate: '1979-05-17',
+      bizNumber: '',
+      bankName: '카카오뱅크',
+      bankAccount: '3333-15-4406523',
+      accountHolder: '김미영',
+      siteIds: ['site_hangwoon_tower'],
+      startDate: daysAgo(200),
+      endDate: daysAgo(-165),
+      monthlyAmount: 1430000,
+      dailyAmount: 0,
+      feeRate: 0,
+      settlementDay: '10',
+      workDays: '주 2회 (월 · 목)',
+      workHours: '07:00 ~ 09:00',
+      scope: '행운타워 5층 사무실 정기청소 (쓰레기 분리수거 · 바닥 · 화장실 · 카펫)',
+      process: '책상·모니터 먼지 → 회의실·교육장 → 탕비실·정수기 → 화장실 세정 → 카펫 · 단 · 유리',
+      safety: '약품 희석 농도 준수, 미끄럼 방지 표지판 설치',
+      specialTerms: '',
+      status: 'signed',
+      inviteCode: 'S-K2M8Q4',
+      inviteIssuedAt: daysAgoISO(200),
+      inviteUsedAt: daysAgoISO(199),
+      inviteUsedBy: 'acc_leader_kim',
+      signature: '',
+      signedDate: daysAgo(199),
+      signedByName: '김미영',
+      signedAt: daysAgoISO(199),
+      createdAt: daysAgoISO(201),
+      updatedAt: daysAgoISO(199),
+      source: 'seed',
+    },
+    {
+      id: 'staff_han_freelance',
+      no: 'S-2026-002',
+      accountId: '',
+      name: '한지우',
+      phone: '01077124490',
+      employmentType: 'freelancer',
+      roleTitle: '팀장',
+      birthDate: '1992-11-03',
+      bizNumber: '',
+      bankName: '국민은행',
+      bankAccount: '123456-01-987654',
+      accountHolder: '한지우',
+      siteIds: ['site_bodycamp', 'site_haneul_clinic'],
+      startDate: daysAgo(-3),
+      endDate: daysAgo(-368),
+      monthlyAmount: 900000,
+      dailyAmount: 0,
+      feeRate: 3.3,
+      settlementDay: '15',
+      workDays: '주 3회 (월 · 수 · 금)',
+      workHours: '10:00 ~ 12:00',
+      scope: '바디캠프 피트니스 · 하늘치과 신월점 정기청소',
+      process: '운동기구 존 · 매트 소독 → 거울 → 샤워실 · 배수구 → 탈의실 → 화장실',
+      safety: '락스·세정제 혼합 금지, 장갑·마스크 착용',
+      specialTerms: '3.3% 원천징수 후 계좌 입금',
+      status: 'sent',
+      inviteCode: 'S-H3K9P2',
+      inviteIssuedAt: daysAgoISO(1),
+      inviteUsedAt: '',
+      inviteUsedBy: '',
+      signature: '',
+      signedDate: '',
+      signedByName: '',
+      signedAt: '',
+      createdAt: daysAgoISO(1),
+      updatedAt: daysAgoISO(1),
+      source: 'seed',
+    },
+    {
+      id: 'staff_yoon_daily',
+      no: 'S-2026-003',
+      accountId: '',
+      name: '윤다혜',
+      phone: '01055413308',
+      employmentType: 'daily',
+      roleTitle: '일용직',
+      birthDate: '1988-02-21',
+      bankName: '신한은행',
+      bankAccount: '110-234-567890',
+      accountHolder: '윤다혜',
+      siteIds: ['site_lighthouse'],
+      startDate: daysAgo(0),
+      endDate: daysAgo(0),
+      monthlyAmount: 0,
+      dailyAmount: 120000,
+      feeRate: 0,
+      settlementDay: '당일',
+      workDays: '2026-11-26 (수)',
+      workHours: '09:00 ~ 13:00 (4시간)',
+      scope: '(주) 라이트하우스코스메틱 첫 대청소 보조',
+      process: '바닥 · 유리 · 화장실 · 폐기물 정리',
+      safety: '사다리 작업 2인 1조, 안전화 착용',
+      specialTerms: '작업 완료 후 당일 계좌 입금',
+      status: 'draft',
+      inviteCode: 'S-Y5D1N8',
+      inviteIssuedAt: daysAgoISO(0),
+      inviteUsedAt: '',
+      inviteUsedBy: '',
+      signature: '',
+      signedDate: '',
+      signedByName: '',
+      signedAt: '',
+      createdAt: daysAgoISO(0),
+      updatedAt: daysAgoISO(0),
+      source: 'seed',
+    },
+    {
+      id: 'staff_jung_parttime',
+      no: 'S-2026-004',
+      accountId: '',
+      name: '정민서',
+      phone: '01066204417',
+      employmentType: 'parttime',
+      roleTitle: '알바',
+      birthDate: '2001-07-09',
+      bankName: '카카오뱅크',
+      bankAccount: '3333-04-1122334',
+      accountHolder: '정민서',
+      siteIds: ['site_haneul_clinic'],
+      startDate: daysAgo(-2),
+      endDate: daysAgo(-90),
+      monthlyAmount: 0,
+      dailyAmount: 0,
+      hourlyAmount: 12000,
+      feeRate: 0,
+      settlementDay: '10',
+      workDays: '주 3회 (월 · 수 · 금) 오전',
+      workHours: '07:30 ~ 10:30 (3시간)',
+      scope: '하늘치과 신월점 오전 청소 보조',
+      process: '대기실 → 진료실 바닥 → 화장실 → 유리',
+      safety: '의료 폐기물 직접 취급 금지, 장갑 착용',
+      specialTerms: '주휴수당은 근로기준법에 따라 지급',
+      status: 'sent',
+      inviteCode: 'S-A7B2C9',
+      inviteIssuedAt: daysAgoISO(1),
+      inviteUsedAt: '',
+      inviteUsedBy: '',
+      signature: '',
+      signedDate: '',
+      signedByName: '',
+      signedAt: '',
+      createdAt: daysAgoISO(1),
+      updatedAt: daysAgoISO(1),
+      source: 'seed',
+    },
+  ];
+}
+
+/** 근무태도 체크 — 본부장이 매긴 A~F 등급과 메모. */
+export function buildStaffChecks() {
+  return [
+    {
+      id: 'check_kim_1',
+      staffContractId: 'staff_kim_contract',
+      accountId: 'acc_leader_kim',
+      name: '김미영',
+      siteId: 'site_hangwoon_tower',
+      date: daysAgo(6),
+      grade: 'A',
+      memo: '시건장치·맞춤 청소 사진 모두 빠짐없이 올림. 현장 상태 최상.',
+      reviewerId: 'acc_leader_park',
+      reviewerName: '박희승',
+      createdAt: daysAgoISO(6),
+      source: 'seed',
+    },
+    {
+      id: 'check_kim_2',
+      staffContractId: 'staff_kim_contract',
+      accountId: 'acc_leader_kim',
+      name: '김미영',
+      siteId: 'site_hangwoon_tower',
+      date: daysAgo(2),
+      grade: 'B',
+      memo: '보고는 정시에 했지만 회의실 카펫 사진이 빠져 있었습니다.',
+      reviewerId: 'acc_leader_park',
+      reviewerName: '박희승',
+      createdAt: daysAgoISO(2),
+      source: 'seed',
+    },
+  ];
+}
+
 export function buildSeedData() {
   const sites = buildSites();
   return {
@@ -648,5 +978,9 @@ export function buildSeedData() {
     accounts: buildAccounts(),
     roomCodes: buildRoomCodes(),
     grants: buildGrants(),
+    quotes: buildQuotes(),
+    contracts: [],
+    staffContracts: buildStaffContracts(),
+    staffChecks: buildStaffChecks(),
   };
 }

@@ -19,11 +19,41 @@
  * 서버 스키마: supabase-schema.sql
  */
 
-import { buildSeedData, buildSites, buildRoomCodes, SEED_VERSION, DEMO_ACCOUNTS, DEFAULT_CHECKLISTS } from './seed.js';
+import {
+  buildSeedData,
+  buildSites,
+  buildRoomCodes,
+  buildQuotes,
+  buildStaffContracts,
+  buildStaffChecks,
+  SEED_VERSION,
+  DEMO_ACCOUNTS,
+  DEFAULT_CHECKLISTS,
+  STAFF_TYPES,
+  SUPPLIER,
+  PAYMENT_ACCOUNT,
+  QUOTE_VALID_DAYS,
+  addMonthsISO,
+  addDaysISO,
+  intervalFromFrequency,
+} from './seed.js';
 
 const DB_NAME = 'korea-ecoclean';
-const DB_VERSION = 2;
-const TABLES = ['sites', 'reports', 'photos', 'inquiries', 'accounts', 'roomCodes', 'grants', 'meta'];
+const DB_VERSION = 3;
+const TABLES = [
+  'sites',
+  'reports',
+  'photos',
+  'inquiries',
+  'accounts',
+  'roomCodes',
+  'grants',
+  'quotes',
+  'contracts',
+  'staffContracts',
+  'staffChecks',
+  'meta',
+];
 const LS_PREFIX = 'kec:';
 
 /** Code alphabet without look-alikes (0/O, 1/I/L). */
@@ -41,6 +71,17 @@ export class StoreError extends Error {
 function uid(prefix) {
   const rand = Math.random().toString(36).slice(2, 8);
   return `${prefix}_${Date.now().toString(36)}${rand}`;
+}
+
+function todayISO(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function toText(value) {
+  return String(value ?? '').trim();
 }
 
 function randomCode(length) {
@@ -175,6 +216,182 @@ export function revenueTotals(sites) {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* quotes (견적) · contracts (도급 계약서) — 대표 전용                */
+/* ------------------------------------------------------------------ */
+
+export const QUOTE_STATUS = {
+  draft: { label: '작성 중', badge: 'badge--wait' },
+  sent: { label: '발송 완료', badge: 'badge--wait' },
+  accepted: { label: '계약 진행', badge: 'badge--done' },
+  contracted: { label: '계약 체결', badge: 'badge--done' },
+};
+
+export const AGREEMENT_STATUS = {
+  draft: { label: '작성 중', badge: 'badge--wait' },
+  sent: { label: '고객 확인 대기', badge: 'badge--wait' },
+  signed: { label: '체결 완료', badge: 'badge--done' },
+};
+
+/** 견적 한 건 — 금액은 원 단위 정수, 부가세 포함 여부를 따로 둡니다. */
+export function normalizeQuote(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    id: toText(source.id),
+    no: toText(source.no),
+    siteId: toText(source.siteId),
+    clientCompany: toText(source.clientCompany),
+    clientCategory: Object.prototype.hasOwnProperty.call(DEFAULT_CHECKLISTS, source.clientCategory)
+      ? source.clientCategory
+      : 'office',
+    clientAddress: toText(source.clientAddress),
+    clientContact: toText(source.clientContact),
+    clientPhone: toText(source.clientPhone),
+    clientBizNumber: toText(source.clientBizNumber),
+    clientTaxEmail: toText(source.clientTaxEmail),
+    frequency: toText(source.frequency) || '주 1회 (일정 협의)',
+    scope: toText(source.scope),
+    extraScope: toText(source.extraScope),
+    area: toText(source.area),
+    amount: toAmount(source.amount),
+    vatIncluded: !!source.vatIncluded,
+    billingDay: toText(source.billingDay) || '1',
+    periodMonths: Number(source.periodMonths) > 0 ? Math.round(Number(source.periodMonths)) : 12,
+    startDate: toText(source.startDate),
+    endDate: toText(source.endDate),
+    terms: toText(source.terms),
+    memo: toText(source.memo),
+    validUntil: toText(source.validUntil),
+    status: QUOTE_STATUS[source.status] ? source.status : 'draft',
+    photos: Array.isArray(source.photos) ? source.photos.slice() : [],
+    inviteCode: toText(source.inviteCode),
+    inviteIssuedAt: toText(source.inviteIssuedAt),
+    inviteUsedAt: toText(source.inviteUsedAt),
+    inviteUsedBy: toText(source.inviteUsedBy),
+    invitedPhone: toText(source.invitedPhone),
+    createdAt: toText(source.createdAt),
+    updatedAt: toText(source.updatedAt),
+    sentAt: toText(source.sentAt),
+    contractedAt: toText(source.contractedAt),
+    source: toText(source.source) || 'app',
+  };
+}
+
+/** 도급 계약서 한 건 — 서명 이미지와 갑/을 정보를 함께 보관합니다. */
+export function normalizeAgreement(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    id: toText(source.id),
+    no: toText(source.no),
+    quoteId: toText(source.quoteId),
+    siteId: toText(source.siteId),
+    status: AGREEMENT_STATUS[source.status] ? source.status : 'draft',
+    clientAddress: toText(source.clientAddress),
+    clientBusinessName: toText(source.clientBusinessName),
+    clientBizNumber: toText(source.clientBizNumber),
+    clientCeo: toText(source.clientCeo),
+    contactName: toText(source.contactName),
+    contactPhone: toText(source.contactPhone),
+    startDate: toText(source.startDate),
+    endDate: toText(source.endDate),
+    months: Number(source.months) > 0 ? Math.round(Number(source.months)) : 12,
+    amount: toAmount(source.amount),
+    vatIncluded: !!source.vatIncluded,
+    billingDay: toText(source.billingDay) || '1',
+    bankName: toText(source.bankName) || PAYMENT_ACCOUNT.bankName,
+    bankAccount: toText(source.bankAccount) || PAYMENT_ACCOUNT.accountNumber,
+    accountHolder: toText(source.accountHolder) || PAYMENT_ACCOUNT.holder,
+    supplierAddress: toText(source.supplierAddress) || SUPPLIER.address,
+    supplierBusinessName: toText(source.supplierBusinessName) || SUPPLIER.name,
+    supplierBizNumber: toText(source.supplierBizNumber) || SUPPLIER.bizNumber,
+    supplierCeo: toText(source.supplierCeo) || SUPPLIER.ceo,
+    supplierUpjong: toText(source.supplierUpjong) || SUPPLIER.upjong,
+    supplierJongmok: toText(source.supplierJongmok) || SUPPLIER.jongmok,
+    scope: toText(source.scope),
+    extraScope: toText(source.extraScope),
+    frequency: toText(source.frequency),
+    specialTerms: toText(source.specialTerms),
+    bizLicense: source.bizLicense && typeof source.bizLicense === 'object' ? source.bizLicense : null,
+    contractMemo: toText(source.contractMemo),
+    signedDate: toText(source.signedDate),
+    signature: toText(source.signature),
+    signedByName: toText(source.signedByName),
+    signedAt: toText(source.signedAt),
+    createdAt: toText(source.createdAt),
+    updatedAt: toText(source.updatedAt),
+    source: toText(source.source) || 'app',
+  };
+}
+
+/** 직원 계약 한 건 — 프리랜서(3.3%) · 도급 · 일용직. */
+export function normalizeStaffContract(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const type = STAFF_TYPES[source.employmentType] ? source.employmentType : 'freelancer';
+  return {
+    id: toText(source.id),
+    no: toText(source.no),
+    accountId: toText(source.accountId),
+    name: toText(source.name),
+    phone: toText(source.phone),
+    employmentType: type,
+    roleTitle: toText(source.roleTitle) || (type === 'daily' ? '일용직' : '팀장'),
+    residentId: toText(source.residentId),
+    birthDate: toText(source.birthDate),
+    bizNumber: toText(source.bizNumber),
+    bankName: toText(source.bankName) || PAYMENT_ACCOUNT.bankName,
+    bankAccount: toText(source.bankAccount),
+    accountHolder: toText(source.accountHolder) || toText(source.name),
+    siteIds: Array.isArray(source.siteIds) ? source.siteIds.filter(Boolean).map(String) : [],
+    startDate: toText(source.startDate),
+    endDate: toText(source.endDate),
+    monthlyAmount: toAmount(source.monthlyAmount),
+    dailyAmount: toAmount(source.dailyAmount),
+    hourlyAmount: toAmount(source.hourlyAmount),
+    feeRate: Number(source.feeRate) >= 0 ? Number(source.feeRate) : 3.3,
+    settlementDay: toText(source.settlementDay) || '15',
+    workDays: toText(source.workDays),
+    workHours: toText(source.workHours),
+    scope: toText(source.scope),
+    process: toText(source.process),
+    safety: toText(source.safety),
+    specialTerms: toText(source.specialTerms),
+    status: AGREEMENT_STATUS[source.status] ? source.status : 'draft',
+    inviteCode: toText(source.inviteCode),
+    inviteIssuedAt: toText(source.inviteIssuedAt),
+    inviteUsedAt: toText(source.inviteUsedAt),
+    inviteUsedBy: toText(source.inviteUsedBy),
+    signature: toText(source.signature),
+    signedDate: toText(source.signedDate),
+    signedByName: toText(source.signedByName),
+    signedAt: toText(source.signedAt),
+    createdAt: toText(source.createdAt),
+    updatedAt: toText(source.updatedAt),
+    source: toText(source.source) || 'app',
+  };
+}
+
+/** 근무태도 등급 — 본부장이 체크합니다. */
+export const STAFF_GRADES = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+export function normalizeStaffCheck(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const grade = String(source.grade || '').toUpperCase();
+  return {
+    id: toText(source.id),
+    staffContractId: toText(source.staffContractId),
+    accountId: toText(source.accountId),
+    name: toText(source.name),
+    siteId: toText(source.siteId),
+    date: toText(source.date),
+    grade: STAFF_GRADES.includes(grade) ? grade : 'B',
+    memo: toText(source.memo),
+    reviewerId: toText(source.reviewerId),
+    reviewerName: toText(source.reviewerName),
+    createdAt: toText(source.createdAt),
+    source: toText(source.source) || 'app',
+  };
+}
+
 function normalizeSite(site) {
   if (!site) return site;
   return {
@@ -182,6 +399,8 @@ function normalizeSite(site) {
     baseline: normalizeBaseline(site.baseline),
     contract: normalizeContract(site.contract),
     ops: normalizeOps(site.ops),
+    bizLicense: site.bizLicense && typeof site.bizLicense === 'object' ? site.bizLicense : null,
+    contractMemo: toText(site.contractMemo),
   };
 }
 
@@ -260,6 +479,26 @@ export class IndexedDbAdapter {
         }
         if (!db.objectStoreNames.contains('grants')) {
           const store = db.createObjectStore('grants', { keyPath: 'id' });
+          store.createIndex('accountId', 'accountId', { unique: false });
+        }
+        if (!db.objectStoreNames.contains('quotes')) {
+          const store = db.createObjectStore('quotes', { keyPath: 'id' });
+          store.createIndex('siteId', 'siteId', { unique: false });
+          store.createIndex('status', 'status', { unique: false });
+        }
+        if (!db.objectStoreNames.contains('contracts')) {
+          const store = db.createObjectStore('contracts', { keyPath: 'id' });
+          store.createIndex('siteId', 'siteId', { unique: false });
+          store.createIndex('quoteId', 'quoteId', { unique: false });
+        }
+        if (!db.objectStoreNames.contains('staffContracts')) {
+          const store = db.createObjectStore('staffContracts', { keyPath: 'id' });
+          store.createIndex('accountId', 'accountId', { unique: false });
+          store.createIndex('status', 'status', { unique: false });
+        }
+        if (!db.objectStoreNames.contains('staffChecks')) {
+          const store = db.createObjectStore('staffChecks', { keyPath: 'id' });
+          store.createIndex('staffContractId', 'staffContractId', { unique: false });
           store.createIndex('accountId', 'accountId', { unique: false });
         }
         if (!db.objectStoreNames.contains('meta')) {
@@ -493,6 +732,42 @@ export class Store {
     await this._ensureSeedCodes();
     await this._ensureSiteBaseline();
     await this._ensureSiteContractOps();
+    await this._ensureSeedQuotes();
+    await this._ensureSeedStaffContracts();
+    await this._ensureSeedStaffChecks();
+  }
+
+  /** Seeded staff contracts reach devices that already hold data. */
+  async _ensureSeedStaffContracts() {
+    const rows = await this.adapter.getAll('staffContracts');
+    const ids = new Set(rows.map((row) => row.id));
+    for (const contract of buildStaffContracts()) {
+      if (ids.has(contract.id)) continue;
+      await this.adapter.put('staffContracts', JSON.parse(JSON.stringify(contract)));
+      ids.add(contract.id);
+    }
+  }
+
+  /** Seeded 근무태도 체크(A~F) reach devices that already hold data. */
+  async _ensureSeedStaffChecks() {
+    const rows = await this.adapter.getAll('staffChecks');
+    const ids = new Set(rows.map((row) => row.id));
+    for (const check of buildStaffChecks()) {
+      if (ids.has(check.id)) continue;
+      await this.adapter.put('staffChecks', JSON.parse(JSON.stringify(check)));
+      ids.add(check.id);
+    }
+  }
+
+  /** Seeded quotes (데모 견적) reach devices that already hold data. */
+  async _ensureSeedQuotes() {
+    const rows = await this.adapter.getAll('quotes');
+    const ids = new Set(rows.map((row) => row.id));
+    for (const quote of buildQuotes()) {
+      if (ids.has(quote.id)) continue;
+      await this.adapter.put('quotes', JSON.parse(JSON.stringify(quote)));
+      ids.add(quote.id);
+    }
   }
 
   /** Sites added to the seed later (a real client, for example) reach older devices. */
@@ -673,12 +948,16 @@ export class Store {
   }
 
   async _writeSeed() {
-    const { sites, reports, accounts, roomCodes, grants } = buildSeedData();
+    const { sites, reports, accounts, roomCodes, grants, quotes, contracts, staffContracts, staffChecks } = buildSeedData();
     for (const site of sites) await this.adapter.put('sites', site);
     for (const report of reports) await this.adapter.put('reports', report);
     for (const account of accounts) await this.adapter.put('accounts', account);
     for (const code of roomCodes) await this.adapter.put('roomCodes', code);
     for (const grant of grants) await this.adapter.put('grants', grant);
+    for (const quote of quotes) await this.adapter.put('quotes', quote);
+    for (const contract of contracts) await this.adapter.put('contracts', contract);
+    for (const staff of staffContracts) await this.adapter.put('staffContracts', staff);
+    for (const check of staffChecks) await this.adapter.put('staffChecks', check);
     await this.setSetting('seedVersion', SEED_VERSION);
   }
 
@@ -736,6 +1015,8 @@ export class Store {
       taxEmail: String(input.taxEmail || '').trim(),
       contract: normalizeContract(input.contract),
       ops: normalizeOps(input.ops),
+      bizLicense: input.bizLicense && typeof input.bizLicense === 'object' ? input.bizLicense : null,
+      contractMemo: toText(input.contractMemo),
       checklist: (DEFAULT_CHECKLISTS[category] || DEFAULT_CHECKLISTS.office).slice(),
       locked: true,
       baseline: normalizeBaseline(input.baseline),
@@ -787,6 +1068,10 @@ export class Store {
     if (patch.category && Object.prototype.hasOwnProperty.call(DEFAULT_CHECKLISTS, patch.category)) {
       next.category = patch.category;
     }
+    if (patch.bizLicense !== undefined) {
+      next.bizLicense = patch.bizLicense && typeof patch.bizLicense === 'object' ? patch.bizLicense : null;
+    }
+    if (patch.contractMemo !== undefined) next.contractMemo = toText(patch.contractMemo);
     if (typeof next.name !== 'string' || !next.name.trim()) {
       throw new StoreError('name-empty', '현장명(상호)을 입력해 주세요.');
     }
@@ -847,6 +1132,684 @@ export class Store {
       sites.find((site) => normalizeCode(site.code) === normalizeCode(`EC${needle}`)) ||
       null
     );
+  }
+
+  /* ---------------- quotes (견적 · 대표 전용) ---------------- */
+
+  async _nextDocNumber(table, prefix) {
+    const rows = await this.adapter.getAll(table);
+    const year = new Date().getFullYear();
+    const head = `${prefix}-${year}-`;
+    const used = rows.filter((row) => toText(row.no).startsWith(head)).length;
+    return `${head}${String(used + 1).padStart(3, '0')}`;
+  }
+
+  async _nextInviteCode() {
+    const rows = await this.adapter.getAll('quotes');
+    const taken = new Set(rows.map((row) => normalizeCode(row.inviteCode)));
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const candidate = `Q-${randomCode(6)}`;
+      if (!taken.has(normalizeCode(candidate))) return candidate;
+    }
+    throw new StoreError('code-collision', '초대코드를 생성하지 못했습니다. 다시 시도해 주세요.');
+  }
+
+  async listQuotes({ siteId = null, status = null } = {}) {
+    let rows = (await this.adapter.getAll('quotes')).map(normalizeQuote);
+    if (siteId) rows = rows.filter((quote) => quote.siteId === siteId);
+    if (status) rows = rows.filter((quote) => quote.status === status);
+    return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  }
+
+  async getQuote(id) {
+    const row = await this.adapter.get('quotes', id);
+    return row ? normalizeQuote(row) : null;
+  }
+
+  /** 견적 등록 — 저장과 동시에 1회용 초대코드를 발급합니다. */
+  async addQuote(input = {}) {
+    const company = toText(input.clientCompany);
+    if (!company) throw new StoreError('company-empty', '고객사명(상호)을 입력해 주세요.');
+    const amount = toAmount(input.amount);
+    if (!amount) throw new StoreError('amount-empty', '월 계약금액을 입력해 주세요.');
+
+    const months = Number(input.periodMonths) > 0 ? Math.round(Number(input.periodMonths)) : 12;
+    const startDate = toText(input.startDate) || todayISO();
+    const endDate = toText(input.endDate) || addMonthsISO(startDate, months);
+    const now = new Date().toISOString();
+    const validUntil = toText(input.validUntil) || addDaysISO(todayISO(), QUOTE_VALID_DAYS);
+    const quote = normalizeQuote({
+      ...input,
+      id: uid('quote'),
+      no: toText(input.no) || (await this._nextDocNumber('quotes', 'Q')),
+      clientCompany: company,
+      amount,
+      periodMonths: months,
+      startDate,
+      endDate,
+      validUntil,
+      status: 'draft',
+      photos: Array.isArray(input.photos) ? input.photos.slice() : [],
+      inviteCode: await this._nextInviteCode(),
+      inviteIssuedAt: now,
+      inviteUsedAt: '',
+      inviteUsedBy: '',
+      createdAt: now,
+      updatedAt: now,
+      source: 'app',
+    });
+    await this.adapter.put('quotes', quote);
+    this._notify();
+    return quote;
+  }
+
+  async updateQuote(id, patch = {}) {
+    const quote = await this.getQuote(id);
+    if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
+    const next = normalizeQuote({
+      ...quote,
+      ...patch,
+      id: quote.id,
+      inviteCode: quote.inviteCode,
+      createdAt: quote.createdAt,
+      updatedAt: new Date().toISOString(),
+    });
+    if (!next.clientCompany) throw new StoreError('company-empty', '고객사명(상호)을 입력해 주세요.');
+    if (!next.amount) throw new StoreError('amount-empty', '월 계약금액을 입력해 주세요.');
+    await this.adapter.put('quotes', next);
+    this._notify();
+    return next;
+  }
+
+  /** 견적서 발송 — 고객 방에서 열람할 수 있는 상태로 바꿉니다. */
+  async sendQuote(id) {
+    const quote = await this.getQuote(id);
+    if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
+    if (quote.status === 'contracted') return quote;
+    const now = new Date().toISOString();
+    const next = { ...quote, status: 'sent', sentAt: quote.sentAt || now, updatedAt: now };
+    await this.adapter.put('quotes', next);
+    this._notify();
+    return normalizeQuote(next);
+  }
+
+  /** 초대코드 재발급 — 이전 코드는 즉시 쓸 수 없게 됩니다. */
+  async regenerateQuoteInvite(id) {
+    const quote = await this.getQuote(id);
+    if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
+    const now = new Date().toISOString();
+    const next = {
+      ...quote,
+      inviteCode: await this._nextInviteCode(),
+      inviteIssuedAt: now,
+      inviteUsedAt: '',
+      inviteUsedBy: '',
+      invitedPhone: '',
+      updatedAt: now,
+    };
+    await this.adapter.put('quotes', next);
+    this._notify();
+    return normalizeQuote(next);
+  }
+
+  async findQuoteByInviteCode(code) {
+    const needle = normalizeCode(code);
+    if (!needle) return null;
+    const rows = (await this.adapter.getAll('quotes')).map(normalizeQuote);
+    return rows.find((quote) => normalizeCode(quote.inviteCode) === needle) || null;
+  }
+
+  /**
+   * 1회용 초대코드로 견적 방 입장 — 아직 현장이 없는 고객도 견적서 · 계약서를
+   * 볼 수 있도록 계정에 `quoteId`를 연결합니다. 계약 체결 시 `siteId`로 바뀝니다.
+   */
+  async enterQuoteRoomWithCode({ phone, code, name = '', title = '' }) {
+    const digits = normalizePhone(phone);
+    if (!digits) throw new StoreError('phone-empty', '전화번호를 입력해 주세요.');
+    const needle = normalizeCode(code);
+    if (!needle) throw new StoreError('code-required', '1회용 초대코드를 입력해 주세요.');
+
+    const quote = await this.findQuoteByInviteCode(needle);
+    if (!quote) throw new StoreError('invite-not-found', '등록되지 않은 초대코드입니다. 코드를 다시 확인해 주세요.');
+    if (quote.inviteUsedAt) {
+      throw new StoreError('invite-used', '이미 사용된 초대코드입니다. 대표에게 새 코드를 요청해 주세요.');
+    }
+    if (quote.status === 'draft') {
+      throw new StoreError('invite-draft', '아직 발송 전인 견적입니다. 대표에게 확인해 주세요.');
+    }
+    if (quote.status === 'contracted' && quote.siteId) {
+      throw new StoreError('invite-contracted', '이미 계약이 체결된 견적입니다. 등록된 번호로 입장해 주세요.');
+    }
+
+    const accounts = await this.adapter.getAll('accounts');
+    let account = accounts.find((row) => row.role === 'customer' && normalizePhone(row.phone) === digits) || null;
+    if (account && account.active === false) {
+      throw new StoreError('inactive', '사용이 중지된 번호입니다. 대표에게 문의해 주세요.');
+    }
+    if (account && account.siteId) {
+      throw new StoreError('other-site', '이미 다른 현장에 등록된 번호입니다. 대표에게 문의해 주세요.');
+    }
+
+    if (!account) {
+      let nameValue = toText(name);
+      let titleValue = toText(title);
+      if (!titleValue && /\s/.test(nameValue)) {
+        const parts = nameValue.split(/\s+/);
+        nameValue = parts[0];
+        titleValue = parts.slice(1).join(' ');
+      }
+      account = {
+        id: uid('acc_customer'),
+        role: 'customer',
+        name: nameValue || `고객 ${digits.slice(-4)}`,
+        title: titleValue || '담당자',
+        phone: digits,
+        phonePretty: prettyPhone(digits),
+        password: '',
+        siteId: '',
+        quoteId: quote.id,
+        active: true,
+        createdAt: new Date().toISOString(),
+        source: 'quote-invite',
+      };
+    } else {
+      account = { ...account, quoteId: quote.id, updatedAt: new Date().toISOString() };
+    }
+    await this.adapter.put('accounts', account);
+
+    const now = new Date().toISOString();
+    const consumed = { ...quote, inviteUsedAt: now, inviteUsedBy: account.id, invitedPhone: digits, updatedAt: now };
+    await this.adapter.put('quotes', consumed);
+    this._notify();
+    return { account, quote: normalizeQuote(consumed) };
+  }
+
+  /* ---------------- contracts (도급 계약서 · 대표 전용) ---------------- */
+
+  async listAgreements({ siteId = null, status = null } = {}) {
+    let rows = (await this.adapter.getAll('contracts')).map(normalizeAgreement);
+    if (siteId) rows = rows.filter((row) => row.siteId === siteId);
+    if (status) rows = rows.filter((row) => row.status === status);
+    return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  }
+
+  async getAgreement(id) {
+    const row = await this.adapter.get('contracts', id);
+    return row ? normalizeAgreement(row) : null;
+  }
+
+  async getAgreementByQuote(quoteId) {
+    if (!quoteId) return null;
+    const rows = (await this.adapter.getAll('contracts')).map(normalizeAgreement);
+    return rows.find((row) => row.quoteId === quoteId) || null;
+  }
+
+  /** 견적을 표준 도급 계약서로 전환합니다 (이미 있으면 그 계약서). */
+  async createAgreementFromQuote(quoteId) {
+    const quote = await this.getQuote(quoteId);
+    if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
+    const existing = await this.getAgreementByQuote(quote.id);
+    if (existing) return existing;
+
+    const now = new Date().toISOString();
+    const agreement = normalizeAgreement({
+      id: uid('contract'),
+      no: await this._nextDocNumber('contracts', 'CT'),
+      quoteId: quote.id,
+      siteId: quote.siteId,
+      status: 'draft',
+      clientAddress: quote.clientAddress,
+      clientBusinessName: quote.clientCompany,
+      clientBizNumber: quote.clientBizNumber,
+      clientCeo: '',
+      contactName: quote.clientContact,
+      contactPhone: quote.clientPhone,
+      startDate: quote.startDate,
+      endDate: quote.endDate,
+      months: quote.periodMonths,
+      amount: quote.amount,
+      vatIncluded: quote.vatIncluded,
+      billingDay: quote.billingDay,
+      scope: quote.scope,
+      extraScope: quote.extraScope,
+      frequency: quote.frequency,
+      specialTerms: [quote.terms, quote.memo].filter(Boolean).join('\n'),
+      createdAt: now,
+      updatedAt: now,
+      source: 'app',
+    });
+    await this.adapter.put('contracts', agreement);
+    const nextQuote = normalizeQuote({ ...quote, status: quote.status === 'sent' ? 'accepted' : quote.status, updatedAt: now });
+    await this.adapter.put('quotes', nextQuote);
+    this._notify();
+    return agreement;
+  }
+
+  async updateAgreement(id, patch = {}) {
+    const agreement = await this.getAgreement(id);
+    if (!agreement) throw new StoreError('no-contract', '계약서를 찾을 수 없습니다.');
+    if (agreement.status === 'signed') {
+      throw new StoreError('already-signed', '체결된 계약서는 수정할 수 없습니다.');
+    }
+    const next = normalizeAgreement({
+      ...agreement,
+      ...patch,
+      id: agreement.id,
+      quoteId: agreement.quoteId,
+      createdAt: agreement.createdAt,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.adapter.put('contracts', next);
+    this._notify();
+    return next;
+  }
+
+  /** 계약서에 붙는 고객사 사업자등록증 · 특이사항 (체결 후에도 고칠 수 있음). */
+  async updateAgreementMeta(id, patch = {}) {
+    const agreement = await this.getAgreement(id);
+    if (!agreement) throw new StoreError('no-contract', '계약서를 찾을 수 없습니다.');
+    const next = normalizeAgreement({
+      ...agreement,
+      bizLicense: patch.bizLicense !== undefined ? patch.bizLicense : agreement.bizLicense,
+      contractMemo: patch.contractMemo !== undefined ? patch.contractMemo : agreement.contractMemo,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.adapter.put('contracts', next);
+    this._notify();
+    return next;
+  }
+
+  /** 계약서를 고객에게 보냅니다 (고객 방에 ‘서명’ 카드가 뜨는 상태). */
+  async sendAgreement(id) {
+    const agreement = await this.getAgreement(id);
+    if (!agreement) throw new StoreError('no-contract', '계약서를 찾을 수 없습니다.');
+    if (agreement.status === 'signed') return agreement;
+    const now = new Date().toISOString();
+    const next = { ...agreement, status: 'sent', updatedAt: now };
+    await this.adapter.put('contracts', next);
+    this._notify();
+    return normalizeAgreement(next);
+  }
+
+  /**
+   * 계약 체결 — 서명 · 갑 정보를 저장하고, 같은 건을 정식 정기청소 현장(sites)으로
+   * 자동 등록합니다. 계약금 · 계약일 · 청소 공정 · 첫 견적(오염) 사진이 그대로
+   * 넘어가 관리자 매출 정리와 고객 방 3단계 비교에 바로 표시됩니다.
+   */
+  async signAgreement(contractId, payload = {}) {
+    const agreement = await this.getAgreement(contractId);
+    if (!agreement) throw new StoreError('no-contract', '계약서를 찾을 수 없습니다.');
+    if (agreement.status === 'signed' && agreement.siteId) {
+      return { agreement, site: await this.getSite(agreement.siteId) };
+    }
+
+    const quote = agreement.quoteId ? await this.getQuote(agreement.quoteId) : null;
+    const client = {
+      address: toText(payload.address) || agreement.clientAddress,
+      businessName:
+        toText(payload.businessName) || agreement.clientBusinessName || (quote ? quote.clientCompany : ''),
+      bizNumber: toText(payload.bizNumber) || agreement.clientBizNumber,
+      ceo: toText(payload.ceo) || agreement.clientCeo,
+    };
+    if (!client.businessName) {
+      throw new StoreError('company-empty', '사업자명(상호)을 입력해 주세요.');
+    }
+
+    const signedDate = toText(payload.signedDate) || todayISO();
+    const now = new Date().toISOString();
+    const category = quote && DEFAULT_CHECKLISTS[quote.clientCategory] ? quote.clientCategory : 'office';
+    const frequency = agreement.frequency || (quote ? quote.frequency : '') || '주 1회 (일정 협의)';
+    const process =
+      [agreement.scope || (quote ? quote.scope : ''), agreement.extraScope || (quote ? quote.extraScope : '')]
+        .filter(Boolean)
+        .join(' → ') || '';
+    const note = `${agreement.months}개월 · 부가세 ${agreement.vatIncluded ? '포함' : '별도'} · ${frequency}`;
+
+    let site = agreement.siteId ? await this.getSite(agreement.siteId) : null;
+    if (!site) {
+      site = (await this.listSites()).find((row) => row.name === client.businessName) || null;
+    }
+
+    if (!site) {
+      site = await this.addSite({
+        name: client.businessName,
+        clientName: client.businessName,
+        category,
+        address: client.address,
+        area: quote ? quote.area : '',
+        frequency,
+        intervalDays: intervalFromFrequency(frequency),
+        startDate: agreement.startDate || signedDate,
+        contactName: agreement.contactName || (quote ? quote.clientContact : ''),
+        bizNumber: client.bizNumber,
+        ceoName: client.ceo,
+        taxEmail: quote ? quote.clientTaxEmail : '',
+        contract: {
+          contractAmount: agreement.amount,
+          subcontractAmount: 0,
+          feeAmount: 0,
+          contractDate: agreement.startDate || signedDate,
+          billingDay: `매월 ${agreement.billingDay}일`,
+          note,
+        },
+        ops: { process, accessMethod: '', trashLocation: '', parkingMethod: '' },
+        baseline: {
+          quote: {
+            date: signedDate,
+            note: '계약 전 견적 방문 · 오염 상태',
+            photos: quote ? quote.photos.slice() : [],
+          },
+        },
+      });
+    } else {
+      const contract = site.contract || normalizeContract(null);
+      site = await this.updateSiteDetails(site.id, {
+        contract: {
+          ...contract,
+          contractAmount: agreement.amount,
+          contractDate: contract.contractDate || agreement.startDate || signedDate,
+          billingDay: contract.billingDay || `매월 ${agreement.billingDay}일`,
+        },
+        ops: site.ops && site.ops.process ? site.ops : { process },
+      });
+    }
+
+    const nextAgreement = normalizeAgreement({
+      ...agreement,
+      status: 'signed',
+      siteId: site.id,
+      clientAddress: client.address,
+      clientBusinessName: client.businessName,
+      clientBizNumber: client.bizNumber,
+      clientCeo: client.ceo,
+      signedDate,
+      signedByName: client.ceo || agreement.signedByName,
+      signature: toText(payload.signature) || agreement.signature,
+      signedAt: now,
+      updatedAt: now,
+    });
+    await this.adapter.put('contracts', nextAgreement);
+
+    if (quote) {
+      await this.adapter.put(
+        'quotes',
+        normalizeQuote({ ...quote, siteId: site.id, status: 'contracted', contractedAt: now, updatedAt: now }),
+      );
+    }
+
+    // 견적 방에 있던 고객 계정을 새 현장 방으로 옮깁니다.
+    const accounts = await this.adapter.getAll('accounts');
+    for (const account of accounts) {
+      if (account.role !== 'customer') continue;
+      if (quote && account.quoteId === quote.id) {
+        await this.adapter.put('accounts', {
+          ...account,
+          siteId: site.id,
+          quoteId: '',
+          updatedAt: now,
+        });
+        await this.createGrant(account.id, site.id, '');
+      }
+    }
+
+    this._notify();
+    return { agreement: normalizeAgreement(nextAgreement), site };
+  }
+
+  /* ---------------- staff contracts (직원 계약 · 직원관리방) ---------------- */
+
+  async listStaffContracts({ accountId = null, siteId = null, status = null } = {}) {
+    let rows = (await this.adapter.getAll('staffContracts')).map(normalizeStaffContract);
+    if (accountId) rows = rows.filter((row) => row.accountId === accountId);
+    if (siteId) rows = rows.filter((row) => row.siteIds.includes(siteId));
+    if (status) rows = rows.filter((row) => row.status === status);
+    return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  }
+
+  async getStaffContract(id) {
+    const row = await this.adapter.get('staffContracts', id);
+    return row ? normalizeStaffContract(row) : null;
+  }
+
+  async findStaffContractByInviteCode(code) {
+    const needle = normalizeCode(code);
+    if (!needle) return null;
+    const rows = (await this.adapter.getAll('staffContracts')).map(normalizeStaffContract);
+    return rows.find((row) => normalizeCode(row.inviteCode) === needle) || null;
+  }
+
+  async _nextLeaderCode() {
+    const rows = await this.adapter.getAll('accounts');
+    const taken = new Set(rows.map((row) => normalizeCode(row.leaderCode || '')));
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const candidate = `TL-${String(1000 + Math.floor(Math.random() * 9000))}`;
+      if (!taken.has(normalizeCode(candidate))) return candidate;
+    }
+    throw new StoreError('code-collision', '팀장 코드를 생성하지 못했습니다. 다시 시도해 주세요.');
+  }
+
+  async _nextStaffInviteCode() {
+    const rows = await this.adapter.getAll('staffContracts');
+    const taken = new Set(rows.map((row) => normalizeCode(row.inviteCode)));
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const candidate = `S-${randomCode(6)}`;
+      if (!taken.has(normalizeCode(candidate))) return candidate;
+    }
+    throw new StoreError('code-collision', '직원 초대코드를 생성하지 못했습니다. 다시 시도해 주세요.');
+  }
+
+  /** 직원 계약 등록 — 저장과 동시에 1회용 직원 초대코드를 발급합니다. */
+  async addStaffContract(input = {}) {
+    const name = toText(input.name);
+    if (!name) throw new StoreError('staff-name-empty', '직원 성명을 입력해 주세요.');
+    const phone = normalizePhone(input.phone);
+    if (!phone) throw new StoreError('staff-phone-empty', '직원 연락처를 입력해 주세요.');
+    const type = STAFF_TYPES[input.employmentType] ? input.employmentType : 'freelancer';
+    const monthlyAmount = toAmount(input.monthlyAmount);
+    const dailyAmount = toAmount(input.dailyAmount);
+    const hourlyAmount = toAmount(input.hourlyAmount);
+    const required = type === 'daily' ? !dailyAmount : type === 'parttime' ? !hourlyAmount : !monthlyAmount;
+    if (required) {
+      throw new StoreError(
+        'staff-amount-empty',
+        type === 'daily' ? '일당을 입력해 주세요.' : type === 'parttime' ? '시급을 입력해 주세요.' : '월 금액을 입력해 주세요.',
+      );
+    }
+
+    const now = new Date().toISOString();
+    const contract = normalizeStaffContract({
+      ...input,
+      id: uid('staff'),
+      no: toText(input.no) || (await this._nextDocNumber('staffContracts', 'S')),
+      name,
+      phone,
+      employmentType: type,
+      monthlyAmount,
+      dailyAmount,
+      hourlyAmount,
+      status: 'draft',
+      inviteCode: await this._nextStaffInviteCode(),
+      inviteIssuedAt: now,
+      inviteUsedAt: '',
+      inviteUsedBy: '',
+      createdAt: now,
+      updatedAt: now,
+      source: 'app',
+    });
+    await this.adapter.put('staffContracts', contract);
+    this._notify();
+    return contract;
+  }
+
+  async updateStaffContract(id, patch = {}) {
+    const contract = await this.getStaffContract(id);
+    if (!contract) throw new StoreError('no-staff-contract', '직원 계약서를 찾을 수 없습니다.');
+    if (contract.status === 'signed') {
+      throw new StoreError('already-signed', '체결된 계약서는 수정할 수 없습니다.');
+    }
+    const next = normalizeStaffContract({
+      ...contract,
+      ...patch,
+      id: contract.id,
+      inviteCode: contract.inviteCode,
+      createdAt: contract.createdAt,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.adapter.put('staffContracts', next);
+    this._notify();
+    return next;
+  }
+
+  /** 직원에게 계약서를 보냅니다 (직원관리방에 ‘서명 대기’로 표시). */
+  async sendStaffContract(id) {
+    const contract = await this.getStaffContract(id);
+    if (!contract) throw new StoreError('no-staff-contract', '직원 계약서를 찾을 수 없습니다.');
+    if (contract.status === 'signed') return contract;
+    const next = { ...contract, status: 'sent', updatedAt: new Date().toISOString() };
+    await this.adapter.put('staffContracts', next);
+    this._notify();
+    return normalizeStaffContract(next);
+  }
+
+  async regenerateStaffInvite(id) {
+    const contract = await this.getStaffContract(id);
+    if (!contract) throw new StoreError('no-staff-contract', '직원 계약서를 찾을 수 없습니다.');
+    const now = new Date().toISOString();
+    const next = {
+      ...contract,
+      inviteCode: await this._nextStaffInviteCode(),
+      inviteIssuedAt: now,
+      inviteUsedAt: '',
+      inviteUsedBy: '',
+      updatedAt: now,
+    };
+    await this.adapter.put('staffContracts', next);
+    this._notify();
+    return normalizeStaffContract(next);
+  }
+
+  /**
+   * 1회용 직원 초대코드로 직원관리방 입장. 처음 한 번은 코드가 필요하고,
+   * 그 뒤에는 같은 번호로 바로 들어옵니다(`staffAccess`).
+   */
+  async enterStaffRoomWithCode({ phone, code, name = '' }) {
+    const digits = normalizePhone(phone);
+    if (!digits) throw new StoreError('phone-empty', '전화번호를 입력해 주세요.');
+    const needle = normalizeCode(code);
+    if (!needle) throw new StoreError('staff-code-required', '1회용 직원 초대코드를 입력해 주세요.');
+
+    const contract = await this.findStaffContractByInviteCode(needle);
+    if (!contract) throw new StoreError('staff-code-not-found', '등록되지 않은 직원 초대코드입니다.');
+    if (contract.inviteUsedAt) {
+      throw new StoreError('staff-code-used', '이미 사용된 초대코드입니다. 대표에게 새 코드를 요청해 주세요.');
+    }
+    if (contract.status === 'draft') {
+      throw new StoreError('staff-code-draft', '아직 발송 전인 계약서입니다. 대표에게 확인해 주세요.');
+    }
+
+    const accounts = await this.adapter.getAll('accounts');
+    let account = accounts.find((row) => normalizePhone(row.phone) === digits) || null;
+    if (account && account.role === 'customer') {
+      throw new StoreError('staff-customer', '고객 번호로는 직원관리방에 입장할 수 없습니다.');
+    }
+    if (account && contract.accountId && account.id !== contract.accountId) {
+      throw new StoreError('staff-other', '다른 직원에게 발급된 초대코드입니다.');
+    }
+    if (account && account.active === false) {
+      throw new StoreError('inactive', '사용이 중지된 계정입니다. 대표에게 문의해 주세요.');
+    }
+
+    const siteIds = contract.siteIds.slice();
+    if (!account) {
+      account = {
+        id: uid('acc_staff'),
+        role: 'leader',
+        name: contract.name || toText(name) || `직원 ${digits.slice(-4)}`,
+        title: contract.roleTitle || '팀장',
+        phone: digits,
+        phonePretty: prettyPhone(digits),
+        password: '',
+        leaderCode: await this._nextLeaderCode(),
+        assignedSiteIds: siteIds,
+        staffAccess: true,
+        employmentType: contract.employmentType,
+        active: true,
+        createdAt: new Date().toISOString(),
+        source: 'staff-invite',
+      };
+    } else {
+      const assigned = new Set(account.assignedSiteIds || []);
+      siteIds.forEach((id) => assigned.add(id));
+      account = {
+        ...account,
+        staffAccess: true,
+        employmentType: contract.employmentType,
+        assignedSiteIds: [...assigned],
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    await this.adapter.put('accounts', account);
+
+    const now = new Date().toISOString();
+    const consumed = { ...contract, accountId: account.id, inviteUsedAt: now, inviteUsedBy: account.id, updatedAt: now };
+    await this.adapter.put('staffContracts', consumed);
+    this._notify();
+    return { account, contract: normalizeStaffContract(consumed) };
+  }
+
+  /** 직원 전자서명 — 체결 완료로 저장합니다. */
+  async signStaffContract(id, payload = {}) {
+    const contract = await this.getStaffContract(id);
+    if (!contract) throw new StoreError('no-staff-contract', '직원 계약서를 찾을 수 없습니다.');
+    if (contract.status === 'signed') return contract;
+    const now = new Date().toISOString();
+    const next = normalizeStaffContract({
+      ...contract,
+      status: 'signed',
+      signature: toText(payload.signature) || contract.signature,
+      signedDate: toText(payload.signedDate) || todayISO(),
+      signedByName: toText(payload.name) || contract.name,
+      signedAt: now,
+      updatedAt: now,
+    });
+    await this.adapter.put('staffContracts', next);
+    this._notify();
+    return next;
+  }
+
+  /* ---------------- staff checks (근무태도 A~F · 본부장 체크) ---------------- */
+
+  async listStaffChecks({ staffContractId = null, accountId = null, siteId = null } = {}) {
+    let rows = (await this.adapter.getAll('staffChecks')).map(normalizeStaffCheck);
+    if (staffContractId) rows = rows.filter((row) => row.staffContractId === staffContractId);
+    if (accountId) rows = rows.filter((row) => row.accountId === accountId);
+    if (siteId) rows = rows.filter((row) => row.siteId === siteId);
+    return rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  }
+
+  /** 본부장이 근무태도를 A~F로 체크합니다. */
+  async addStaffCheck(input = {}) {
+    const contract = await this.getStaffContract(input.staffContractId);
+    if (!contract) throw new StoreError('no-staff-contract', '직원 계약을 찾을 수 없습니다.');
+    const grade = String(input.grade || '').toUpperCase();
+    if (!STAFF_GRADES.includes(grade)) throw new StoreError('bad-grade', '근무태도 등급은 A~F 중에서 고르세요.');
+    const check = normalizeStaffCheck({
+      id: uid('chk'),
+      staffContractId: contract.id,
+      accountId: contract.accountId,
+      name: contract.name,
+      siteId: toText(input.siteId) || contract.siteIds[0] || '',
+      date: toText(input.date) || todayISO(),
+      grade,
+      memo: toText(input.memo),
+      reviewerId: toText(input.reviewerId),
+      reviewerName: toText(input.reviewerName),
+      createdAt: new Date().toISOString(),
+      source: 'app',
+    });
+    await this.adapter.put('staffChecks', check);
+    this._notify();
+    return check;
   }
 
   /* ---------------- reports ---------------- */

@@ -12,7 +12,7 @@
  */
 
 import { store, normalizeCode, normalizePhone, prettyPhone } from './store.js';
-import { DEMO_ACCOUNTS } from './seed.js';
+import { DEMO_ACCOUNTS, STAFF_TYPES } from './seed.js';
 
 export const SESSION_KEY = 'session';
 
@@ -43,6 +43,7 @@ function publicSession(account) {
     title: account.title || '',
     phone: account.phonePretty || account.phone,
     siteId: account.siteId || null,
+    quoteId: account.quoteId || '',
     assignedSiteIds: (account.assignedSiteIds || []).slice(),
     loggedInAt: new Date().toISOString(),
   };
@@ -75,7 +76,9 @@ export async function getSession() {
     title: account.title || '',
     phone: account.phonePretty || account.phone,
     siteId: account.siteId || stored.siteId || null,
+    quoteId: account.quoteId || '',
     assignedSiteIds: (account.assignedSiteIds || []).slice(),
+    staffAccess: !!account.staffAccess,
     account,
   };
 }
@@ -110,11 +113,19 @@ export async function loginCustomer({ phone, code = '', name = '', title = '' })
     if (account.siteId && (await store.getGrant(account.id, account.siteId))) {
       return startSession(account);
     }
+    // Invited to a quote room → the phone number alone opens the quote room.
+    if (account.quoteId && (await store.getQuote(account.quoteId))) {
+      return startSession(account);
+    }
     if (!normalizeCode(code)) {
       throw new AuthError(
         'code-required',
-        '아직 방 입장 전인 번호입니다. 관리자에게 발급받은 1회용 코드를 함께 입력해 주세요.',
+        '아직 방 입장 전인 번호입니다. 대표가 보낸 1회용 코드를 함께 입력해 주세요.',
       );
+    }
+    if (await store.findQuoteByInviteCode(code)) {
+      const entered = await store.enterQuoteRoomWithCode({ phone: digits, code, name, title });
+      return startSession(entered.account);
     }
     const entered = await store.enterCustomerRoomWithCode({ phone: digits, code, name, title });
     return startSession(entered.account);
@@ -123,8 +134,12 @@ export async function loginCustomer({ phone, code = '', name = '', title = '' })
   if (!normalizeCode(code)) {
     throw new AuthError(
       'code-required',
-      '처음 이용하시는 번호입니다. 관리자에게 발급받은 1회용 코드를 함께 입력해 주세요.',
+      '처음 이용하시는 번호입니다. 대표가 보낸 1회용 코드를 함께 입력해 주세요.',
     );
+  }
+  if (await store.findQuoteByInviteCode(code)) {
+    const entered = await store.enterQuoteRoomWithCode({ phone: digits, code, name, title });
+    return startSession(entered.account);
   }
   const entered = await store.enterCustomerRoomWithCode({ phone: digits, code, name, title });
   return startSession(entered.account);
@@ -150,18 +165,49 @@ export async function loginStaff({ phone, password, leaderCode }) {
   return startSession(account);
 }
 
-export async function loginAdmin({ phone, password }) {
+export async function loginAdmin({ phone, password, leaderCode = '' }) {
   const digits = normalizePhone(phone);
   if (!digits) throw new AuthError('phone-empty', '전화번호를 입력해 주세요.');
   const account = await store.findAccountByPhone(digits);
-  if (!account || account.role !== 'admin') {
-    throw new AuthError('no-account', '대표(관리자) 계정이 아닙니다.');
+  const isCeo = account && account.role === 'admin';
+  const isManager = account && account.role === 'leader' && account.canManageStaff;
+  if (!isCeo && !isManager) {
+    throw new AuthError('no-account', '대표(최고관리자) 또는 본부장(관리자) 계정이 아닙니다.');
   }
-  await requireActive(account, 'admin');
+  await requireActive(account);
   if (!verifyPassword(account, String(password || '').trim())) {
     throw new AuthError('bad-password', '비밀번호가 일치하지 않습니다.');
   }
+  if (isManager) {
+    if (!normalizeCode(leaderCode)) {
+      throw new AuthError('code-empty', '본부장은 팀장 고유코드도 함께 입력해야 합니다.');
+    }
+    if (!account.leaderCode || normalizeCode(account.leaderCode) !== normalizeCode(leaderCode)) {
+      throw new AuthError('bad-leader-code', '팀장 고유코드가 일치하지 않습니다.');
+    }
+  }
   return startSession(account);
+}
+
+/**
+ * 직원관리방 입장 — 처음에는 1회용 직원 초대코드와 함께, 코드를 쓴 뒤에는
+ * 등록된 전화번호만으로 들어옵니다(고객 방과 같은 방식).
+ */
+export async function loginStaffInvite({ phone, code = '' }) {
+  const digits = normalizePhone(phone);
+  if (!digits) throw new AuthError('phone-empty', '전화번호를 입력해 주세요.');
+
+  if (!normalizeCode(code)) {
+    const account = await store.findAccountByPhone(digits);
+    if (account && account.role !== 'customer' && account.staffAccess) {
+      await requireActive(account);
+      return startSession(account);
+    }
+    throw new AuthError('staff-code-required', '처음 입장은 대표가 보낸 1회용 직원 초대코드가 필요합니다.');
+  }
+
+  const entered = await store.enterStaffRoomWithCode({ phone: digits, code });
+  return startSession(entered.account);
 }
 
 /* ------------------------------------------------------------------ */
@@ -217,6 +263,19 @@ export async function demoRegisteredCustomers() {
       siteCode: site ? site.code : '',
     };
   });
+}
+
+/** 미사용 직원 초대코드 (직원관리방 입장 테스트용). */
+export async function demoStaffCodes() {
+  const contracts = await store.listStaffContracts();
+  return contracts
+    .filter((row) => !row.inviteUsedAt && row.status !== 'draft')
+    .map((row) => ({
+      name: row.name,
+      phone: prettyPhone(row.phone),
+      code: row.inviteCode,
+      typeLabel: (STAFF_TYPES[row.employmentType] || {}).short || '직원',
+    }));
 }
 
 /** Room codes seeded for the demo (shown next to each demo customer account). */

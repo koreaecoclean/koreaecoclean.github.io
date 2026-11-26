@@ -92,6 +92,42 @@ export function fmtWon(value) {
   return `${rounded < 0 ? '-' : ''}${digits}원`;
 }
 
+/** '2026.11.26.' — 계약서 · 견적서 서식용 */
+export function fmtDateDot(iso) {
+  if (!iso) return '';
+  const [y, m, d] = String(iso).split('-');
+  if (!y || !m || !d) return String(iso);
+  return `${y}.${m}.${d}.`;
+}
+
+const KOR_DIGITS = ['', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'];
+const KOR_SMALL = ['', '십', '백', '천'];
+const KOR_BIG = ['', '만', '억', '조'];
+
+/** 1900000 → '일백구십만' (계약서 ‘일금 ○○원정’ 표기용) */
+export function fmtKoreanAmount(value) {
+  let number = Math.abs(Math.round(Number(value) || 0));
+  if (number === 0) return '영';
+  const groups = [];
+  while (number > 0) {
+    groups.push(number % 10000);
+    number = Math.floor(number / 10000);
+  }
+  let out = '';
+  for (let index = groups.length - 1; index >= 0; index -= 1) {
+    const group = groups[index];
+    if (!group) continue;
+    const digits = String(group).split('').map(Number);
+    let part = '';
+    digits.forEach((digit, position) => {
+      if (!digit) return;
+      part += KOR_DIGITS[digit] + KOR_SMALL[digits.length - 1 - position];
+    });
+    out += part + KOR_BIG[index];
+  }
+  return out;
+}
+
 /** 1430000 → '1,430,000' (no unit, for table cells). */
 export function fmtNumber(value) {
   const number = Number(value);

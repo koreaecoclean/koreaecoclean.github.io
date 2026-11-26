@@ -18,15 +18,15 @@ import {
   fmtDateLong,
   fmtTime,
   fmtBytes,
-  fmtWon,
   toISODate,
   nowHHMM,
   daysBetween,
 } from '../ui.js';
-import { store, StoreError, countReportPhotos } from '../store.js';
-import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
-import { getSession, loginStaff, logout, demoAccounts } from '../auth.js';
+import { store, StoreError, countReportPhotos, AGREEMENT_STATUS } from '../store.js';
+import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
+import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, demoStaffCodes } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
+import { openStaffContractSheet } from './quote-contract.js';
 
 const SAMPLE_POOL = {
   security: [['photo-lock', '출입문 잠금장치 · 손잡이 확인']],
@@ -64,6 +64,12 @@ export function createLeaderView(container) {
     draft: null,
     sent: null,
     loginError: '',
+    staffError: '',
+    myContracts: [],
+    myChecks: [],
+    leaderTab: 'sites',
+    siteStaff: [],
+    staffCodes: [],
     busy: false,
   };
   const sampleCursor = { security: 0, cleaning: 0, issue: 0 };
@@ -141,6 +147,8 @@ export function createLeaderView(container) {
 
       ${demoPanelTemplate()}
 
+      ${staffGateTemplate()}
+
       <section class="panel">
         <div class="section-head"><h2>보고에 들어가는 내용</h2></div>
         <div class="steps">
@@ -154,6 +162,52 @@ export function createLeaderView(container) {
   }
 
   /* ---------------- site picker ---------------- */
+
+  function employeeTabsTemplate(active) {
+    const tabs = [
+      { key: 'sites', label: '관리업장' },
+      { key: 'contracts', label: '계약서' },
+      { key: 'attitude', label: '근무태도' },
+    ];
+    return `
+      <nav class="room-tabs" aria-label="내 직원 방">
+        ${tabs
+          .map(
+            (tab) => `<button class="room-tab" type="button" data-leader-tab="${tab.key}"
+              aria-pressed="${active === tab.key}">${esc(tab.label)}</button>`,
+          )
+          .join('')}
+      </nav>`;
+  }
+
+  function attitudeTemplate(checks) {
+    const latest = checks[0];
+    return `
+      <section class="panel" data-my-attitude>
+        <div class="section-head">
+          <h2>근무태도</h2>
+          <p>본부장 체크 · A &gt; B &gt; C &gt; D &gt; E &gt; F</p>
+        </div>
+        <div class="grade-scale">
+          ${['A', 'B', 'C', 'D', 'E', 'F'].map((grade) => `<span class="grade grade--${grade}">${grade}</span>`).join('')}
+        </div>
+        ${
+          latest
+            ? `<p class="attitude-latest">최근 등급 <span class="grade grade--${esc(latest.grade)}">${esc(latest.grade)}</span> <span class="tiny muted">${esc(latest.date)} · ${esc(latest.reviewerName || '본부장')}</span></p>`
+            : '<p class="tiny muted">아직 등록된 근무태도 체크가 없습니다.</p>'
+        }
+        ${
+          checks.length
+            ? `<ul class="check-history">${checks
+                .map(
+                  (row) =>
+                    `<li><span class="grade grade--${esc(row.grade)}">${esc(row.grade)}</span><div><strong>${esc(row.date)}</strong><span>${esc(row.memo || '메모 없음')}</span></div></li>`,
+                )
+                .join('')}</ul>`
+            : ''
+        }
+      </section>`;
+  }
 
   async function sitePickerTemplate(session, sites) {
     const today = toISODate();
@@ -182,20 +236,29 @@ export function createLeaderView(container) {
       }),
     );
 
+    const tab = state.leaderTab || 'sites';
     return `
       ${leaderBarTemplate(session)}
-      <section>
-        <div class="section-head">
-          <h2>담당 현장</h2>
-          <p>${sites.length}곳 배정</p>
-        </div>
-        <div class="pick-list">${rows.join('')}</div>
-        <p class="hint" style="margin-top:10px">현장을 고르면 사진·점검 항목을 기록하는 보고서가 열립니다.</p>
-      </section>
-      <section class="panel">
-        <div class="section-head"><h2>최근 7일</h2></div>
-        <div class="kv" id="week-summary"><dt>불러오는 중</dt><dd>-</dd></div>
-      </section>
+      ${employeeTabsTemplate(tab)}
+      ${
+        tab === 'contracts'
+          ? myDocsTemplate(state.myContracts) ||
+            `<section class="panel">${`<div class="empty"><strong>아직 계약서가 없습니다</strong><span>대표가 계약서를 보내면 이곳에 표시됩니다.</span></div>`}</section>`
+          : tab === 'attitude'
+            ? attitudeTemplate(state.myChecks)
+            : `<section>
+                 <div class="section-head">
+                   <h2>관리업장</h2>
+                   <p>${sites.length}곳 배정</p>
+                 </div>
+                 <div class="pick-list">${rows.join('')}</div>
+                 <p class="hint" style="margin-top:10px">현장을 고르면 사진·점검 항목을 기록하는 보고서가 열립니다.</p>
+               </section>
+               <section class="panel">
+                 <div class="section-head"><h2>최근 7일</h2></div>
+                 <div class="kv" id="week-summary"><dt>불러오는 중</dt><dd>-</dd></div>
+               </section>`
+      }
       ${settingsTemplate()}
     `;
   }
@@ -261,22 +324,19 @@ export function createLeaderView(container) {
   }
 
   function opsCardTemplate(site) {
-    const contract = site.contract || {};
     const ops = site.ops || {};
     const value = (text) => (text ? esc(text) : '<span class="ops-empty">미등록 · 관리자에게 확인</span>');
 
     return `
       <section class="panel ops-card" data-ops-card="${esc(site.id)}">
         <div class="section-head">
-          <h2>현장 운영 · 도급 정보</h2>
+          <h2>현장 운영 정보</h2>
           <p>현장 필수 정보</p>
         </div>
         <p class="tiny muted" style="margin:-6px 0 10px">
-          이 현장에서 바로 확인하는 정보입니다. 도급금액과 함께 청소 공정·출입·쓰레기·주차를 확인하세요.
+          이 현장에서 바로 확인하는 정보입니다. 청소 공정·출입·쓰레기·주차를 확인하세요.
         </p>
         <dl class="kv kv--left ops-list">
-          <dt>도급금액</dt>
-          <dd><strong class="ops-amount" data-ops-field="subcontractAmount">${esc(fmtWon(contract.subcontractAmount))}</strong></dd>
           <dt>청소 공정</dt>
           <dd data-ops-field="process">${value(ops.process)}</dd>
           <dt>출입방법</dt>
@@ -286,6 +346,106 @@ export function createLeaderView(container) {
           <dt>주차방법</dt>
           <dd data-ops-field="parkingMethod">${value(ops.parkingMethod)}</dd>
         </dl>
+      </section>
+    `;
+  }
+
+  /* ---------------- 내 계약서 · 배정 직원 (금액 없음) ---------------- */
+
+  function myDocsTemplate(contracts) {
+    if (!contracts || !contracts.length) return '';
+    return `
+      <section class="panel my-docs" data-my-docs>
+        <div class="section-head">
+          <h2>내 계약서</h2>
+          <p>대표가 보낸 계약</p>
+        </div>
+        ${contracts
+          .map((contract) => {
+            const meta = STAFF_TYPES[contract.employmentType] || STAFF_TYPES.freelancer;
+            const status = AGREEMENT_STATUS[contract.status] || AGREEMENT_STATUS.draft;
+            return `
+              <div class="my-doc-row" data-my-contract="${esc(contract.id)}">
+                <div class="my-doc-row__who">
+                  <strong>${esc(meta.label)}</strong>
+                  <span>${esc(contract.no)} · ${esc(contract.startDate || '')} ~ ${esc(contract.endDate || '')}</span>
+                </div>
+                <div class="my-doc-row__right">
+                  <span class="badge ${status.badge}">${esc(status.label)}</span>
+                  <button class="btn btn--sm btn--ghost" type="button" data-open-staff-contract="${esc(contract.id)}">
+                    ${contract.status === 'signed' ? '계약서 보기' : '확인 · 서명'}
+                  </button>
+                </div>
+              </div>`;
+          })
+          .join('')}
+        <p class="hint">계약 내용 확인과 전자서명은 이 화면에서 바로 할 수 있습니다.</p>
+      </section>
+    `;
+  }
+
+  function siteStaffTemplate(site, contracts) {
+    return `
+      <section class="panel site-staff" data-site-staff="${esc(site.id)}">
+        <div class="section-head">
+          <h2>배정 직원</h2>
+          <p>${contracts.length}명</p>
+        </div>
+        ${contracts.length
+          ? contracts
+              .map((contract) => {
+                const meta = STAFF_TYPES[contract.employmentType] || STAFF_TYPES.freelancer;
+                const status = AGREEMENT_STATUS[contract.status] || AGREEMENT_STATUS.draft;
+                return `<div class="my-doc-row">
+                    <div class="my-doc-row__who"><strong>${esc(contract.name)} ${esc(contract.roleTitle || '')}</strong><span>${esc(meta.short)} · ${esc(contract.workDays || '일정 협의')}</span></div>
+                    <span class="badge ${status.badge}">${esc(status.label)}</span>
+                  </div>`;
+              })
+              .join('')
+          : '<p class="tiny muted">이 현장에 배정된 직원 계약이 없습니다.</p>'}
+        <p class="hint">대표가 계약을 발송하면 직원이 자기 계정으로 확인 · 서명합니다.</p>
+      </section>
+    `;
+  }
+
+  function staffGateTemplate() {
+    return `
+      <section class="panel staff-gate">
+        <div class="section-head">
+          <h2>직원관리방 입장</h2>
+          <p>프리랜서 · 도급 · 일용직</p>
+        </div>
+        <p class="tiny muted">
+          대표가 보낸 <strong>1회용 직원 초대코드</strong>로 내 계약서를 확인하고 전자서명합니다.
+          한 번 입장한 번호는 다음부터 전화번호만 입력해도 들어옵니다.
+        </p>
+        <form class="form" id="staff-invite-form" style="margin-top:12px" novalidate>
+          <div class="field">
+            <label for="si-phone">전화번호</label>
+            <input class="input" id="si-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="010-0000-0000" maxlength="15">
+          </div>
+          <div class="field">
+            <label for="si-code">1회용 직원 초대코드 <span class="tiny muted">(처음 한 번만)</span></label>
+            <input class="input" id="si-code" type="text" autocomplete="off" spellcheck="false" placeholder="예: S-H3K9P2" maxlength="12">
+          </div>
+          ${state.staffError ? `<p class="field__error">${esc(state.staffError)}</p>` : ''}
+          <button class="btn btn--primary btn--block" type="submit">직원관리방 입장</button>
+        </form>
+        ${state.staffCodes.length
+          ? `<details class="demo-panel" style="margin-top:10px">
+               <summary>미사용 직원 초대코드 보기</summary>
+               <div class="demo-panel__body">
+                 ${state.staffCodes
+                   .map(
+                     (row) => `<div class="demo-row">
+                        <div><strong>${esc(row.name)} · ${esc(row.typeLabel)}</strong><span>${esc(row.phone)} · ${esc(row.code)}</span></div>
+                        <button class="link-btn" type="button" data-fill-staff-code="${esc(row.phone)}|${esc(row.code)}">입력</button>
+                      </div>`,
+                   )
+                   .join('')}
+               </div>
+             </details>`
+          : ''}
       </section>
     `;
   }
@@ -339,6 +499,8 @@ export function createLeaderView(container) {
       ${state.sent ? sentTemplate(state.sent) : ''}
 
       ${opsCardTemplate(site)}
+
+      ${state.siteStaff.length ? siteStaffTemplate(site, state.siteStaff) : ''}
 
       ${baselinePanelTemplate(site)}
 
@@ -563,22 +725,35 @@ export function createLeaderView(container) {
 
   /* ---------------- render ---------------- */
 
-  async function render() {
+  async function render(options = {}) {
     mount();
+    if (options && options.tab && ['sites', 'contracts', 'attitude'].includes(options.tab)) {
+      state.leaderTab = options.tab;
+    }
     const session = await getSession();
     state.session = session && (session.role === 'leader' || session.role === 'admin') ? session : null;
 
     if (!state.session) {
       state.siteId = null;
       state.draft = null;
+      state.myContracts = [];
+      state.myChecks = [];
+      state.leaderTab = 'sites';
+      state.siteStaff = [];
+      state.staffCodes = await demoStaffCodes().catch(() => []);
       container.innerHTML = gateTemplate();
       return;
     }
 
     const sites = await store.listSites();
-    const allowed = state.session.assignedSiteIds && state.session.assignedSiteIds.length
-      ? sites.filter((site) => state.session.assignedSiteIds.includes(site.id))
-      : sites;
+    const assigned = state.session.assignedSiteIds || [];
+    const allowed = assigned.length
+      ? sites.filter((site) => assigned.includes(site.id))
+      : state.session.role === 'admin'
+        ? sites
+        : [];
+    state.myContracts = await store.listStaffContracts({ accountId: state.session.accountId });
+    state.myChecks = await store.listStaffChecks({ accountId: state.session.accountId });
 
     if (!state.siteId) {
       state.draft = null;
@@ -594,6 +769,10 @@ export function createLeaderView(container) {
       await render();
       return;
     }
+
+    const canManageStaff =
+      (state.session.account && state.session.account.canManageStaff) || /본부장/.test(state.session.title || '');
+    state.siteStaff = canManageStaff ? await store.listStaffContracts({ siteId: site.id }) : [];
 
     container.innerHTML = formTemplate(state.session, site);
     refreshMyReports(state.session);
@@ -807,6 +986,23 @@ export function createLeaderView(container) {
   }
 
   async function onSubmit(event) {
+    if (event.target.id === 'staff-invite-form') {
+      event.preventDefault();
+      state.staffError = '';
+      try {
+        const session = await loginStaffInvite({
+          phone: $('#si-phone', container)?.value || '',
+          code: $('#si-code', container)?.value || '',
+        });
+        toast(`${session.name} ${session.title || '팀장'}님, 직원관리방에 입장했습니다.`);
+        await render();
+      } catch (error) {
+        state.staffError = error.message || '직원관리방 입장에 실패했습니다.';
+        await render();
+      }
+      return;
+    }
+
     if (event.target.id !== 'leader-login') return;
     event.preventDefault();
     state.loginError = '';
@@ -871,6 +1067,32 @@ export function createLeaderView(container) {
   }
 
   async function onClick(event) {
+    const leaderTab = event.target.closest('[data-leader-tab]');
+    if (leaderTab) {
+      state.leaderTab = leaderTab.dataset.leaderTab;
+      await render();
+      return;
+    }
+
+    const fillStaffCode = event.target.closest('[data-fill-staff-code]');
+    if (fillStaffCode) {
+      const [phone, code] = fillStaffCode.dataset.fillStaffCode.split('|');
+      const phoneInput = $('#si-phone', container);
+      const codeInput = $('#si-code', container);
+      if (phoneInput) phoneInput.value = phone;
+      if (codeInput) codeInput.value = code;
+      return;
+    }
+
+    const openStaffContract = event.target.closest('[data-open-staff-contract]');
+    if (openStaffContract) {
+      await openStaffContractSheet(openStaffContract.dataset.openStaffContract, {
+        role: 'staff',
+        onChanged: render,
+      });
+      return;
+    }
+
     const fill = event.target.closest('[data-fill-staff]');
     if (fill) {
       fillStaffFields(fill.dataset.fillStaff);

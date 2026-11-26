@@ -20,8 +20,9 @@ import {
   copyText,
   daysBetween,
   toISODate,
+  fmtWon,
 } from '../ui.js';
-import { store, countReportPhotos } from '../store.js';
+import { store, countReportPhotos, QUOTE_STATUS, AGREEMENT_STATUS } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import {
   getSession,
@@ -32,6 +33,8 @@ import {
   demoRoomCodes,
   demoRegisteredCustomers,
 } from '../auth.js';
+import { openQuoteSheet, openAgreementSheet } from './quote-contract.js';
+import { preparePhoto } from '../photos.js';
 
 const FILTERS = [
   { key: 'all', label: '전체' },
@@ -52,6 +55,7 @@ export function createCustomerView(container) {
     codeError: '',
     category: '',
     previewCode: '',
+    roomTab: '',
   };
   const reportsById = new Map();
   let mounted = false;
@@ -202,13 +206,27 @@ export function createCustomerView(container) {
     const box = $('#demo-code-list', container);
     if (!box) return;
     const groups = await demoRoomCodes();
-    if (!groups.length) {
+    const quotes = (await store.listQuotes()).filter((quote) => !quote.inviteUsedAt && quote.status !== 'draft');
+    if (!groups.length && !quotes.length) {
       box.innerHTML = '<p class="tiny muted">발급된 코드가 없습니다. 관리자 화면에서 발급하세요.</p>';
       return;
     }
-    box.innerHTML = groups
-      .map(
-        (group) => `
+    box.innerHTML =
+      quotes
+        .map(
+          (quote) => `
+          <div class="demo-row">
+            <div>
+              <strong>${esc(quote.clientCompany)} · 견적 초대</strong>
+              <span>${esc(quote.no)} · ${esc(quote.inviteCode)}</span>
+            </div>
+            <button class="link-btn" type="button" data-fill-code="${esc(quote.inviteCode)}">입력</button>
+          </div>`,
+        )
+        .join('') +
+      groups
+        .map(
+          (group) => `
           <div class="demo-row">
             <div>
               <strong>${esc(group.siteName)}</strong>
@@ -216,8 +234,8 @@ export function createCustomerView(container) {
             </div>
             ${group.codes.length ? `<button class="link-btn" type="button" data-fill-code="${esc(group.codes[0])}">입력</button>` : ''}
           </div>`,
-      )
-      .join('');
+        )
+        .join('');
   }
 
   /* ---------------- report markup ---------------- */
@@ -437,38 +455,194 @@ export function createCustomerView(container) {
     `;
   }
 
-  function roomTemplate(site, stats, viewer) {
-    const meta = CATEGORY_META[site.category] || {};
+  /* ---------------- 견적서 · 계약서 카드 ---------------- */
+
+  function docsTemplate(documents) {
+    const agreements = (documents && documents.agreements) || [];
+    const quotes = ((documents && documents.quotes) || []).filter((quote) => quote.status !== 'draft');
+    const signed = agreements.filter((row) => row.status === 'signed');
+    const pending = agreements.filter((row) => row.status !== 'signed');
+    const openQuotes = signed.length || pending.length ? [] : quotes.filter((quote) => quote.status !== 'contracted');
+
+    const cards = [];
+    openQuotes.forEach((quote) => {
+      cards.push(`
+        <article class="doc-banner doc-banner--quote">
+          <span class="doc-banner__tag">도착한 견적서</span>
+          <strong>${esc(quote.clientCompany)} 정기청소 견적서</strong>
+          <p>${esc(quote.frequency)} · ${esc(quote.area || '현장 확인 후 협의')}<br>견적서를 확인하고 그대로 계약까지 진행하실 수 있습니다.</p>
+          <button class="btn btn--primary btn--sm" type="button" data-open-quote="${esc(quote.id)}">견적서 확인</button>
+        </article>`);
+    });
+    pending.forEach((agreement) => {
+      cards.push(`
+        <article class="doc-banner doc-banner--sign">
+          <span class="doc-banner__tag">계약서 확인 및 서명</span>
+          <strong>${esc(agreement.clientBusinessName || '표준 계약서')}</strong>
+          <p>계약 내용을 확인하시고 전자서명해 주세요. 서명하시면 정기청소가 바로 시작됩니다.</p>
+          <button class="btn btn--primary btn--sm" type="button" data-open-agreement="${esc(agreement.id)}">계약서 열기 · 서명</button>
+        </article>`);
+    });
+    signed.forEach((agreement) => {
+      cards.push(`
+        <article class="doc-banner doc-banner--done">
+          <span class="doc-banner__tag">체결된 계약서</span>
+          <strong>${esc(agreement.clientBusinessName || '표준 계약서')}</strong>
+          <p>${esc(agreement.signedDate || '')} 체결 · 인쇄하거나 PDF로 저장할 수 있습니다.</p>
+          <button class="btn btn--ghost btn--sm" type="button" data-open-agreement="${esc(agreement.id)}">계약서 보기</button>
+        </article>`);
+    });
+    if (!cards.length) return '';
+    return `<section class="doc-banners">${cards.join('')}</section>`;
+  }
+
+  function roomTabsTemplate(active, hasSite) {
+    const tabs = [
+      { key: 'quote', label: '① 견적' },
+      { key: 'contract', label: '② 계약' },
+    ];
+    if (hasSite) tabs.push({ key: 'manage', label: '③ 관리' });
+    return `
+      <nav class="room-tabs" aria-label="고객 방 단계">
+        ${tabs
+          .map(
+            (tab) => `<button class="room-tab" type="button" data-room-tab="${tab.key}"
+              aria-pressed="${active === tab.key}">${esc(tab.label)}</button>`,
+          )
+          .join('')}
+      </nav>`;
+  }
+
+  function emptyDoc(title, hint) {
+    return `<div class="empty"><strong>${esc(title)}</strong><span>${esc(hint || '')}</span></div>`;
+  }
+
+  function quotePhotosTemplate(quote) {
+    const photos = quote.photos || [];
+    if (!photos.length) return '';
+    return `
+      <div class="doc-thumbs">
+        ${photos
+          .map(
+            (photo, index) => `
+            <button class="photo-btn" type="button" data-quote-photo="${esc(quote.id)}"
+                    data-quote-photo-index="${index}" aria-label="견적 현장 사진 크게 보기">
+              <img src="${esc(store.photoThumbUrl(photo))}" alt="${esc(photo.caption || '견적 현장 사진')}" loading="lazy" decoding="async">
+            </button>`,
+          )
+          .join('')}
+      </div>`;
+  }
+
+  function quoteTabTemplate(documents) {
+    const quotes = (documents.quotes || []).filter((quote) => quote.status !== 'draft');
+    if (!quotes.length) {
+      return `<section class="panel">${emptyDoc('아직 견적서가 없습니다', '견적서가 도착하면 이곳에서 확인하실 수 있습니다.')}</section>`;
+    }
+    return `
+      <div class="stack-10">
+        ${quotes
+          .map((quote) => {
+            const status = QUOTE_STATUS[quote.status] || QUOTE_STATUS.draft;
+            const meta = CATEGORY_META[quote.clientCategory] || {};
+            return `
+              <section class="panel doc-tab" data-quote-tab="${esc(quote.id)}">
+                <div class="section-head">
+                  <div>
+                    <h2>견적서</h2>
+                    <p>${esc(quote.no)} · ${esc(meta.short || '')}</p>
+                  </div>
+                  <span class="badge ${status.badge}">${esc(status.label)}</span>
+                </div>
+                <dl class="kv kv--left">
+                  <dt>청소 주기</dt><dd>${esc(quote.frequency)}</dd>
+                  <dt>기본 청소</dt><dd>${esc(quote.scope || '-')}</dd>
+                  <dt>추가 업무</dt><dd>${esc(quote.extraScope || '-')}</dd>
+                  <dt>면적</dt><dd>${esc(quote.area || '현장 확인 후 협의')}</dd>
+                  <dt>월 견적금액</dt><dd><strong>${esc(fmtWon(quote.amount))}</strong> <span class="tiny muted">${quote.vatIncluded ? '부가세 포함' : '부가세 별도'}</span></dd>
+                  <dt>유효기간</dt><dd>${esc(quote.validUntil ? `${quote.validUntil}까지` : '협의')}</dd>
+                </dl>
+                ${quotePhotosTemplate(quote)}
+                <button class="btn btn--primary btn--block" type="button" data-open-quote="${esc(quote.id)}">견적서 시트 보기</button>
+              </section>`;
+          })
+          .join('')}
+      </div>`;
+  }
+
+  function bizLicenseTemplate(agreement) {
+    const ref = agreement ? agreement.bizLicense : null;
+    return `
+      <div class="biz-license" data-biz-license>
+        <div class="section-head">
+          <h3>고객사 사업자등록증</h3>
+          <p>${ref ? '등록됨' : '미등록'}</p>
+        </div>
+        ${
+          ref
+            ? `<div class="biz-license__preview"><img src="${esc(store.photoThumbUrl(ref))}" alt="사업자등록증" loading="lazy" decoding="async"></div>`
+            : '<p class="tiny muted">사업자등록증 사진을 올려 주세요. 계약 정보 확인에 사용됩니다.</p>'
+        }
+        ${
+          agreement
+            ? `<label class="btn btn--quiet btn--sm biz-license__btn">
+                 ${ref ? '사진 다시 올리기' : '사업자등록증 올리기'}
+                 <input type="file" accept="image/*" capture="environment" hidden data-biz-license-input="${esc(agreement.id)}">
+               </label>`
+            : ''
+        }
+      </div>`;
+  }
+
+  function contractMemoTemplate(agreement) {
+    if (!agreement) return '';
+    return `
+      <div class="field contract-memo">
+        <label for="contract-memo">특이사항</label>
+        <textarea class="textarea" id="contract-memo" rows="3" maxlength="400"
+          placeholder="예: 주차 1시간 지원, 엘리베이터 사용 시간 협의">${esc(agreement.contractMemo)}</textarea>
+        <button class="btn btn--quiet btn--sm" type="button" data-save-contract-memo="${esc(agreement.id)}">특이사항 저장</button>
+      </div>`;
+  }
+
+  function contractTabTemplate(documents) {
+    const agreement = (documents.agreements || [])[0] || null;
+    if (!agreement) {
+      return `
+        <section class="panel">
+          <div class="section-head"><h2>계약서</h2><p>준비 중</p></div>
+          ${emptyDoc('아직 계약서가 없습니다', '견적서를 확인하고 계약을 진행하시면 표준 계약서가 만들어집니다.')}
+          ${bizLicenseTemplate(null)}
+        </section>`;
+    }
+    const status = AGREEMENT_STATUS[agreement.status] || AGREEMENT_STATUS.draft;
+    return `
+      <section class="panel doc-tab" data-contract-tab="${esc(agreement.id)}">
+        <div class="section-head">
+          <div>
+            <h2>표준 계약서</h2>
+            <p>${esc(agreement.no)} · ${esc(status.label)}</p>
+          </div>
+          <span class="badge ${status.badge}">${esc(status.label)}</span>
+        </div>
+        <dl class="kv kv--left">
+          <dt>계약기간</dt><dd>${esc(agreement.startDate)} ~ ${esc(agreement.endDate)} (${esc(String(agreement.months))}개월)</dd>
+          <dt>결제일</dt><dd>매월 ${esc(agreement.billingDay)}일</dd>
+          <dt>체결일</dt><dd>${esc(agreement.signedDate || '미체결')}</dd>
+        </dl>
+        <button class="btn btn--primary btn--block" type="button" data-open-agreement="${esc(agreement.id)}">
+          ${agreement.status === 'signed' ? '계약서 보기 · 인쇄' : '계약서 확인 · 서명'}
+        </button>
+        ${bizLicenseTemplate(agreement)}
+        ${contractMemoTemplate(agreement)}
+      </section>`;
+  }
+
+  function manageTabTemplate(site, stats, viewer) {
     const last = stats.last;
     const reports = filterReports(stats.reports);
     const nextLabel = stats.nextDate ? `${fmtDateLong(stats.nextDate)} 예정` : '일정 확인 필요';
-
     return `
-      <section class="site-head">
-        <div class="site-head__top">
-          <div>
-            <span class="site-head__code">${esc(site.code)} · 전용 방</span>
-            <h2>${esc(site.name)}</h2>
-          </div>
-          <span class="badge" style="background:rgba(255,255,255,.14);color:#eaf4e4">${esc(meta.short || '')}</span>
-        </div>
-        <p class="site-head__meta">
-          ${esc(site.clientName)} · ${esc(site.area)}<br>
-          ${esc(site.address)}<br>
-          담당 ${esc(site.manager)} ${esc(site.managerRole || '팀장')} · ${esc(site.frequency)}
-        </p>
-        <div class="site-head__stats">
-          <div class="site-head__stat"><strong>${stats.monthCount}회</strong><span>이번 달 방문</span></div>
-          <div class="site-head__stat"><strong>${stats.photoCount}장</strong><span>누적 현장 사진</span></div>
-          <div class="site-head__stat"><strong>${last ? `${daysBetween(last.date)}일` : '-'}</strong><span>마지막 방문</span></div>
-        </div>
-        <div class="site-head__actions">
-          <button class="link-btn" type="button" data-action="copy-code">현장 코드 복사</button>
-          <button class="link-btn" type="button" data-action="toggle-sort">${state.sort === 'desc' ? '최신순' : '오래된순'}</button>
-          ${viewer.preview ? '' : '<button class="link-btn" type="button" data-action="logout">로그아웃</button>'}
-        </div>
-      </section>
-
       ${compareTemplate(site, stats)}
 
       <section class="panel">
@@ -496,7 +670,91 @@ export function createCustomerView(container) {
         <div class="view" style="gap:10px;margin-top:12px">
           ${listTemplate(reports)}
         </div>
+      </section>`;
+  }
+
+  function quoteRoomTemplate(session, quote, agreement) {
+    const status = QUOTE_STATUS[quote.status] || QUOTE_STATUS.draft;
+    const tab = state.roomTab === 'contract' ? 'contract' : 'quote';
+    const documents = { quotes: [quote], agreements: agreement ? [agreement] : [] };
+    return `
+      <section class="site-head site-head--doc">
+        <div class="site-head__top">
+          <div>
+            <span class="site-head__code">견적 · 계약 전용 방</span>
+            <h2>${esc(quote.clientCompany)}</h2>
+          </div>
+          <span class="badge" style="background:rgba(255,255,255,.14);color:#eaf4e4">${esc(status.label)}</span>
+        </div>
+        <p class="site-head__meta">
+          ${esc(quote.clientContact || session.name)} ${esc(quote.clientPhone || '')}<br>
+          ${esc(quote.clientAddress || '소재지 확인 중')}<br>
+          ${esc(quote.frequency)}
+        </p>
       </section>
+
+      ${roomTabsTemplate(tab, false)}
+
+      ${
+        tab === 'quote'
+          ? `<section class="doc-banner doc-banner--quote">
+               <span class="doc-banner__tag">도착한 견적서</span>
+               <strong>${esc(quote.clientCompany)} 정기청소 견적서</strong>
+               <p>견적서를 확인하신 뒤 <b>이 견적으로 계약 진행</b>을 누르면 표준 계약서로 넘어갑니다. 계약서에 전자서명하시면 정기청소 현장이 바로 등록됩니다.</p>
+               <button class="btn btn--primary btn--block" type="button" data-open-quote="${esc(quote.id)}">견적서 확인 · 계약 진행</button>
+             </section>
+             ${quoteTabTemplate(documents)}`
+          : contractTabTemplate(documents)
+      }
+
+      <section class="panel">
+        <div class="section-head"><h2>진행 순서</h2></div>
+        <div class="steps">
+          <div class="step"><span class="step__num">1</span><div><strong>견적 확인</strong><span>청소 범위 · 주기 · 월 금액을 확인합니다.</span></div></div>
+          <div class="step"><span class="step__num">2</span><div><strong>계약서 전자서명</strong><span>표준 계약서 내용을 확인하고 서명합니다.</span></div></div>
+          <div class="step"><span class="step__num">3</span><div><strong>정기청소 시작</strong><span>서명과 동시에 현장이 등록되고, 청소 후 사진을 이 방에서 확인합니다.</span></div></div>
+        </div>
+        <p class="hint" style="margin-top:10px">문의 ${esc('0507-1317-8369')} · koreaecoclean@naver.com</p>
+      </section>
+
+      <div class="btn-row btn-row--stack" style="margin-top:4px">
+        <button class="btn btn--quiet btn--sm" type="button" data-action="logout">로그아웃</button>
+      </div>
+    `;
+  }
+
+  function roomTemplate(site, stats, viewer, documents) {
+    const meta = CATEGORY_META[site.category] || {};
+    const tab = ['quote', 'contract', 'manage'].includes(state.roomTab) ? state.roomTab : 'manage';
+    return `
+      <section class="site-head">
+        <div class="site-head__top">
+          <div>
+            <span class="site-head__code">${esc(site.code)} · 전용 방</span>
+            <h2>${esc(site.name)}</h2>
+          </div>
+          <span class="badge" style="background:rgba(255,255,255,.14);color:#eaf4e4">${esc(meta.short || '')}</span>
+        </div>
+        <p class="site-head__meta">
+          ${esc(site.clientName)} · ${esc(site.area)}<br>
+          ${esc(site.address)}<br>
+          담당 ${esc(site.manager)} ${esc(site.managerRole || '팀장')} · ${esc(site.frequency)}
+        </p>
+        <div class="site-head__stats">
+          <div class="site-head__stat"><strong>${stats.monthCount}회</strong><span>이번 달 방문</span></div>
+          <div class="site-head__stat"><strong>${stats.photoCount}장</strong><span>누적 현장 사진</span></div>
+          <div class="site-head__stat"><strong>${stats.last ? `${daysBetween(stats.last.date)}일` : '-'}</strong><span>마지막 방문</span></div>
+        </div>
+        <div class="site-head__actions">
+          <button class="link-btn" type="button" data-action="copy-code">현장 코드 복사</button>
+          <button class="link-btn" type="button" data-action="toggle-sort">${state.sort === 'desc' ? '최신순' : '오래된순'}</button>
+          ${viewer.preview ? '' : '<button class="link-btn" type="button" data-action="logout">로그아웃</button>'}
+        </div>
+      </section>
+
+      ${roomTabsTemplate(tab, true)}
+
+      ${tab === 'quote' ? quoteTabTemplate(documents) : tab === 'contract' ? contractTabTemplate(documents) : manageTabTemplate(site, stats, viewer)}
     `;
   }
 
@@ -506,6 +764,7 @@ export function createCustomerView(container) {
     const token = (renderToken += 1);
     mount();
     if (options && options.siteCode) state.previewCode = options.siteCode;
+    if (options && options.tab) state.roomTab = options.tab;
 
     const session = await getSession();
     if (token !== renderToken) return;
@@ -527,6 +786,18 @@ export function createCustomerView(container) {
     }
 
     state.session = session;
+
+    if (session.quoteId) {
+      const quote = await store.getQuote(session.quoteId);
+      const agreement = quote ? await store.getAgreementByQuote(quote.id) : null;
+      if (token !== renderToken) return;
+      if (quote) {
+        if (!state.roomTab) state.roomTab = 'quote';
+        container.innerHTML = quoteRoomTemplate(session, quote, agreement);
+        return;
+      }
+    }
+
     const site = await store.getSite(session.siteId);
     state.category = site ? site.category : '';
     if (token !== renderToken) return;
@@ -551,7 +822,13 @@ export function createCustomerView(container) {
 
     reportsById.clear();
     stats.reports.forEach((report) => reportsById.set(report.id, report));
-    container.innerHTML = roomTemplate(site, stats, { ...session, preview: false });
+    const documents = {
+      quotes: await store.listQuotes({ siteId: site.id }),
+      agreements: await store.listAgreements({ siteId: site.id }),
+    };
+    if (!['quote', 'contract', 'manage'].includes(state.roomTab)) state.roomTab = 'manage';
+    if (token !== renderToken) return;
+    container.innerHTML = roomTemplate(site, stats, { ...session, preview: false }, documents);
   }
 
   /* ---------------- staff preview (팀장·대표) ---------------- */
@@ -596,6 +873,10 @@ export function createCustomerView(container) {
     const stats = await store.statsForSite(site);
     reportsById.clear();
     stats.reports.forEach((report) => reportsById.set(report.id, report));
+    const documents = {
+      quotes: await store.listQuotes({ siteId: site.id }),
+      agreements: await store.listAgreements({ siteId: site.id }),
+    };
 
     const viewer = {
       name: session.name,
@@ -604,7 +885,7 @@ export function createCustomerView(container) {
       preview: true,
     };
 
-    container.innerHTML = previewBanner(session, site, pool) + roomTemplate(site, stats, viewer);
+    container.innerHTML = previewBanner(session, site, pool) + roomTemplate(site, stats, viewer, documents);
   }
 
   /* ---------------- lightbox ---------------- */
@@ -711,7 +992,93 @@ export function createCustomerView(container) {
     }
   }
 
+  async function showQuotePhotos(quoteId, startIndex) {
+    const quote = await store.getQuote(quoteId);
+    if (!quote) return;
+    const items = [];
+    for (const photo of quote.photos || []) {
+      const url = await store.photoFullUrl(photo);
+      if (url) items.push({ url, caption: photo.caption || '견적 방문 · 현장 사진' });
+    }
+    if (!items.length) {
+      toast('사진을 불러오지 못했습니다.', { tone: 'error' });
+      return;
+    }
+    openLightbox(items, Math.min(startIndex, items.length - 1));
+  }
+
+  async function saveContractMemo(agreementId) {
+    const value = $('#contract-memo', container)?.value || '';
+    try {
+      await store.updateAgreementMeta(agreementId, { contractMemo: value });
+      await render();
+      toast('특이사항을 저장했습니다.');
+    } catch (error) {
+      toast(error.message || '특이사항을 저장하지 못했습니다.', { tone: 'error' });
+    }
+  }
+
+  async function uploadBizLicense(agreementId, files) {
+    const file = Array.from(files || [])[0];
+    if (!file) return;
+    try {
+      toast('사업자등록증 처리 중…', { duration: 1200 });
+      const prepared = await preparePhoto(file);
+      const ref = await store.savePhoto({
+        dataUrl: prepared.dataUrl,
+        thumb: prepared.thumb,
+        width: prepared.width,
+        height: prepared.height,
+        caption: '고객사 사업자등록증',
+      });
+      await store.updateAgreementMeta(agreementId, { bizLicense: ref });
+      await render();
+      toast('사업자등록증을 저장했습니다.');
+    } catch (error) {
+      toast(error.message || '사업자등록증을 저장하지 못했습니다.', { tone: 'error' });
+    }
+  }
+
+  async function onChange(event) {
+    const input = event.target.closest('[data-biz-license-input]');
+    if (!input) return;
+    const files = Array.from(input.files || []);
+    input.value = '';
+    await uploadBizLicense(input.dataset.bizLicenseInput, files);
+  }
+
   async function onClick(event) {
+    const roomTab = event.target.closest('[data-room-tab]');
+    if (roomTab) {
+      state.roomTab = roomTab.dataset.roomTab;
+      await render();
+      return;
+    }
+
+    const quotePhoto = event.target.closest('[data-quote-photo]');
+    if (quotePhoto) {
+      await showQuotePhotos(quotePhoto.dataset.quotePhoto, Number(quotePhoto.dataset.quotePhotoIndex) || 0);
+      return;
+    }
+
+    const saveMemo = event.target.closest('[data-save-contract-memo]');
+    if (saveMemo) {
+      await saveContractMemo(saveMemo.dataset.saveContractMemo);
+      return;
+    }
+
+    const openQuote = event.target.closest('[data-open-quote]');
+    if (openQuote) {
+      await openQuoteSheet(openQuote.dataset.openQuote, { role: 'customer', onChanged: render });
+      return;
+    }
+
+    const openAgreement = event.target.closest('[data-open-agreement]');
+    if (openAgreement) {
+      await openAgreementSheet(openAgreement.dataset.openAgreement, { role: 'customer', onChanged: render });
+      return;
+    }
+
     const fill = event.target.closest('[data-fill-phone]');
     if (fill) {
       fillPhoneField(fill.dataset.fillPhone);
@@ -776,6 +1143,7 @@ export function createCustomerView(container) {
       state.session = null;
       state.site = null;
       state.filter = 'all';
+      state.roomTab = '';
       state.loginError = '';
       state.codeError = '';
       toast('로그아웃했습니다.');
@@ -797,6 +1165,7 @@ export function createCustomerView(container) {
     if (mounted) return;
     container.addEventListener('submit', onSubmit);
     container.addEventListener('click', onClick);
+    container.addEventListener('change', onChange);
     mounted = true;
   }
 

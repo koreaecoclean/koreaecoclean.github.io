@@ -45,7 +45,8 @@ function paintTab(tab) {
 async function updateNav() {
   const session = await getSession().catch(() => null);
   const adminTab = $('.tab[data-tab="admin"]');
-  if (adminTab) adminTab.hidden = !(session && session.role === 'admin') && activeTab !== 'admin';
+  const canManage = !!session && (session.role === 'admin' || (session.account && session.account.canManageStaff));
+  if (adminTab) adminTab.hidden = !canManage && activeTab !== 'admin';
   const leaderTab = $('.tab[data-tab="leader"]');
   if (leaderTab) leaderTab.dataset.role = session ? session.role : '';
 }
@@ -87,6 +88,7 @@ function bindNavigation() {
   document.addEventListener('kec:session-changed', () => {
     updateNav();
     if (activeTab === 'admin') views.admin.render();
+    if (activeTab === 'leader') views.leader.render();
   });
 
   window.addEventListener('hashchange', () => {

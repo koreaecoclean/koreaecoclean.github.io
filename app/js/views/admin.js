@@ -1,5 +1,5 @@
 /**
- * views/admin.js — 관리 (대표 · 최고관리자)
+ * views/admin.js — 관리 (최고관리자(대표))
  *
  * - 현장별 1회용 청소코드 발급 / 상태(미사용·사용 완료) 확인 / 복사
  * - 팀장 고유코드 발급·재발급, 계정 사용 중지
@@ -11,15 +11,32 @@ import { store, netProfit } from '../store.js';
 import { CATEGORY_META } from '../seed.js';
 import { preparePhoto } from '../photos.js';
 import { getSession, loginAdmin, logout, demoAccounts } from '../auth.js';
+import {
+  quotePanelTemplate,
+  staffPanelTemplate,
+  quoteInviteMessage,
+  staffInviteMessage,
+  defaultScope,
+  managerDashboardTemplate,
+  staffRoomTemplate,
+} from './admin-docs.js';
+import { openQuoteSheet, openAgreementSheet, openStaffContractSheet } from './quote-contract.js';
 
 export function createAdminView(container) {
   const state = {
     session: null,
+    isCeo: false,
     loginError: '',
     busy: false,
     newSiteOpen: false,
     newSiteError: '',
     newSite: { quote: [], deepClean: [] },
+    newQuoteOpen: false,
+    newQuoteError: '',
+    newQuote: { photos: [] },
+    newStaffOpen: false,
+    newStaffError: '',
+    staffDetail: '',
     openDetails: '',
   };
   let mounted = false;
@@ -42,10 +59,11 @@ export function createAdminView(container) {
     return `
       <section class="panel auth-card">
         <span class="eyebrow">${icons.sparkle} 관리자</span>
-        <h2>대표(최고관리자)${admin ? ` · ${esc(admin.name)}` : ''} 로그인</h2>
+        <h2>최고관리자(대표)${admin ? ` · ${esc(admin.name)}` : ''} 로그인</h2>
         <p class="tiny muted">
-          전화번호와 비밀번호로 입장합니다. 로그인하면 현장별 <strong>1회용 청소코드</strong>를 발급하고
-          <strong>팀장 고유코드</strong>를 관리할 수 있습니다.
+          <strong>최고관리자(대표)</strong>는 전화번호와 비밀번호로,
+          <strong>부관리자(본부장)</strong>은 팀장 고유코드까지 함께 입력해 입장합니다.
+          본부장 화면에는 금액 정보가 표시되지 않습니다.
         </p>
         <form class="form" id="admin-login" style="margin-top:14px" novalidate>
           <div class="field">
@@ -56,17 +74,25 @@ export function createAdminView(container) {
             <label for="a-password">비밀번호</label>
             <input class="input" id="a-password" type="password" autocomplete="current-password" placeholder="비밀번호">
           </div>
+          <div class="field">
+            <label for="a-code">팀장 고유코드 <span class="tiny muted">(본부장만)</span></label>
+            <input class="input" id="a-code" type="text" autocomplete="off" spellcheck="false" placeholder="예: TL-1638" maxlength="12">
+          </div>
           ${state.loginError ? `<p class="field__error">${esc(state.loginError)}</p>` : ''}
           <button class="btn btn--primary btn--block" type="submit">관리자 로그인</button>
         </form>
         ${
           admin
             ? `<details class="demo-panel">
-                 <summary>데모 관리자 계정</summary>
+                 <summary>데모 계정 (대표 · 본부장)</summary>
                  <div class="demo-panel__body">
                    <div class="demo-row">
                      <div><strong>대표 · ${esc(admin.name)}</strong><span>${esc(admin.phone)} / ${esc(admin.password)}</span></div>
-                     <button class="link-btn" type="button" data-fill-admin="${esc(admin.phone)}|${esc(admin.password)}">입력</button>
+                     <button class="link-btn" type="button" data-fill-admin="${esc(admin.phone)}|${esc(admin.password)}|">입력</button>
+                   </div>
+                   <div class="demo-row">
+                     <div><strong>본부장 · 박희승</strong><span>010-4994-1638 / team1234 / TL-1638</span></div>
+                     <button class="link-btn" type="button" data-fill-admin="010-4994-1638|team1234|TL-1638">입력</button>
                    </div>
                  </div>
                </details>`
@@ -456,6 +482,10 @@ export function createAdminView(container) {
     const customers = accounts.filter((account) => account.role === 'customer');
     const grants = await store.listGrants();
     const revenue = await store.revenueSummary();
+    const quotes = await store.listQuotes();
+    const agreements = await store.listAgreements();
+    const staffContracts = await store.listStaffContracts();
+    const staffChecks = await store.listStaffChecks();
 
     const unusedTotal = codes.filter((code) => !code.usedAt).length;
     const usedTotal = codes.filter((code) => code.usedAt).length;
@@ -465,7 +495,7 @@ export function createAdminView(container) {
         <div class="leader-bar__who">
           <span class="avatar" aria-hidden="true">${esc(session.name.slice(0, 1))}</span>
           <div>
-            <strong>${esc(session.name)} 대표 · 최고관리자</strong>
+            <strong>${esc(session.name)} 최고관리자(대표)</strong>
             <span>${esc(session.phone || '')} · 코드 발급 권한</span>
           </div>
         </div>
@@ -482,6 +512,10 @@ export function createAdminView(container) {
       </section>
 
       ${revenueSummaryTemplate(revenue)}
+
+      ${quotePanelTemplate({ quotes, agreements, state })}
+
+      ${staffPanelTemplate({ staffContracts, staffChecks, sites, state })}
 
       <section>
         <div class="section-head">
@@ -558,19 +592,70 @@ export function createAdminView(container) {
 
   /* ---------------- render ---------------- */
 
-  async function render() {
+  async function render(options = {}) {
     const token = (renderToken += 1);
     mount();
+    if (options && options.staffDetail !== undefined) state.staffDetail = options.staffDetail;
     const session = await getSession();
     if (token !== renderToken) return;
 
-    if (!session || session.role !== 'admin') {
+    const canManage =
+      !!session && (session.role === 'admin' || (session.account && session.account.canManageStaff));
+    if (!session || !canManage) {
       state.session = null;
+      state.isCeo = false;
       container.innerHTML = loginTemplate();
       return;
     }
 
     state.session = session;
+    state.isCeo = session.role === 'admin';
+
+    if (state.staffDetail) {
+      const sites = await store.listSites();
+      const contract = await store.getStaffContract(state.staffDetail);
+      if (contract) {
+        const checks = await store.listStaffChecks();
+        const reportsBySite = {};
+        for (const id of contract.siteIds) {
+          const rows = await store.listReports({ siteId: id, limit: 1 });
+          reportsBySite[id] = rows[0] || null;
+        }
+        if (token !== renderToken) return;
+        container.innerHTML = staffRoomTemplate({
+          contract,
+          checks,
+          sites,
+          canSeeMoney: state.isCeo,
+          reportsBySite,
+        });
+        return;
+      }
+      state.staffDetail = '';
+    }
+
+    if (!state.isCeo) {
+      const sites = await store.listSites();
+      const assigned = session.assignedSiteIds || [];
+      const allowed = assigned.length ? sites.filter((site) => assigned.includes(site.id)) : sites;
+      const staffContracts = await store.listStaffContracts();
+      const checks = await store.listStaffChecks();
+      const lastBySite = {};
+      for (const site of allowed) {
+        const reports = await store.listReports({ siteId: site.id, limit: 1 });
+        lastBySite[site.id] = reports[0] || null;
+      }
+      if (token !== renderToken) return;
+      container.innerHTML = managerDashboardTemplate({
+        session,
+        sites: allowed,
+        lastBySite,
+        staffContracts,
+        checks,
+      });
+      return;
+    }
+
     container.innerHTML = await dashboardTemplate(session);
   }
 
@@ -720,7 +805,149 @@ export function createAdminView(container) {
     }
   }
 
+  /* ---------------- 견적 · 계약 ---------------- */
+
+  async function addNewQuotePhotos(files) {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    const box = $('[data-new-quote-photos]', container);
+    for (const file of list) {
+      try {
+        toast('사진 처리 중…', { duration: 1200 });
+        const prepared = await preparePhoto(file);
+        state.newQuote.photos.push(prepared);
+        state.newQuoteOpen = true;
+        if (box) {
+          const img = document.createElement('img');
+          img.src = prepared.thumb;
+          img.alt = '현장 오염 사진';
+          img.decoding = 'async';
+          const addButton = $('.new-site-photos__add', box);
+          if (addButton) box.insertBefore(img, addButton);
+          else box.appendChild(img);
+        }
+      } catch (error) {
+        console.warn('[admin] quote photo failed', error);
+      }
+    }
+    toast('사진을 추가했습니다. 견적 저장 시 함께 저장됩니다.');
+  }
+
+  async function submitNewQuote(event) {
+    event.preventDefault();
+    state.newQuoteError = '';
+    state.newQuoteOpen = true;
+    try {
+      const photos = [];
+      for (const photo of state.newQuote.photos) {
+        photos.push(
+          await store.savePhoto({
+            dataUrl: photo.dataUrl,
+            thumb: photo.thumb,
+            width: photo.width,
+            height: photo.height,
+            caption: '견적 방문 · 현장 오염 상태',
+          }),
+        );
+      }
+      const quote = await store.addQuote({
+        clientCompany: $('#nq-company', container)?.value || '',
+        clientCategory: $('#nq-category', container)?.value || 'office',
+        clientAddress: $('#nq-address', container)?.value || '',
+        clientContact: $('#nq-contact', container)?.value || '',
+        clientPhone: $('#nq-phone', container)?.value || '',
+        clientBizNumber: $('#nq-biz', container)?.value || '',
+        clientTaxEmail: $('#nq-tax', container)?.value || '',
+        frequency: $('#nq-frequency', container)?.value || '',
+        scope: $('#nq-scope', container)?.value || '',
+        extraScope: $('#nq-extra', container)?.value || '',
+        area: $('#nq-area', container)?.value || '',
+        amount: $('#nq-amount', container)?.value || 0,
+        vatIncluded: $('#nq-vat', container)?.value === 'included',
+        billingDay: $('#nq-billing', container)?.value || '1',
+        periodMonths: $('#nq-months', container)?.value || 12,
+        startDate: $('#nq-start', container)?.value || '',
+        validUntil: $('#nq-valid', container)?.value || '',
+        terms: $('#nq-terms', container)?.value || '',
+        memo: $('#nq-memo', container)?.value || '',
+        photos,
+      });
+      state.newQuote = { photos: [] };
+      state.newQuoteOpen = false;
+      await store.sendQuote(quote.id);
+      await render();
+      toast(`${quote.clientCompany} 견적 · 초대코드 ${quote.inviteCode}`, {
+        actionLabel: '초대 문구 복사',
+        onAction: () => copyText(quoteInviteMessage(quote)),
+        duration: 9000,
+      });
+    } catch (error) {
+      state.newQuoteError = error.message || '견적을 저장하지 못했습니다.';
+      await render();
+    }
+  }
+
+  async function submitNewStaff(event) {
+    event.preventDefault();
+    state.newStaffError = '';
+    state.newStaffOpen = true;
+    const siteIds = Array.from(container.querySelectorAll('[data-staff-site]'))
+      .filter((input) => input.checked)
+      .map((input) => input.dataset.staffSite);
+    try {
+      const contract = await store.addStaffContract({
+        employmentType: $('#st-type', container)?.value || 'freelancer',
+        name: $('#st-name', container)?.value || '',
+        roleTitle: $('#st-title', container)?.value || '',
+        phone: $('#st-phone', container)?.value || '',
+        birthDate: $('#st-birth', container)?.value || '',
+        bizNumber: $('#st-biz', container)?.value || '',
+        residentId: $('#st-resident', container)?.value || '',
+        bankName: $('#st-bank', container)?.value || '',
+        bankAccount: $('#st-account', container)?.value || '',
+        accountHolder: $('#st-holder', container)?.value || '',
+        settlementDay: $('#st-settle', container)?.value || '15',
+        monthlyAmount: $('#st-monthly', container)?.value || 0,
+        dailyAmount: $('#st-daily', container)?.value || 0,
+        hourlyAmount: $('#st-hourly', container)?.value || 0,
+        startDate: $('#st-start', container)?.value || '',
+        endDate: $('#st-end', container)?.value || '',
+        workDays: $('#st-days', container)?.value || '',
+        workHours: $('#st-hours', container)?.value || '',
+        siteIds,
+        scope: $('#st-scope', container)?.value || '',
+        process: $('#st-process', container)?.value || '',
+        safety: $('#st-safety', container)?.value || '',
+        specialTerms: $('#st-terms', container)?.value || '',
+      });
+      state.newStaffOpen = false;
+      await render();
+      toast(`${contract.name} ${contract.no} · 초대코드 ${contract.inviteCode}`, {
+        actionLabel: '초대 문구 복사',
+        onAction: () => copyText(staffInviteMessage(contract)),
+        duration: 9000,
+      });
+    } catch (error) {
+      state.newStaffError = error.message || '직원 계약을 저장하지 못했습니다.';
+      await render();
+    }
+  }
+
   async function onChange(event) {
+    const quotePhoto = event.target.closest('[data-new-quote-photo]');
+    if (quotePhoto) {
+      const files = Array.from(quotePhoto.files || []);
+      quotePhoto.value = '';
+      await addNewQuotePhotos(files);
+      return;
+    }
+
+    if (event.target.id === 'nq-category') {
+      const scope = $('#nq-scope', container);
+      if (scope) scope.value = defaultScope(event.target.value);
+      return;
+    }
+
     const newPhoto = event.target.closest('[data-new-baseline]');
     if (newPhoto) {
       const files = Array.from(newPhoto.files || []);
@@ -778,6 +1005,34 @@ export function createAdminView(container) {
       await submitSiteDetails(event.target);
       return;
     }
+    if (event.target.matches('[data-staff-check-form]')) {
+      event.preventDefault();
+      const form = event.target;
+      try {
+        await store.addStaffCheck({
+          staffContractId: form.dataset.staffCheckForm,
+          grade: form.querySelector('[data-check-grade]')?.value || 'A',
+          siteId: form.querySelector('[data-check-site]')?.value || '',
+          date: form.querySelector('[data-check-date]')?.value || '',
+          memo: form.querySelector('[data-check-memo]')?.value || '',
+          reviewerId: state.session ? state.session.accountId : '',
+          reviewerName: state.session ? state.session.name : '',
+        });
+        await render();
+        toast('근무태도 체크를 저장했습니다.');
+      } catch (error) {
+        toast(error.message || '근무태도를 저장하지 못했습니다.', { tone: 'error' });
+      }
+      return;
+    }
+    if (event.target.id === 'new-quote-form') {
+      await submitNewQuote(event);
+      return;
+    }
+    if (event.target.id === 'new-staff-form') {
+      await submitNewStaff(event);
+      return;
+    }
     if (event.target.id === 'new-site-form') {
       await submitNewSite(event);
       return;
@@ -789,8 +1044,13 @@ export function createAdminView(container) {
       const session = await loginAdmin({
         phone: $('#a-phone', container)?.value || '',
         password: $('#a-password', container)?.value || '',
+        leaderCode: $('#a-code', container)?.value || '',
       });
-      toast(`${session.name} 대표로 로그인했습니다.`);
+      toast(
+        session.role === 'admin'
+          ? `${session.name} 대표로 로그인했습니다.`
+          : `${session.name} 본부장으로 로그인했습니다. 현장 · 직원 체크 화면입니다.`,
+      );
       await render();
     } catch (error) {
       state.loginError = error.message || '로그인에 실패했습니다.';
@@ -801,13 +1061,149 @@ export function createAdminView(container) {
   }
 
   async function onClick(event) {
+    const openStaffRoom = event.target.closest('[data-open-staff-room]');
+    if (openStaffRoom) {
+      state.staffDetail = openStaffRoom.dataset.openStaffRoom;
+      await render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    const closeStaffRoom = event.target.closest('[data-close-staff-room]');
+    if (closeStaffRoom) {
+      state.staffDetail = '';
+      await render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    const openQuote = event.target.closest('[data-open-quote]');
+    if (openQuote) {
+      await openQuoteSheet(openQuote.dataset.openQuote, { role: 'admin', onChanged: render });
+      return;
+    }
+
+    const sendQuote = event.target.closest('[data-send-quote]');
+    if (sendQuote) {
+      try {
+        const quote = await store.sendQuote(sendQuote.dataset.sendQuote);
+        await render();
+        toast(`${quote.clientCompany} 견적서를 발송했습니다.`);
+      } catch (error) {
+        toast(error.message || '견적서를 발송하지 못했습니다.', { tone: 'error' });
+      }
+      return;
+    }
+
+    const contractFromQuote = event.target.closest('[data-contract-from-quote]');
+    if (contractFromQuote) {
+      try {
+        const agreement = await store.createAgreementFromQuote(contractFromQuote.dataset.contractFromQuote);
+        await render();
+        await openAgreementSheet(agreement.id, { role: 'admin', onChanged: render });
+      } catch (error) {
+        toast(error.message || '계약서를 만들지 못했습니다.', { tone: 'error' });
+      }
+      return;
+    }
+
+    const openAgreement = event.target.closest('[data-open-agreement]');
+    if (openAgreement) {
+      await openAgreementSheet(openAgreement.dataset.openAgreement, { role: 'admin', onChanged: render });
+      return;
+    }
+
+    const copyQuoteInvite = event.target.closest('[data-copy-quote-invite]');
+    if (copyQuoteInvite) {
+      const quote = await store.getQuote(copyQuoteInvite.dataset.copyQuoteInvite);
+      if (quote) {
+        const ok = await copyText(quoteInviteMessage(quote));
+        toast(ok ? `${quote.clientCompany} 초대 문구를 복사했습니다.` : '복사가 차단되었습니다.', { tone: ok ? 'default' : 'error' });
+      }
+      return;
+    }
+
+    const regenQuoteInvite = event.target.closest('[data-regen-quote-invite]');
+    if (regenQuoteInvite) {
+      const ok = await confirmDialog({
+        title: '초대코드를 재발급할까요?',
+        message: '이전 초대코드는 즉시 사용할 수 없게 됩니다. 새 문구를 고객에게 다시 보내 주세요.',
+        confirmLabel: '재발급',
+      });
+      if (!ok) return;
+      try {
+        const quote = await store.regenerateQuoteInvite(regenQuoteInvite.dataset.regenQuoteInvite);
+        await render();
+        toast(`새 초대코드 ${quote.inviteCode}`, {
+          actionLabel: '초대 문구 복사',
+          onAction: () => copyText(quoteInviteMessage(quote)),
+          duration: 8000,
+        });
+      } catch (error) {
+        toast(error.message || '초대코드를 재발급하지 못했습니다.', { tone: 'error' });
+      }
+      return;
+    }
+
+    const openStaff = event.target.closest('[data-open-staff]');
+    if (openStaff) {
+      await openStaffContractSheet(openStaff.dataset.openStaff, { role: 'admin', onChanged: render });
+      return;
+    }
+
+    const sendStaff = event.target.closest('[data-send-staff]');
+    if (sendStaff) {
+      try {
+        const contract = await store.sendStaffContract(sendStaff.dataset.sendStaff);
+        await render();
+        toast(`${contract.name}님에게 계약서를 보냈습니다.`);
+      } catch (error) {
+        toast(error.message || '계약서를 보내지 못했습니다.', { tone: 'error' });
+      }
+      return;
+    }
+
+    const copyStaffInvite = event.target.closest('[data-copy-staff-invite]');
+    if (copyStaffInvite) {
+      const contract = await store.getStaffContract(copyStaffInvite.dataset.copyStaffInvite);
+      if (contract) {
+        const ok = await copyText(staffInviteMessage(contract));
+        toast(ok ? `${contract.name}님 직원 초대 문구를 복사했습니다.` : '복사가 차단되었습니다.', { tone: ok ? 'default' : 'error' });
+      }
+      return;
+    }
+
+    const regenStaffInvite = event.target.closest('[data-regen-staff-invite]');
+    if (regenStaffInvite) {
+      const ok = await confirmDialog({
+        title: '직원 초대코드를 재발급할까요?',
+        message: '이전 코드는 즉시 사용할 수 없게 됩니다.',
+        confirmLabel: '재발급',
+      });
+      if (!ok) return;
+      try {
+        const contract = await store.regenerateStaffInvite(regenStaffInvite.dataset.regenStaffInvite);
+        await render();
+        toast(`새 직원 초대코드 ${contract.inviteCode}`, {
+          actionLabel: '초대 문구 복사',
+          onAction: () => copyText(staffInviteMessage(contract)),
+          duration: 8000,
+        });
+      } catch (error) {
+        toast(error.message || '초대코드를 재발급하지 못했습니다.', { tone: 'error' });
+      }
+      return;
+    }
+
     const fill = event.target.closest('[data-fill-admin]');
     if (fill) {
-      const [phone, password] = fill.dataset.fillAdmin.split('|');
+      const [phone, password, code] = fill.dataset.fillAdmin.split('|');
       const phoneInput = $('#a-phone', container);
       const passwordInput = $('#a-password', container);
+      const codeInput = $('#a-code', container);
       if (phoneInput) phoneInput.value = phone;
       if (passwordInput) passwordInput.value = password;
+      if (codeInput) codeInput.value = code || '';
       return;
     }
 
