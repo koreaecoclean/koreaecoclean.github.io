@@ -1491,13 +1491,12 @@ export function createLeaderView(container) {
     }
     state.managerMode = managerRole && !staffMode;
     const assigned = state.session.assignedSiteIds || [];
-    const allowed = state.managerMode
+    // 직원 모드(대표)는 배정과 관계없이 모든 현장에서 보고서를 쓸 수 있습니다.
+    const allowed = state.managerMode || staffMode
       ? sites
       : assigned.length
         ? sites.filter((site) => assigned.includes(site.id))
-        : staffMode
-          ? sites
-          : [];
+        : [];
     if (state.managerMode) {
       const accounts = await store.listAccounts({ role: 'leader' });
       state.teamLeads = accounts
