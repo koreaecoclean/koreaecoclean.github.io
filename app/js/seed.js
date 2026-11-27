@@ -9,7 +9,7 @@
  * "데모 계정" panel.
  */
 
-export const SEED_VERSION = 11;
+export const SEED_VERSION = 12;
 
 /** 앱 공개 주소 — 초대 문구에 들어갑니다. */
 export const APP_URL = 'https://koreaecoclean.github.io/app/';

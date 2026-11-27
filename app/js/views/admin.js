@@ -7,7 +7,7 @@
  */
 
 import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate, fmtDateLong, fmtTime, openLightbox, modeSwitchTemplate } from '../ui.js';
-import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, countReportPhotos } from '../store.js';
+import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, countReportPhotos, QUOTE_STATUS, AGREEMENT_STATUS } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import { preparePhoto } from '../photos.js';
 import { getSession, loginAdmin, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
@@ -373,7 +373,62 @@ export function createAdminView(container) {  const state = {
       </div>`;
   }
 
-  function siteDetailsTemplate(site) {
+  /**
+   * 업장 하나의 연결 줄 — 견적 · 고객 계약 · 팀장 계약 · 보고가 업장 id 하나로 이어져 있음을 보여 줍니다.
+   * 값이 없는 칸은 '없음'으로 두고, 실제로 연결된 것만 링크처럼 보여 줍니다.
+   */
+  function siteLinksBlockTemplate(link) {
+    if (!link) return '';
+    const quote = link.quote;
+    const contract = link.contract;
+    const staff = link.staffContracts || [];
+    const quoteStatus = quote ? (QUOTE_STATUS[quote.status] || {}).label || '' : '';
+    const contractStatus = contract ? (AGREEMENT_STATUS[contract.status] || {}).label || '' : '';
+    const history = (link.history || []).slice(0, 4);
+    // 이력 값 보기 — 숫자면 천 단위, 글이면 앞부분만(스크롤 길어짐 방지).
+    const showValue = (value) => {
+      const text = String(value ?? '');
+      if (/^-?\d+$/.test(text)) return fmtNumber(text);
+      return text.length > 30 ? `${text.slice(0, 30)}…` : text;
+    };
+    return `
+      <div class="site-links" data-site-links="${esc(link.site ? link.site.id : '')}">
+        <p class="details-head">연결 정보 (업장 기준)</p>
+        <div class="site-links__grid">
+          <span><em>견적</em><strong>${quote ? `${esc(quote.no)} · ${esc(quoteStatus)}` : '없음'}</strong></span>
+          <span><em>고객 계약</em><strong>${contract ? `${esc(contract.no)} · ${esc(contractStatus)}` : '없음'}</strong></span>
+          <span><em>팀장 계약</em><strong>${staff.length ? staff.map((row) => `${esc(row.name)} ${esc(row.no)}`).join(' / ') : '없음'}</strong></span>
+          <span><em>보고</em><strong>${link.reportTotal}건${link.reportPending ? ` · 확인 대기 ${link.reportPending}` : ''}</strong></span>
+        </div>
+        ${link.lastReport ? `<p class="tiny muted">최근 보고 ${esc(link.lastReport.date)} ${esc(link.lastReport.time || '')} · ${esc(link.lastReport.leader)}</p>` : ''}
+        ${
+          history.length
+            ? `<details class="site-history">
+                 <summary>최근 변경 이력 ${esc(String((link.history || []).length))}건</summary>
+                 <ul class="site-history__list">
+                   ${history
+                     .map(
+                       (row) => `<li>
+                         <span class="site-history__when">${esc(String(row.at).slice(0, 16).replace('T', ' '))}</span>
+                         <span class="site-history__what"><strong>${esc(row.sourceLabel || '')}</strong> ${esc(row.action)}</span>
+                         ${row.note ? `<span class="site-history__note">${esc(row.note)}</span>` : ''}
+                         ${(row.changes || [])
+                           .slice(0, 4)
+                           .map(
+                             (change) => `<span class="site-history__note">· ${esc(change.field)}: ${esc(showValue(change.from))} → <strong>${esc(showValue(change.to))}</strong></span>`,
+                           )
+                           .join('')}
+                       </li>`,
+                     )
+                     .join('')}
+                 </ul>
+               </details>`
+            : '<p class="hint">아직 기록된 변경 이력이 없습니다.</p>'
+        }
+      </div>`;
+  }
+
+  function siteDetailsTemplate(site, link) {
     const id = esc(site.id);
     const contract = site.contract || {};
     const ops = site.ops || {};
@@ -442,11 +497,12 @@ export function createAdminView(container) {  const state = {
             <button class="btn btn--primary btn--sm" type="submit">계약 · 운영 정보 저장</button>
             <p class="hint">도급금액은 팀장(현장) 화면에 표시됩니다. 계약금 · 수수료 · 순수 매출은 관리자만 볼 수 있습니다.</p>
           </form>
+          ${siteLinksBlockTemplate(link)}
         </div>
       </details>`;
   }
 
-  function siteCodeCardTemplate(site, codes) {
+  function siteCodeCardTemplate(site, codes, link) {
     const unused = codes.filter((code) => !code.usedAt);
     const used = codes.filter((code) => code.usedAt);
     const meta = CATEGORY_META[site.category] || {};
@@ -468,7 +524,7 @@ export function createAdminView(container) {  const state = {
         }
 
         ${siteMoneyLine(site)}
-        ${siteDetailsTemplate(site)}
+        ${siteDetailsTemplate(site, link)}
 
         ${baselineAdminTemplate(site)}
 
@@ -680,6 +736,8 @@ export function createAdminView(container) {  const state = {
     const supplyOrders = await store.listSupplyOrders();
     const pendingReports = await store.listReports({ status: 'pending' });
     const recentSubmitted = await store.listReports({ status: 'submitted', limit: 3 });
+    // 업장(siteId) 중심 연결 요약 — 견적 · 계약 · 팀장 계약 · 보고 · 이력을 한 번에 읽습니다.
+    const links = await store.listSiteLinks().catch(() => ({}));
 
     const unusedTotal = codes.filter((code) => !code.usedAt).length;
     const usedTotal = codes.filter((code) => code.usedAt).length;
@@ -731,7 +789,7 @@ export function createAdminView(container) {  const state = {
         </div>
         <div class="stack-10">
           ${sites
-            .map((site) => siteCodeCardTemplate(site, codes.filter((code) => code.siteId === site.id)))
+            .map((site) => siteCodeCardTemplate(site, codes.filter((code) => code.siteId === site.id), links[site.id] || null))
             .join('')}
         </div>
       </section>
@@ -1204,7 +1262,11 @@ export function createAdminView(container) {  const state = {
     });
     state.openDetails = siteId;
     try {
-      const site = await store.updateSiteDetails(siteId, { contract, ops });
+      const site = await store.updateSiteDetails(siteId, {
+        contract,
+        ops,
+        actor: state.session ? state.session.name : '',
+      });
       await render();
       toast(`${site.name} 계약 · 운영 정보를 저장했습니다.`);
     } catch (error) {

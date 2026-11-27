@@ -168,7 +168,92 @@ function normalizeReport(report) {
     status: reportStatusKey(report),
     approvedAt: report.approvedAt || '',
     approvedBy: report.approvedBy || '',
+    // 업장(siteId) 중심 연결 — 보고서도 어느 계약 · 어느 팀장 계약의 작업인지 가집니다.
+    contractId: toText(report.contractId),
+    staffContractId: toText(report.staffContractId),
+    accountId: toText(report.accountId),
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* 연결 고리(업장 중심) · 변경 이력                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 변경 이력은 레코드마다 최근 MAX_HISTORY 건만 보관합니다.
+ * (서버 동기화되는 레코드라 무한히 커지지 않게 자릅니다.)
+ */
+export const MAX_HISTORY = 200;
+
+/**
+ * 이력 한 건.
+ *  { id, at, actor, action, note, changes:[{field, from, to}] }
+ * changes 는 값이 바뀐 칸만 담습니다(금액·담당·상태처럼 나중에 물어볼 수 있는 값).
+ */
+export function normalizeHistoryEntry(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const changes = (Array.isArray(source.changes) ? source.changes : [])
+    .map((row) => ({ field: toText(row && row.field), from: toText(row && row.from), to: toText(row && row.to) }))
+    .filter((row) => row.field);
+  return {
+    id: toText(source.id),
+    at: toText(source.at),
+    actor: toText(source.actor),
+    action: toText(source.action),
+    note: toText(source.note),
+    changes,
+  };
+}
+
+/** 이력 배열 — 최신이 앞. 같은 id 는 한 번만 남깁니다. */
+export function normalizeHistory(list) {
+  const rows = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    const row = normalizeHistoryEntry(item);
+    if (!row.action && !row.id) continue;
+    if (row.id) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+    }
+    rows.push(row);
+  }
+  return rows.slice(0, MAX_HISTORY);
+}
+
+/** 새 이력 한 건을 만듭니다. `at` 은 지금 시각(ISO). */
+function makeHistoryEntry({ actor = '', action = '', note = '', changes = [] } = {}) {
+  return normalizeHistoryEntry({
+    id: uid('hist'),
+    at: new Date().toISOString(),
+    actor,
+    action,
+    note,
+    changes,
+  });
+}
+
+/** 이력 배열 맨 앞에 새 이력을 붙이고 MAX_HISTORY 로 자릅니다. */
+function withHistory(list, entry) {
+  if (!entry) return normalizeHistory(list);
+  return normalizeHistory([entry, ...(Array.isArray(list) ? list : [])]);
+}
+
+/**
+ * 값이 바뀐 칸만 추려 냅니다 — 이력에 "무엇이 얼마에서 얼마로" 남기기 위한 것.
+ * labels 를 주면 화면에서 사람이 읽는 이름으로 보여 줍니다.
+ */
+export function diffFields(before, after, labels = {}) {
+  const changes = [];
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  for (const key of keys) {
+    const from = before ? before[key] : '';
+    const to = after ? after[key] : '';
+    const same = JSON.stringify(from ?? '') === JSON.stringify(to ?? '');
+    if (same) continue;
+    changes.push({ field: labels[key] || key, from: String(from ?? ''), to: String(to ?? '') });
+  }
+  return changes;
 }
 
 /** A site's 첫 상태 기록: ① 첫 견적(오염) ② 첫 청소(대청소). */
@@ -228,6 +313,56 @@ export function normalizeOps(ops) {
     parkingMethod: String(source.parkingMethod || ''),
   };
 }
+
+/** 업장 정보에서 이력에 남길 칸의 사람이 읽는 이름. */
+const SITE_FIELD_LABELS = {
+  name: '업장명',
+  clientName: '고객사',
+  address: '주소',
+  area: '면적',
+  frequency: '청소 주기',
+  contactName: '담당자',
+  bizNumber: '사업자번호',
+  ceoName: '대표자',
+  taxEmail: '세금계산서 이메일',
+  manager: '담당 팀장',
+  managerRole: '담당 직함',
+  accessNote: '출입 안내',
+  category: '업종',
+};
+
+const CONTRACT_FIELD_LABELS = {
+  contractAmount: '계약금',
+  subcontractAmount: '도급금액',
+  feeAmount: '수수료',
+  contractDate: '계약일',
+  billingDay: '청구일',
+  note: '비고',
+};
+
+const OPS_FIELD_LABELS = {
+  process: '청소 공정',
+  accessMethod: '출입방법',
+  trashLocation: '쓰레기 배출',
+  parkingMethod: '주차',
+};
+
+/** 업장 정보에서 이력으로 남길 값만 추립니다. */
+function siteHistorySnapshot(site) {
+  const snapshot = {};
+  for (const key of Object.keys(SITE_FIELD_LABELS)) snapshot[key] = toText(site[key]);
+  const contract = normalizeContract(site.contract);
+  for (const key of Object.keys(CONTRACT_FIELD_LABELS)) snapshot[key] = contract[key];
+  const ops = normalizeOps(site.ops);
+  for (const key of Object.keys(OPS_FIELD_LABELS)) snapshot[key] = ops[key];
+  return snapshot;
+}
+
+const SITE_HISTORY_LABELS = {
+  ...SITE_FIELD_LABELS,
+  ...CONTRACT_FIELD_LABELS,
+  ...OPS_FIELD_LABELS,
+};
 
 /** 순수 매출금 (계약금 - 도급금액 - 수수료). */
 export function netProfit(contract) {
@@ -325,6 +460,9 @@ export function normalizeQuote(input) {
     sentAt: toText(source.sentAt),
     contractedAt: toText(source.contractedAt),
     source: toText(source.source) || 'app',
+    // 견적 → 계약 연결 (계약서를 만들면 그 계약서 id 가 들어갑니다).
+    contractId: toText(source.contractId),
+    history: normalizeHistory(source.history),
   };
 }
 
@@ -371,6 +509,7 @@ export function normalizeAgreement(input) {
     createdAt: toText(source.createdAt),
     updatedAt: toText(source.updatedAt),
     source: toText(source.source) || 'app',
+    history: normalizeHistory(source.history),
   };
 }
 
@@ -424,6 +563,7 @@ export function normalizeStaffContract(input) {
     createdAt: toText(source.createdAt),
     updatedAt: toText(source.updatedAt),
     source: toText(source.source) || 'app',
+    history: normalizeHistory(source.history),
   };
 }
 
@@ -458,6 +598,13 @@ function normalizeSite(site) {
     ops: normalizeOps(site.ops),
     bizLicense: site.bizLicense && typeof site.bizLicense === 'object' ? site.bizLicense : null,
     contractMemo: toText(site.contractMemo),
+    // 업장(siteId) 중심 연결 고리 — 이 업장이 어느 견적/계약/팀장 계약에서 왔는지.
+    quoteId: toText(site.quoteId),
+    contractId: toText(site.contractId),
+    staffContractIds: (Array.isArray(site.staffContractIds) ? site.staffContractIds : [])
+      .map((id) => toText(id))
+      .filter(Boolean),
+    history: normalizeHistory(site.history),
   };
 }
 
@@ -920,6 +1067,8 @@ export class Store {
     await this._ensureSeedStaffContracts();
     await this._ensureSeedStaffChecks();
     await this._ensureSeedSupply();
+    // 마지막에 업장(siteId) 중심 연결 고리를 채웁니다 — 시드 · 기존 기기 모두 같은 결과가 됩니다.
+    await this._migrateSiteLinks();
   }
 
   /**
@@ -1121,6 +1270,200 @@ export class Store {
   }
 
   /**
+   * v12 — 업장(siteId) 중심 연결 고리를 **기존 데이터에 채워 넣습니다**.
+   *
+   * 원칙
+   *  · 이미 값이 있는 칸은 절대 바꾸지 않고, **비어 있는 칸만** 채웁니다.
+   *  · 어떤 레코드도 지우거나 금액 · 날짜 · 서명을 다시 쓰지 않습니다.
+   *  · 같은 기기 · 다른 기기에서 여러 번 돌아도 결과가 같습니다(멱등).
+   *
+   * 채우는 연결
+   *  계약 → 업장(siteId) · 견적(quoteId) / 견적 → 계약(contractId) · 업장(siteId)
+   *  업장 → 견적(quoteId) · 계약(contractId) · 팀장 계약(staffContractIds)
+   *  보고 → 업장의 계약(contractId) · 팀장 계약(staffContractId) · 계정(accountId)
+   */
+  async _migrateSiteLinks() {
+    const sites = await this.adapter.getAll('sites');
+    if (!sites.length) return { sites: 0, quotes: 0, contracts: 0, staffContracts: 0, reports: 0 };
+
+    const quotes = (await this.adapter.getAll('quotes')).map(normalizeQuote);
+    const contracts = (await this.adapter.getAll('contracts')).map(normalizeAgreement);
+    const staffContracts = (await this.adapter.getAll('staffContracts')).map(normalizeStaffContract);
+    const reports = await this.adapter.getAll('reports');
+    const accounts = await this.adapter.getAll('accounts');
+
+    const siteById = new Map(sites.map((site) => [site.id, site]));
+    const quoteById = new Map(quotes.map((quote) => [quote.id, quote]));
+    /** '(주) 라이트하우스코스메틱' ↔ '라이트하우스코스메틱' — 같은 이름으로 보기 위한 비교값. */
+    const normName = (value) =>
+      String(value || '')
+        .replace(/\(주\)|주식회사|유한회사|\s|[-–—_.,·]/g, '')
+        .toLowerCase();
+    const findSiteByName = (name) => {
+      const needle = normName(name);
+      if (!needle) return null;
+      return (
+        sites.find((site) => normName(site.name) === needle) ||
+        sites.find((site) => normName(site.clientName) === needle) ||
+        null
+      );
+    };
+
+    const sitePatch = new Map();
+    const quotePatch = new Map();
+    const contractPatch = new Map();
+    const reportPatch = new Map();
+    const staffPatch = new Map();
+    const touchedSites = new Set();
+
+    const patchSite = (site, patch) => {
+      const current = sitePatch.get(site.id) || { ...site };
+      sitePatch.set(site.id, { ...current, ...patch });
+      touchedSites.add(site.id);
+    };
+
+    // 1) 고지 계약 → 업장 · 견적
+    for (const contract of contracts) {
+      const quote = contract.quoteId ? quoteById.get(contract.quoteId) || null : null;
+      let siteId = contract.siteId || '';
+      if (!siteId) {
+        if (quote && quote.siteId && siteById.has(quote.siteId)) siteId = quote.siteId;
+        else {
+          const byName = findSiteByName(contract.clientBusinessName);
+          if (byName) siteId = byName.id;
+        }
+      }
+      if (siteId && siteId !== contract.siteId) {
+        contractPatch.set(contract.id, { siteId });
+      }
+      if (quote) {
+        const patch = {};
+        if (!quote.contractId) patch.contractId = contract.id;
+        if (!quote.siteId && siteId) patch.siteId = siteId;
+        if (contract.quoteId !== quote.id) patch.quoteId = contract.quoteId;
+        if (Object.keys(patch).length) quotePatch.set(quote.id, { ...(quotePatch.get(quote.id) || {}), ...patch });
+      }
+    }
+
+    // 2) 업장 → 계약 · 팀장 계약
+    for (const site of sites) {
+      const mine = contracts.filter((contract) => (contractPatch.get(contract.id) || contract).siteId === site.id);
+      const signed = mine.filter((contract) => contract.status === 'signed');
+      const pick = signed[signed.length - 1] || mine[mine.length - 1] || null;
+      const patch = {};
+      if (!site.contractId && pick) patch.contractId = pick.id;
+      const contractId = site.contractId || patch.contractId || '';
+      const boundQuote =
+        (contractId && (contracts.find((row) => row.id === contractId) || {}).quoteId) ||
+        (quotes.find((row) => row.siteId === site.id) || {}).id ||
+        '';
+      if (!site.quoteId && boundQuote) patch.quoteId = boundQuote;
+      const staffIds = new Set(site.staffContractIds || []);
+      for (const row of staffContracts) {
+        if (row.siteIds.includes(site.id)) staffIds.add(row.id);
+      }
+      if (staffIds.size !== (site.staffContractIds || []).length) patch.staffContractIds = [...staffIds];
+      if (Object.keys(patch).length) patchSite(site, patch);
+    }
+
+    // 3) 보고 → 계약 · 팀장 계약 · 계정
+    for (const report of reports) {
+      const site = siteById.get(report.siteId) || null;
+      const patch = {};
+      if (!report.contractId) {
+        const bound = site ? sitePatch.get(site.id) || site : null;
+        if (bound && bound.contractId) patch.contractId = bound.contractId;
+      }
+      if (!report.accountId && report.leader) {
+        const account = accounts.find((row) => row.role !== 'customer' && row.name === report.leader);
+        if (account) patch.accountId = account.id;
+      }
+      if (!report.staffContractId) {
+        const accountId = report.accountId || patch.accountId || '';
+        const mine = staffContracts.filter((row) => row.siteIds.includes(report.siteId));
+        const found =
+          mine.find((row) => accountId && row.accountId === accountId) ||
+          mine.find((row) => row.name === report.leader) ||
+          null;
+        if (found) patch.staffContractId = found.id;
+      }
+      if (Object.keys(patch).length) reportPatch.set(report.id, patch);
+    }
+
+    // 4) 팀장 계약 — 계정이 비어 있고 같은 번호의 계정이 있으면 연결(반복 입력 방지)
+    for (const row of staffContracts) {
+      if (row.accountId) continue;
+      const account = accounts.find((account2) => normalizePhone(account2.phone) === normalizePhone(row.phone) && account2.role === 'leader');
+      if (account) staffPatch.set(row.id, { accountId: account.id });
+    }
+
+    let siteCount = 0;
+    let quoteCount = 0;
+    let contractCount = 0;
+    let staffContractCount = 0;
+    let reportCount = 0;
+
+    for (const [id, patch] of contractPatch) {
+      const row = contracts.find((item) => item.id === id);
+      const next = normalizeAgreement({ ...row, ...patch, updatedAt: new Date().toISOString() });
+      await this.adapter.put('contracts', next);
+      contractCount += 1;
+    }
+    for (const [id, patch] of quotePatch) {
+      const row = quoteById.get(id);
+      if (!row) continue;
+      const next = normalizeQuote({ ...row, ...patch, updatedAt: new Date().toISOString() });
+      // 견적의 업장 연결은 계약에서 파생된 것이므로 이력에 남기지 않습니다(불필요한 기록만 늘림).
+      await this.adapter.put('quotes', next);
+      quoteCount += 1;
+    }
+    for (const [id, patch] of staffPatch) {
+      const row = staffContracts.find((item) => item.id === id);
+      const next = normalizeStaffContract({ ...row, ...patch, updatedAt: new Date().toISOString() });
+      await this.adapter.put('staffContracts', next);
+      staffContractCount += 1;
+    }
+    for (const [id, patch] of reportPatch) {
+      const row = reports.find((item) => item.id === id);
+      if (!row) continue;
+      await this.adapter.put('reports', { ...row, ...patch });
+      reportCount += 1;
+    }
+    for (const [id, patch] of sitePatch) {
+      const row = sites.find((item) => item.id === id);
+      if (!row) continue;
+      const siteHistory = row.history;
+      // 삭제 변동만 이력에 남깁니다 — 같은 기기에서 다시 돌아도 같은 id 라 한 번만 남습니다.
+      const entry = makeHistoryEntry({
+        actor: '시스템',
+        action: '기존 데이터 연결 정리',
+        note: '기존 기록은 그대로 두고, 업장 기준 연결 정보만 추가했습니다.',
+      });
+      entry.id = `hist_link_${id}_${SEED_VERSION}`;
+      const next = {
+        ...row,
+        ...patch,
+        history: withHistory(siteHistory, entry),
+        updatedAt: new Date().toISOString(),
+      };
+      await this.adapter.put('sites', normalizeSite(next));
+      siteCount += 1;
+    }
+
+    await this.setSetting('seedVersion', SEED_VERSION);
+    if (siteCount || quoteCount || contractCount || staffContractCount || reportCount) {
+      this._notify();
+    }
+    return {
+      sites: siteCount,
+      quotes: quoteCount,
+      contracts: contractCount,
+      staffContracts: staffContractCount,
+      reports: reportCount,
+    };
+  }
+
+  /**
    * Customers now enter their room with the registered phone number alone, so the
    * demo client accounts must already hold their room grant. On a device that ran
    * an older build (where the grant came from redeeming a code) this only adds a
@@ -1222,6 +1565,165 @@ export class Store {
     await this.setSetting('seedVersion', SEED_VERSION);
   }
 
+  /* ---------------- 연결 고리 (업장 siteId 중심) · 변경 이력 ---------------- */
+
+  /**
+   * 레코드 한 건에 변경 이력을 남깁니다.
+   *  table : sites · quotes · contracts · staffContracts
+   * 이력은 그 레코드 안(`history`)에 쌓여 서버로도 같이 동기화됩니다.
+   * (새 서버 컬렉션을 만들지 않아 스키마를 바꾸지 않아도 됩니다.)
+   */
+  async recordHistory(table, id, { actor = '', action = '', note = '', changes = [] } = {}) {
+    const key = toText(id);
+    if (!key) return null;
+    const row = await this.adapter.get(table, key);
+    if (!row) return null;
+    const entry = makeHistoryEntry({ actor, action, note, changes });
+    const next = { ...row, history: withHistory(row.history, entry) };
+    if (table !== 'sites') next.updatedAt = entry.at;
+    await this.adapter.put(table, next);
+    return entry;
+  }
+
+  /** 업장·견적·계약·팀장 계약의 이력을 한 줄기로 모읍니다(최신이 앞). */
+  async listSiteHistory(siteId, { limit = 0 } = {}) {
+    const site = await this.getSite(siteId);
+    if (!site) return [];
+    const quotes = (await this.adapter.getAll('quotes'))
+      .map(normalizeQuote)
+      .filter((row) => row.id === site.quoteId || row.siteId === site.id);
+    const quoteIds = new Set(quotes.map((row) => row.id));
+    const contracts = (await this.adapter.getAll('contracts'))
+      .map(normalizeAgreement)
+      .filter((row) => row.id === site.contractId || row.siteId === site.id || (row.quoteId && quoteIds.has(row.quoteId)));
+    const staffContracts = (await this.adapter.getAll('staffContracts'))
+      .map(normalizeStaffContract)
+      .filter((row) => row.siteIds.includes(site.id) || (site.staffContractIds || []).includes(row.id));
+
+    const push = (rows, { source, sourceLabel, ownerId, ownerName }) => {
+      const out = [];
+      for (const row of normalizeHistory(rows)) {
+        out.push({ ...row, source, sourceLabel, ownerId, ownerName });
+      }
+      return out;
+    };
+
+    const all = [
+      ...push(site.history, { source: 'site', sourceLabel: '업장', ownerId: site.id, ownerName: site.name }),
+      ...quotes.flatMap((quote) =>
+        push(quote.history, { source: 'quote', sourceLabel: '견적', ownerId: quote.id, ownerName: quote.no || quote.clientCompany }),
+      ),
+      ...contracts.flatMap((contract) =>
+        push(contract.history, { source: 'contract', sourceLabel: '고객 계약', ownerId: contract.id, ownerName: contract.no }),
+      ),
+      ...staffContracts.flatMap((contract) =>
+        push(contract.history, {
+          source: 'staffContract',
+          sourceLabel: '팀장 계약',
+          ownerId: contract.id,
+          ownerName: `${contract.name} ${contract.no ? `(${contract.no})` : ''}`.trim(),
+        }),
+      ),
+    ];
+    all.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    return limit > 0 ? all.slice(0, limit) : all;
+  }
+
+  /**
+   * 업장 하나에 이어진 기록을 한 번에 — 견적 · 고객 계약 · 팀장 계약 · 보고 · 고객 계정 · 이력.
+   * 화면에서는 이 값으로 "이 업장이 어디서 왔고 누가 맡고 있는지"를 보여 줍니다.
+   */
+  async siteLinks(siteId) {
+    const site = await this.getSite(siteId);
+    if (!site) return null;
+    const [quotes, contracts, staffContracts, reports, accounts, history] = await Promise.all([
+      this.adapter.getAll('quotes'),
+      this.adapter.getAll('contracts'),
+      this.adapter.getAll('staffContracts'),
+      this.adapter.getAll('reports'),
+      this.adapter.getAll('accounts'),
+      this.listSiteHistory(site.id, { limit: 8 }),
+    ]);
+
+    const quoteRows = quotes.map(normalizeQuote);
+    const quote =
+      quoteRows.find((row) => row.id === site.quoteId) ||
+      quoteRows.find((row) => row.siteId === site.id) ||
+      null;
+    const contractRows = contracts.map(normalizeAgreement);
+    const contract =
+      contractRows.find((row) => row.id === site.contractId) ||
+      contractRows.find((row) => row.siteId === site.id) ||
+      (quote ? contractRows.find((row) => row.quoteId === quote.id) : null) ||
+      null;
+    const staffRows = staffContracts
+      .map(normalizeStaffContract)
+      .filter((row) => row.siteIds.includes(site.id) || (site.staffContractIds || []).includes(row.id));
+    const siteReports = reports.filter((row) => row.siteId === site.id);
+    const customers = accounts.filter((row) => row.role === 'customer' && row.siteId === site.id);
+
+    return {
+      site,
+      quote,
+      contract,
+      staffContracts: staffRows,
+      customers,
+      reports: {
+        total: siteReports.length,
+        pending: siteReports.filter((row) => (row.status || 'submitted') === 'pending').length,
+        last: siteReports.sort((a, b) => Store.sortKey(b).localeCompare(Store.sortKey(a)))[0] || null,
+      },
+      history,
+    };
+  }
+
+  /** 현장 목록 전체의 연결 요약 (관리 화면 카드용, 한 번에 읽습니다). */
+  async listSiteLinks() {
+    const [sites, quotes, contracts, staffContracts, reports] = await Promise.all([
+      this.listSites(),
+      this.adapter.getAll('quotes'),
+      this.adapter.getAll('contracts'),
+      this.adapter.getAll('staffContracts'),
+      this.adapter.getAll('reports'),
+    ]);
+    const quoteRows = quotes.map(normalizeQuote);
+    const contractRows = contracts.map(normalizeAgreement);
+    const staffRows = staffContracts.map(normalizeStaffContract);
+    const out = {};
+    for (const site of sites) {
+      const quote =
+        quoteRows.find((row) => row.id === site.quoteId) || quoteRows.find((row) => row.siteId === site.id) || null;
+      const contract =
+        contractRows.find((row) => row.id === site.contractId) ||
+        contractRows.find((row) => row.siteId === site.id) ||
+        (quote ? contractRows.find((row) => row.quoteId === quote.id) : null) ||
+        null;
+      const staff = staffRows.filter((row) => row.siteIds.includes(site.id) || (site.staffContractIds || []).includes(row.id));
+      const siteReports = reports.filter((row) => row.siteId === site.id);
+      const last = siteReports.sort((a, b) => Store.sortKey(b).localeCompare(Store.sortKey(a)))[0] || null;
+      // 카드에서 바로 보여 줄 최근 이력 — 업장 · 견적 · 계약 · 팀장 계약을 합쳐 최신 4건.
+      const history = [
+        ...(site.history || []).map((row) => ({ ...row, sourceLabel: '업장' })),
+        ...(quote ? (quote.history || []).map((row) => ({ ...row, sourceLabel: '견적' })) : []),
+        ...(contract ? (contract.history || []).map((row) => ({ ...row, sourceLabel: '고객 계약' })) : []),
+        ...staff.flatMap((row) => (row.history || []).map((item) => ({ ...item, sourceLabel: '팀장 계약' }))),
+      ]
+        .sort((a, b) => String(b.at).localeCompare(String(a.at)))
+        .slice(0, 4);
+      out[site.id] = {
+        quote,
+        contract,
+        staffContracts: staff,
+        reportTotal: siteReports.length,
+        reportPending: siteReports.filter((row) => (row.status || 'submitted') === 'pending').length,
+        lastReport: last,
+        history,
+        historyCount: (site.history || []).length,
+      };
+    }
+    return out;
+  }
+
   /* ---------------- sites ---------------- */
 
   async listSites() {
@@ -1284,6 +1786,13 @@ export class Store {
       createdAt: new Date().toISOString(),
       source: 'app',
     };
+    site.history = withHistory([], makeHistoryEntry({
+      actor: toText(input.actor) || '대표',
+      action: '업장 등록',
+      note: `${site.name} · ${site.code}${input.quoteId ? ` · 견적 ${input.quoteId}` : ''}`,
+    }));
+    if (input.quoteId) site.quoteId = toText(input.quoteId);
+    if (input.contractId) site.contractId = toText(input.contractId);
 
     await this.adapter.put('sites', site);
     await this.assignLeadersToSite(site.id, input.leaderIds || []);
@@ -1301,6 +1810,14 @@ export class Store {
     if (patch.contract !== undefined) next.contract = normalizeContract(patch.contract);
     if (patch.ops !== undefined) next.ops = normalizeOps(patch.ops);
     delete next.leaderIds;
+    const changes = diffFields(siteHistorySnapshot(site), siteHistorySnapshot(next), SITE_HISTORY_LABELS);
+    if (changes.length) {
+      next.history = withHistory(site.history, makeHistoryEntry({
+        actor: toText(patch.actor) || '앱',
+        action: '업장 정보 수정',
+        changes,
+      }));
+    }
     await this.adapter.put('sites', next);
     if (Array.isArray(patch.leaderIds)) await this.assignLeadersToSite(site.id, patch.leaderIds);
     // 담당 팀장이 바뀌면 팀장 계약서 별첨도 함께 맞춥니다.
@@ -1308,7 +1825,7 @@ export class Store {
       await this.syncStaffContractSites(site.id);
     }
     this._notify();
-    return next;
+    return normalizeSite(await this.getSite(site.id));
   }
 
   /** Alias kept for the documented admin API (새 현장 등록). */
@@ -1344,12 +1861,20 @@ export class Store {
     if (typeof next.name !== 'string' || !next.name.trim()) {
       throw new StoreError('name-empty', '현장명(상호)을 입력해 주세요.');
     }
+    const changes = diffFields(siteHistorySnapshot(site), siteHistorySnapshot(next), SITE_HISTORY_LABELS);
     next.updatedAt = new Date().toISOString();
+    if (changes.length) {
+      next.history = withHistory(site.history, makeHistoryEntry({
+        actor: toText(patch.actor) || '앱',
+        action: '계약 · 운영 정보 수정',
+        changes,
+      }));
+    }
     await this.adapter.put('sites', next);
     // 담당 팀장을 바꾸면 팀장 계약서 별첨도 함께 맞춥니다.
     if ('manager' in patch || 'managerRole' in patch) await this.syncStaffContractSites(siteId);
     this._notify();
-    return next;
+    return normalizeSite(await this.getSite(siteId));
   }
 
   /** 전체 매출 정리 — 행별 내역과 합계 (관리자 화면 전용). */
@@ -1396,37 +1921,75 @@ export class Store {
    *  - 담당이 아닌 팀장의 ‘미체결’ 계약서에서는 이 현장을 뺍니다.
    *    (체결된 계약서는 서명 당시 조건을 지키기 위해 그대로 둡니다.)
    */
-  async syncStaffContractSites(siteId) {
+  async syncStaffContractSites(siteId, { remove = true } = {}) {
     const site = await this.getSite(siteId);
     if (!site) return [];
     const managers = await this._siteManagers(site);
     const managerIds = new Set(managers.map((account) => account.id));
     const rows = (await this.adapter.getAll('staffContracts')).map(normalizeStaffContract);
     const changed = [];
+    const linkedIds = new Set(site.staffContractIds || []);
     for (const contract of rows) {
       const mine = contract.accountId
         ? managerIds.has(contract.accountId)
         : managers.some((account) => account.name === contract.name);
       const has = contract.siteIds.includes(site.id);
+      if (mine && has) {
+        linkedIds.add(contract.id);
+        continue;
+      }
       if (mine && !has) {
+        const entry = makeHistoryEntry({
+          actor: '앱',
+          action: '업장 배정',
+          note: `${contract.name} ${contract.roleTitle || '팀장'} · ${contract.no} 별첨에 추가`,
+        });
         const next = normalizeStaffContract({
           ...contract,
           siteIds: [...contract.siteIds, site.id],
           updatedAt: new Date().toISOString(),
+          history: withHistory(contract.history, entry),
         });
         await this.adapter.put('staffContracts', next);
         changed.push({ id: contract.id, action: 'added' });
-      } else if (!mine && has && contract.status !== 'signed') {
+        linkedIds.add(contract.id);
+      } else if (remove && !mine && has && contract.status !== 'signed') {
         const next = normalizeStaffContract({
           ...contract,
           siteIds: contract.siteIds.filter((id) => id !== site.id),
           updatedAt: new Date().toISOString(),
+          history: withHistory(contract.history, makeHistoryEntry({
+            actor: '앱',
+            action: '업장 배정 해제',
+            note: `${site.name} 이(가) 담당에서 빠졌습니다.`,
+          })),
         });
         await this.adapter.put('staffContracts', next);
         changed.push({ id: contract.id, action: 'removed' });
+        linkedIds.delete(contract.id);
       }
     }
-    if (changed.length) this._notify();
+    // 업장 쪽에도 팀장 계약 id 를 같은 값으로 유지합니다(업장 → 팀장 계약 연결).
+    const before = (site.staffContractIds || []).slice().sort().join(',');
+    const after = [...linkedIds].sort().join(',');
+    if (before !== after) {
+      const current = await this.getSite(site.id);
+      await this.adapter.put('sites', { ...current, staffContractIds: [...linkedIds] });
+    }
+    if (changed.length) {
+      await this.recordHistory('sites', site.id, {
+        actor: '앱',
+        action: '담당 팀장 · 팀장 계약 변경',
+        note: changed
+          .map((row) => {
+            const contract = rows.find((item) => item.id === row.id);
+            const name = contract ? `${contract.name} ${contract.no}` : row.id;
+            return `${name} ${row.action === 'added' ? '별첨 추가' : '별첨 제외'}`;
+          })
+          .join(' · '),
+      });
+      this._notify();
+    }
     return changed;
   }
 
@@ -1493,9 +2056,27 @@ export class Store {
     return row ? normalizeQuote(row) : null;
   }
 
-  /** 견적 등록 — 저장과 동시에 1회용 초대코드를 발급합니다. */
+  /**
+   * 견적 등록 — 저장과 동시에 1회용 초대코드를 발급합니다.
+   * `siteId`를 주면 그 업장의 고객사 · 주소 · 담당자 · 연락처 · 사업자번호 · 청소 조건을
+   * **이미 등록된 값에서 그대로 가져 옵니다**(비어 있는 칸만 채움). 같은 내용을 두 번 적지 않습니다.
+   */
   async addQuote(input = {}) {
-    const company = toText(input.clientCompany);
+    const site = input.siteId ? await this.getSite(input.siteId) : null;
+    const pick = (key, siteValue) => toText(input[key]) || toText(siteValue);
+    const fromSite = {
+      siteId: site ? site.id : toText(input.siteId),
+      clientCompany: pick('clientCompany', site ? site.clientName || site.name : ''),
+      clientCategory: input.clientCategory || (site ? site.category : ''),
+      clientAddress: pick('clientAddress', site ? site.address : ''),
+      clientContact: pick('clientContact', site ? site.contactName : ''),
+      clientBizNumber: pick('clientBizNumber', site ? site.bizNumber : ''),
+      clientTaxEmail: pick('clientTaxEmail', site ? site.taxEmail : ''),
+      frequency: pick('frequency', site ? site.frequency : ''),
+      area: pick('area', site ? site.area : ''),
+      scope: pick('scope', site && site.ops ? site.ops.process : ''),
+    };
+    const company = toText(fromSite.clientCompany);
     if (!company) throw new StoreError('company-empty', '고객사명(상호)을 입력해 주세요.');
     const amount = toAmount(input.amount);
     if (!amount) throw new StoreError('amount-empty', '월 계약금액을 입력해 주세요.');
@@ -1505,8 +2086,16 @@ export class Store {
     const endDate = toText(input.endDate) || addMonthsISO(startDate, months);
     const now = new Date().toISOString();
     const validUntil = toText(input.validUntil) || addDaysISO(todayISO(), QUOTE_VALID_DAYS);
+    // 빈 문자열은 "입력하지 않음"으로 보고, 업장에서 가져온 값을 지우지 않습니다.
+    const typed = {};
+    for (const [key, value] of Object.entries(input)) {
+      if (typeof value === 'string' && !value.trim()) continue;
+      typed[key] = value;
+    }
     const quote = normalizeQuote({
-      ...input,
+      ...fromSite,
+      ...typed,
+      siteId: fromSite.siteId,
       id: uid('quote'),
       no: toText(input.no) || (await this._nextDocNumber('quotes', 'Q')),
       clientCompany: company,
@@ -1526,8 +2115,39 @@ export class Store {
       source: 'app',
     });
     await this.adapter.put('quotes', quote);
+    if (site) {
+      const patch = {};
+      if (!site.quoteId) patch.quoteId = quote.id;
+      if (Object.keys(patch).length) {
+        await this.adapter.put('sites', { ...(await this.adapter.get('sites', site.id)), ...patch });
+      }
+      await this.recordHistory('quotes', quote.id, {
+        actor: toText(input.actor) || '앱',
+        action: '견적 작성',
+        note: `${site.name} 업장 정보에서 자동으로 가져옴 · ${quote.no}`,
+      });
+    }
     this._notify();
-    return quote;
+    return normalizeQuote(await this.adapter.get('quotes', quote.id));
+  }
+
+  /**
+   * 기존 업장에서 바로 견적을 만듭니다(현장 방문 견적).
+   * 금액만 정해 주면 업장 정보 · 청소 조건은 다시 적지 않습니다.
+   */
+  async createQuoteForSite(siteId, patch = {}) {
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    return this.addQuote({
+      ...patch,
+      siteId: site.id,
+      clientCompany: patch.clientCompany || site.clientName || site.name,
+      clientAddress: patch.clientAddress || site.address,
+      clientContact: patch.clientContact || site.contactName,
+      clientBizNumber: patch.clientBizNumber || site.bizNumber,
+      clientTaxEmail: patch.clientTaxEmail || site.taxEmail,
+      clientCategory: patch.clientCategory || site.category,
+    });
   }
 
   async updateQuote(id, patch = {}) {
@@ -1543,6 +2163,17 @@ export class Store {
     });
     if (!next.clientCompany) throw new StoreError('company-empty', '고객사명(상호)을 입력해 주세요.');
     if (!next.amount) throw new StoreError('amount-empty', '월 계약금액을 입력해 주세요.');
+    const changes = [];
+    if (quote.amount !== next.amount) changes.push({ field: '월 견적금액', from: String(quote.amount), to: String(next.amount) });
+    if (quote.clientCompany !== next.clientCompany) changes.push({ field: '고객사', from: quote.clientCompany, to: next.clientCompany });
+    if (quote.frequency !== next.frequency) changes.push({ field: '청소 주기', from: quote.frequency, to: next.frequency });
+    if (changes.length) {
+      next.history = withHistory(quote.history, makeHistoryEntry({
+        actor: toText(patch.actor) || '앱',
+        action: '견적 수정',
+        changes,
+      }));
+    }
     await this.adapter.put('quotes', next);
     this._notify();
     return next;
@@ -1647,8 +2278,13 @@ export class Store {
     const now = new Date().toISOString();
     const consumed = { ...quote, inviteUsedAt: now, inviteUsedBy: account.id, invitedPhone: digits, updatedAt: now };
     await this.adapter.put('quotes', consumed);
+    await this.recordHistory('quotes', quote.id, {
+      actor: account.name || '고객',
+      action: '고객 방 입장',
+      note: `${account.name || ''} ${account.title || ''} · 초대코드 사용`.trim(),
+    });
     this._notify();
-    return { account, quote: normalizeQuote(consumed) };
+    return { account, quote: normalizeQuote(await this.adapter.get('quotes', quote.id)) };
   }
 
   /* ---------------- contracts (도급 계약서 · 대표 전용) ---------------- */
@@ -1672,18 +2308,30 @@ export class Store {
   }
 
   /** 견적을 표준 도급 계약서로 전환합니다 (이미 있으면 그 계약서). */
+  /**
+   * 견적을 표준 도급 계약서로 전환합니다 (이미 있으면 그 계약서).
+   * 견적이 업장에 연결되어 있으면 **그 업장을 그대로 이어받습니다**(새 업장을 만들지 않음).
+   */
   async createAgreementFromQuote(quoteId) {
     const quote = await this.getQuote(quoteId);
     if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
     const existing = await this.getAgreementByQuote(quote.id);
     if (existing) return existing;
 
+    // 견적에 업장이 연결되어 있지 않으면 같은 상호의 업장을 찾아 잇습니다.
+    let site = quote.siteId ? await this.getSite(quote.siteId) : null;
+    if (!site) {
+      const norm = (value) => String(value || '').replace(/\(주\)|주식회사|\s|[-–—_.,·]/g, '').toLowerCase();
+      const needle = norm(quote.clientCompany);
+      site = (await this.listSites()).find((row) => norm(row.name) === needle || norm(row.clientName) === needle) || null;
+    }
+
     const now = new Date().toISOString();
     const agreement = normalizeAgreement({
       id: uid('contract'),
       no: await this._nextDocNumber('contracts', 'CT'),
       quoteId: quote.id,
-      siteId: quote.siteId,
+      siteId: site ? site.id : '',
       status: 'draft',
       clientAddress: quote.clientAddress,
       clientBusinessName: quote.clientCompany,
@@ -1706,10 +2354,33 @@ export class Store {
       source: 'app',
     });
     await this.adapter.put('contracts', agreement);
-    const nextQuote = normalizeQuote({ ...quote, status: quote.status === 'sent' ? 'accepted' : quote.status, updatedAt: now });
+    const nextQuote = normalizeQuote({
+      ...quote,
+      status: quote.status === 'sent' ? 'accepted' : quote.status,
+      contractId: agreement.id,
+      siteId: quote.siteId || (site ? site.id : ''),
+      updatedAt: now,
+      history: withHistory(quote.history, makeHistoryEntry({
+        actor: '앱',
+        action: '계약서 작성',
+        note: `${agreement.no} 계약서로 전환${site ? ` · 업장 ${site.name} 연결` : ''}`,
+      })),
+    });
     await this.adapter.put('quotes', nextQuote);
+    if (site) {
+      const current = await this.getSite(site.id);
+      const patch = {};
+      if (!current.quoteId) patch.quoteId = quote.id;
+      if (!current.contractId) patch.contractId = agreement.id;
+      if (Object.keys(patch).length) await this.adapter.put('sites', { ...current, ...patch });
+      await this.recordHistory('sites', site.id, {
+        actor: '앱',
+        action: '고객 계약서 작성',
+        note: `${agreement.no} · 견적 ${quote.no}`,
+      });
+    }
     this._notify();
-    return agreement;
+    return normalizeAgreement(await this.adapter.get('contracts', agreement.id));
   }
 
   async updateAgreement(id, patch = {}) {
@@ -1805,6 +2476,9 @@ export class Store {
       site = await this.addSite({
         name: client.businessName,
         clientName: client.businessName,
+        // 같은 계약에서 나온 업장이라는 것을 바로 남깁니다(나중에 다시 찾지 않도록).
+        quoteId: quote ? quote.id : '',
+        contractId: agreement.id,
         category,
         address: client.address,
         area: quote ? quote.area : '',
@@ -1860,15 +2534,52 @@ export class Store {
       signature: signature || agreement.signature,
       signedAt: now,
       updatedAt: now,
+      history: withHistory(agreement.history, makeHistoryEntry({
+        actor: '고객',
+        action: '고객 계약 체결',
+        note: `${site.name} · 서명 ${signedDate}`,
+      })),
     });
     await this.adapter.put('contracts', nextAgreement);
 
     if (quote) {
       await this.adapter.put(
         'quotes',
-        normalizeQuote({ ...quote, siteId: site.id, status: 'contracted', contractedAt: now, updatedAt: now }),
+        normalizeQuote({
+          ...quote,
+          siteId: site.id,
+          contractId: agreement.id,
+          status: 'contracted',
+          contractedAt: now,
+          updatedAt: now,
+          history: withHistory(quote.history, makeHistoryEntry({
+            actor: '고객',
+            action: '계약 체결',
+            note: `${agreement.no} · ${site.name}`,
+          })),
+        }),
       );
     }
+
+    // 업장 → 견적 · 계약 연결 (비어 있는 칸만). 팀장 계약 별첨도 이 업장을 포함합니다.
+    {
+      const current = await this.getSite(site.id);
+      const patch = {};
+      if (!current.quoteId && quote) patch.quoteId = quote.id;
+      if (!current.contractId) patch.contractId = agreement.id;
+      if (Object.keys(patch).length) {
+        await this.adapter.put('sites', { ...current, ...patch });
+        site = { ...current, ...patch };
+      }
+    }
+    await this.recordHistory('sites', site.id, {
+      actor: '고객',
+      action: '고객 계약 체결',
+      note: `${nextAgreement.no} · ${client.businessName} · 월 ${agreement.amount.toLocaleString('ko-KR')}원`,
+    });
+    // 이 업장을 맡은 팀장의 도급계약서 별첨에 업장을 더합니다.
+    // (서명으로 기존 계약의 별첨 줄을 빼지는 않습니다 — add-only)
+    await this.syncStaffContractSites(site.id, { remove: false });
 
     // 견적 방에 있던 고객 계정을 새 현장 방으로 옮깁니다.
     const accounts = await this.adapter.getAll('accounts');
@@ -1951,7 +2662,12 @@ export class Store {
 
     const now = new Date().toISOString();
     // 팀장 계정과 연결된 계약서는 그 팀장이 맡은 업장을 별첨에 그대로 이어받습니다.
-    const account = input.accountId ? await this.getAccount(input.accountId) : null;
+    //  계정을 고르지 않았어도 같은 번호의 팀장 계정이 있으면 자동으로 잇습니다(반복 입력 방지).
+    const accounts = await this.adapter.getAll('accounts');
+    const account =
+      (input.accountId ? await this.getAccount(input.accountId) : null) ||
+      accounts.find((row) => row.role !== 'customer' && normalizePhone(row.phone) === phone) ||
+      null;
     const siteIds =
       Array.isArray(input.siteIds) && input.siteIds.length
         ? input.siteIds.filter(Boolean)
@@ -1959,6 +2675,7 @@ export class Store {
     const contract = normalizeStaffContract({
       ...input,
       id: uid('staff'),
+      accountId: account ? account.id : toText(input.accountId),
       siteIds,
       no: toText(input.no) || (await this._nextDocNumber('staffContracts', 'S')),
       name,
@@ -1975,8 +2692,23 @@ export class Store {
       createdAt: now,
       updatedAt: now,
       source: 'app',
+      history: withHistory([], makeHistoryEntry({
+        actor: toText(input.actor) || '대표',
+        action: '직원 계약 등록',
+        note: `${STAFF_TYPES[type].short} · 월/일/시급 ${monthlyAmount || dailyAmount || hourlyAmount}원`,
+      })),
     });
     await this.adapter.put('staffContracts', contract);
+    // 업장 쪽에도 이 팀장 계약 id 를 남깁니다(업장 ↔ 팀장 계약 연결).
+    for (const siteId of siteIds) {
+      const site = await this.getSite(siteId);
+      if (!site) continue;
+      const linked = new Set(site.staffContractIds || []);
+      if (!linked.has(contract.id)) {
+        linked.add(contract.id);
+        await this.adapter.put('sites', { ...site, staffContractIds: [...linked] });
+      }
+    }
     this._notify();
     return contract;
   }
@@ -1998,9 +2730,44 @@ export class Store {
       createdAt: contract.createdAt,
       updatedAt: now,
     });
+    const changes = [];
+    const amounts = [
+      ['monthlyAmount', '월 도급금액'],
+      ['dailyAmount', '일당'],
+      ['hourlyAmount', '시급'],
+    ];
+    for (const [key, label] of amounts) {
+      if (contract[key] !== next[key]) changes.push({ field: label, from: String(contract[key]), to: String(next[key]) });
+    }
+    if (contract.employmentType !== next.employmentType) {
+      changes.push({ field: '계약 유형', from: contract.employmentType, to: next.employmentType });
+    }
+    if (changes.length) {
+      next.history = withHistory(contract.history, makeHistoryEntry({
+        actor: toText(patch.actor) || '대표',
+        action: '직원 계약 수정',
+        changes,
+      }));
+    }
     await this.adapter.put('staffContracts', next);
+    // 별첨 업장이 바뀌면 업장 쪽 연결(staffContractIds)도 맞춥니다.
+    if (Array.isArray(patch.siteIds)) {
+      const before = new Set(contract.siteIds);
+      const after = new Set(next.siteIds);
+      for (const siteId of new Set([...before, ...after])) {
+        const site = await this.getSite(siteId);
+        if (!site) continue;
+        const linked = new Set(site.staffContractIds || []);
+        const shouldLink = after.has(siteId);
+        if (shouldLink && !linked.has(next.id)) linked.add(next.id);
+        if (!shouldLink && linked.has(next.id) && contract.status !== 'signed') linked.delete(next.id);
+        if (linked.size !== (site.staffContractIds || []).length) {
+          await this.adapter.put('sites', { ...site, staffContractIds: [...linked] });
+        }
+      }
+    }
     this._notify();
-    return next;
+    return normalizeStaffContract(await this.adapter.get('staffContracts', next.id));
   }
 
   /** 직원에게 계약서를 보냅니다 (직원관리방에 ‘서명 대기’로 표시). */
@@ -2129,10 +2896,56 @@ export class Store {
       signedByName: toText(payload.name) || contract.name,
       signedAt: now,
       updatedAt: now,
+      history: withHistory(contract.history, makeHistoryEntry({
+        actor: contract.name || '직원',
+        action: '직원 계약 체결',
+        note: `${contract.no} · 서명 ${toText(payload.signedDate) || todayISO()}`,
+      })),
     });
     await this.adapter.put('staffContracts', next);
+
+    // 서명한 직원의 계정에 별첨 업장을 배정하고, 업장에도 이 계약 id를 남깁니다.
+    if (next.accountId) {
+      const account = await this.getAccount(next.accountId);
+      if (account) {
+        const assigned = new Set(account.assignedSiteIds || []);
+        let added = 0;
+        for (const siteId of next.siteIds) {
+          if (!assigned.has(siteId)) {
+            assigned.add(siteId);
+            added += 1;
+          }
+        }
+        if (added) {
+          await this.adapter.put('accounts', {
+            ...account,
+            assignedSiteIds: [...assigned],
+            updatedAt: now,
+          });
+        }
+      }
+    }
+    for (const siteId of next.siteIds) {
+      const site = await this.getSite(siteId);
+      if (!site) continue;
+      const linked = new Set(site.staffContractIds || []);
+      const patch = {};
+      if (!linked.has(next.id)) {
+        linked.add(next.id);
+        patch.staffContractIds = [...linked];
+      }
+      if (Object.keys(patch).length) {
+        await this.adapter.put('sites', { ...site, ...patch });
+      }
+      await this.recordHistory('sites', siteId, {
+        actor: next.name || '직원',
+        action: '팀장 계약 체결',
+        note: `${next.name} ${next.roleTitle || ''} · ${next.no}`.trim(),
+      });
+    }
+
     this._notify();
-    return next;
+    return normalizeStaffContract(await this.adapter.get('staffContracts', next.id));
   }
 
   /* ---------------- staff checks (근무태도 A~F · 본부장 체크) ---------------- */
@@ -2401,15 +3214,42 @@ export class Store {
     return normalizeReport(await this.adapter.get('reports', id));
   }
 
+  /**
+   * 보고를 어느 계약 · 어느 팀장 계약의 작업인지 이어 붙입니다.
+   * (업장의 계약 id 와 팀장 계약의 별첨 업장으로 찾아냅니다.)
+   */
+  async _reportLinks(site, input = {}) {
+    const staffContracts = (await this.adapter.getAll('staffContracts')).map(normalizeStaffContract);
+    const accounts = await this.adapter.getAll('accounts');
+    let accountId = toText(input.accountId);
+    if (!accountId && input.leader) {
+      const found = accounts.find((row) => row.role !== 'customer' && row.name === input.leader);
+      if (found) accountId = found.id;
+    }    const mine = staffContracts.filter((row) => row.siteIds.includes(site.id));
+    const contract =
+      mine.find((row) => accountId && row.accountId === accountId) ||
+      mine.find((row) => row.name === input.leader) ||
+      null;
+    return {
+      accountId,
+      staffContractId: contract ? contract.id : '',
+      contractId: toText(site.contractId),
+    };
+  }
+
   async addReport(input) {
     const site = await this.getSite(input.siteId);
     if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const links = await this._reportLinks(site, input);
 
     const report = {
       id: uid('rep'),
       siteId: site.id,
       siteCode: site.code,
       siteName: site.name,
+      contractId: links.contractId,
+      staffContractId: links.staffContractId,
+      accountId: links.accountId,
       date: input.date,
       time: input.time,
       leader: input.leader,
@@ -2430,8 +3270,13 @@ export class Store {
     };
 
     await this.adapter.put('reports', report);
+    await this.recordHistory('sites', site.id, {
+      actor: toText(input.leader) || toText(input.actor) || '팀장',
+      action: '청소 보고 등록',
+      note: `${report.date} ${report.time || ''} · ${report.leader} · 사진 ${countReportPhotos(report)}장`,
+    });
     this._notify();
-    return report;
+    return normalizeReport(report);
   }
 
   /** 최고관리자(대표)가 내용을 확인하고 고객사에 제출합니다 — 이때 고객 방에 보입니다. */
@@ -2446,6 +3291,11 @@ export class Store {
       approvedBy: String(by || '').trim(),
     };
     await this.adapter.put('reports', next);
+    await this.recordHistory('sites', report.siteId, {
+      actor: String(by || '').trim() || '최고관리자',
+      action: '고객사 제출',
+      note: `${report.date} ${report.time || ''} 보고 확인 · 고객 방 공개`,
+    });
     this._notify();
     return normalizeReport(next);
   }
@@ -2460,6 +3310,11 @@ export class Store {
         if (photo && photo.id) await this.adapter.remove('photos', photo.id).catch(() => {});
       }
     }
+    await this.recordHistory('sites', report.siteId, {
+      actor: '앱',
+      action: '청소 보고 삭제',
+      note: `${report.date} ${report.time || ''} · ${report.leader}`,
+    });
     this._notify();
     return true;
   }
@@ -2839,6 +3694,7 @@ export class Store {
   async resetDemo() {
     await this.adapter.clear();
     await this._writeSeed();
+    await this._migrateSiteLinks();
     this._notify();
   }
 }

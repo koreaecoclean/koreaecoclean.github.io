@@ -1735,6 +1735,8 @@ export function createLeaderView(container) {
         time: draft.time,
         leader: draft.leader,
         leaderRole: draft.leaderRole,
+        // 로그인한 계정을 그대로 연결해 보고서 → 팀장 계약 → 업장이 이어집니다.
+        accountId: session.accountId || '',
         durationMin: draft.duration,
         checklist: checkRows,
         note: draft.note,

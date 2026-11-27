@@ -3175,3 +3175,24 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
   .annex-table { font-size: 9.5pt; }
   .annex-table, .sub-sign, .annex-ask, .annex-sign { break-inside: avoid; }
 }
+
+/* ============================================================
+   업장 중심 연결 정보 · 변경 이력 (v2.7.1 1단계)
+   관리 → 현장 카드 → [계약 · 운영 정보 관리] 안에 표시됩니다.
+   ============================================================ */
+.site-links { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line-strong); display: flex; flex-direction: column; gap: 8px; }
+.site-links__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.site-links__grid > span { display: flex; flex-direction: column; gap: 2px; padding: 7px 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); }
+.site-links__grid em { font-style: normal; font-size: 10.5px; font-weight: 700; color: var(--muted); }
+.site-links__grid strong { font-size: 12px; font-weight: 800; color: var(--ink-soft); word-break: break-all; }
+.site-history { border-radius: var(--radius-sm); background: var(--surface-3); }
+.site-history > summary { padding: 8px 10px; font-size: 11.5px; font-weight: 800; color: var(--brand-700); cursor: pointer; }
+.site-history__list { margin: 0; padding: 0 10px 10px; list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.site-history__list li { display: flex; flex-direction: column; gap: 1px; padding-left: 9px; border-left: 2px solid var(--brand-300); font-size: 11px; color: var(--body); }
+.site-history__when { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.site-history__what strong { color: var(--brand-700); font-weight: 800; }
+.site-history__note { color: var(--muted); }
+
+@media (max-width: 360px) {
+  .site-links__grid { grid-template-columns: 1fr; }
+}

@@ -139,6 +139,20 @@
 - 관리 → 새 현장 등록에서 담당 팀장을 고르거나, 현장의 담당 팀장을 바꾸면 그 팀장의 계약서 `siteIds`(별첨 표)에 **현장이 자동으로 들어갑니다**.
 - **체결된 계약서**는 금액·서명·기간을 건드리지 않고 별첨 줄만 더합니다(금액이 비어 있는 새 줄은 공란). 담당이 아닌 팀장의 **미체결** 계약서에서는 빠집니다.
 
+### v2.7.1 — 업장(현장) 중심 데이터 연결 · 변경 이력 (통합 운영 앱 1단계)
+
+기획서(1~10단계) 1단계 작업입니다. **기존 화면·기능·데이터는 그대로 두고, 끊어져 있던 연결만 실제로 이었습니다.**
+
+- **업장(siteId)이 중심**이 되어 `견적(quoteId) ↔ 고객 계약(contractId) ↔ 팀장 계약(staffContractId) ↔ 보고(reportId) ↔ 변경 이력(history)` 이 한 줄로 이어집니다.
+  - 업장에 `quoteId` · `contractId` · `staffContractIds` 가 생겼습니다.
+  - 견적에 `contractId`, 고객 계약에 `quoteId`(기존) + `siteId`, 보고에 `contractId` · `staffContractId` · `accountId` 가 붙습니다.
+- **반복 입력 제거**: `addQuote({siteId})` / `createQuoteForSite()` 로 업장에서 견적을 만들면 고객사·주소·담당자·사업자번호·세금계산서 이메일·청소 주기·면적·청소 공정을 업장 값에서 그대로 가져옵니다.
+- **중복 업장 방지**: 견적이 업장에 연결되어 있으면 계약 체결 때 **그 업장을 그대로 씁니다**(이름으로 새 업장을 만들지 않음).
+- **변경 이력**: 계약금·도급금액·수수료·계약일·청구일·청소공정·출입·주차·담당 팀장이 바뀌면 **전/후 값**이 이력에 남습니다. 견적 수정 · 계약 체결 · 고객사 제출 · 팀장 계약 체결 · 업장 배정도 함께 기록됩니다.
+- **화면**: 관리 → 현장 카드 → `계약 · 운영 정보 관리` 안에 **「연결 정보(업장 기준)」** — 견적 · 고객 계약 · 팀장 계약 · 보고 건수 · 최근 보고 · **최근 변경 이력**.
+- **자동 보정(마이그레이션)**: 앱을 열면 기존 기기·서버 데이터에 **비어 있는 연결 칸만** 채웁니다(`SEED_VERSION` 11 → **12**). 금액·날짜·서명·보고·코드는 다시 쓰지 않으며, 여러 번 실행해도 결과가 같습니다.
+- 서비스 워커 `CACHE_VERSION` **v2.7.1**. 상세 분석·2~10단계 설계는 `docs/upgrade-plan-1to10.md`.
+
 ### v2.7.0 — 최고관리자(대표) 관리자 모드 · 직원 모드 전환 (2026-11-27 대표 요청)
 
 - **대표 계정으로 로그인했을 때만** 프로필 카드(로그아웃 버튼) 바로 아래에 **[관리자 모드] [직원 모드]** 전환 버튼이 나옵니다. 팀장·고객 화면에는 절대 나오지 않습니다.
@@ -609,10 +623,29 @@ vercel --prod
   baseline: {                              /* 처음부터 지금까지 비교용 */
     quote:     { date, note, photos:[ref] },  /* ① 첫 견적 · 오염 상태 */
     deepClean: { date, note, photos:[ref] },  /* ② 첫 청소 · 대청소 */
-  } }
+  },
+  /* 업장 중심 연결 고리 (v2.7.1) */
+  quoteId,                                 /* 이 업장이 나온 견적 */
+  contractId,                              /* 이 업장의 고객 계약서 */
+  staffContractIds:[...],                  /* 이 업장을 맡은 팀장 계약들 */
+  history:[{ id, at, actor, action, note, changes:[{field, from, to}] }] }
 
 // 실제 고객사 예시: (주) 라이트하우스코스메틱 (site_lighthouse, EC-4108,
 //   195-81-00480, 대표 신성민·윤한수, 세금계산서 skltm0518@gmail.com, 첫 입장 코드 C-9K4M2P)
+
+// quote (견적) — siteId · contractId · history 추가
+{ id, no:'Q-2026-101', siteId, contractId, clientCompany, clientCategory, clientAddress,
+  clientContact, clientPhone, clientBizNumber, clientTaxEmail, frequency, scope, extraScope,
+  area, amount, vatIncluded, billingDay, periodMonths, startDate, endDate, terms, memo,
+  validUntil, status, photos:[ref], inviteCode, history:[...] }
+
+// contract (고객 계약서) — quoteId · siteId · history
+{ id, no:'CT-2026-001', quoteId, siteId, status, amount, startDate, endDate, months,
+  clientBusinessName, clientBizNumber, contactName, contactPhone, signature, signedDate, history:[...] }
+
+// staffContract (팀장 계약) — accountId · siteIds · history
+{ id, no:'S-2026-005', accountId, name, employmentType, siteIds:[...], monthlyAmount,
+  status, inviteCode, signature, history:[...] }
 
 // account
 { id, role:'customer|leader|admin', name, title, phone, phonePretty, password /*데모*/,
@@ -624,14 +657,16 @@ vercel --prod
 // grant (방 입장 권한)
 { id:'<accountId>::<siteId>', accountId, siteId, codeId, createdAt }
 
-// report
-{ id, siteId, siteCode, siteName, date:'2026-11-24', time:'07:20',
-  leader:'김미영', leaderRole:'팀장', durationMin:85,
-  checklist:[{ label, done }], note, issueNote,
+// report — contractId · staffContractId · accountId 추가
+{ id, siteId, siteCode, siteName, contractId, staffContractId, accountId,
+  date:'2026-11-24', time:'07:20', leader:'김미영', leaderRole:'팀장', durationMin:85,
+  checklist:[{ label, done }], note, issueNote, status:'pending|submitted',
   photos:{ security:[ref], cleaning:[ref], issue:[ref] }, createdAt }
 ```
 
-storage tables: `sites` `reports` `photos` `inquiries` `accounts` `roomCodes` `grants` `meta`
+> 변경 이력은 **각 레코드 안(`history`)에** 쌓입니다 — 서버 테이블의 `collection` CHECK 제약(14개)을 바꾸지 않고도 여러 기기에 함께 동기화되도록 한 선택입니다. 레코드당 최근 200건까지만 보관합니다.
+
+storage tables: `sites` `reports` `photos` `inquiries` `accounts` `roomCodes` `grants` `quotes` `contracts` `staffContracts` `staffChecks` `supplyCatalog` `supplyOrders` `meta`
 
 - IndexedDB를 쓸 수 없으면 **localStorage**로 자동 대체(용량 작음), 그마저 안 되면 **메모리**로 동작합니다.
 - 저장 공간이 부족하면 “기기 저장 공간이 부족해…” 안내가 뜨고 보고는 등록되지 않습니다.
