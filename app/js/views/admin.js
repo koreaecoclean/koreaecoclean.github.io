@@ -7,7 +7,7 @@
  */
 
 import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate, fmtDateLong, fmtTime, openLightbox, modeSwitchTemplate } from '../ui.js';
-import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, countReportPhotos, QUOTE_STATUS, AGREEMENT_STATUS, SURVEY_PHOTO_AREAS, QUOTE_TEAM_SIZES, QUOTE_DIFFICULTIES, parsePyeong, estimateQuote } from '../store.js';
+import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, countReportPhotos, QUOTE_STATUS, AGREEMENT_STATUS, SURVEY_PHOTO_AREAS, QUOTE_TEAM_SIZES, QUOTE_DIFFICULTIES, parsePyeong, estimateQuote, handoverPhotoCatalog, HANDOVER_ACCESS_TYPES, HANDOVER_CHECK_KEYS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import { preparePhoto } from '../photos.js';
 import { getSession, loginAdmin, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
@@ -74,6 +74,7 @@ export function createAdminView(container) {  const state = {
     newStaffError: '',
     staffDetail: '',
     openDetails: '',
+    openHandover: '',
     survey: {
       open: false,
       photoOpen: false,
@@ -530,7 +531,267 @@ export function createAdminView(container) {  const state = {
       </details>`;
   }
 
-  function siteCodeCardTemplate(site, codes, link) {
+  /* ---------------- 4단계 — 업장 인수인계 · 팀장 배정 (기획서 10·11장) ---------------- */
+
+  function handoverInput(id, key, label, value, options = {}) {
+    const inputId = `${id}-${key.replace(/\./g, '-')}`;
+    const rows = Number(options.rows) || 0;
+    const max = Number(options.max) || (rows ? 300 : 120);
+    if (rows > 0) {
+      return `<div class="field">
+        <label for="${esc(inputId)}">${esc(label)}</label>
+        <textarea class="textarea" id="${esc(inputId)}" rows="${rows}" maxlength="${max}"
+                  data-handover-field="${esc(key)}" placeholder="${esc(options.placeholder || '')}">${esc(value)}</textarea>
+      </div>`;
+    }
+    return `<div class="field">
+      <label for="${esc(inputId)}">${esc(label)}</label>
+      <input class="input" id="${esc(inputId)}" type="${options.type || 'text'}"
+             ${options.type === 'number' ? 'inputmode="numeric" min="0" step="1000"' : ''}
+             value="${esc(value)}" maxlength="${max}"
+             data-handover-field="${esc(key)}" placeholder="${esc(options.placeholder || '')}">
+    </div>`;
+  }
+
+  function siteAssignmentsBlock(site) {
+    const rows = site.assignments || [];
+    if (!rows.length) return '<p class="tiny muted">아직 보낸 배정 요청이 없습니다.</p>';
+    return `<ul class="assign-list" data-site-assignments="${esc(site.id)}">
+      ${rows
+        .map((row) => {
+          const status = ASSIGN_STATUS[row.status] || ASSIGN_STATUS.pending;
+          return `<li class="assign-row" data-site-assignment="${esc(row.id)}" data-assignment-status="${esc(row.status)}">
+            <div class="assign-row__who">
+              <strong>${esc(row.leaderName)} ${esc(row.leaderTitle || '')}</strong>
+              <span>도급 ${esc(fmtWon(row.amount))} · ${esc(row.payDay || '15')}일 지급 · 인수인계 v${esc(String(row.handoverVersion || 0))}</span>
+              <span class="tiny muted">보냄 ${esc(String(row.sentAt || '').slice(0, 16).replace('T', ' '))}${
+                row.decisionAt ? ` · 응답 ${esc(String(row.decisionAt).slice(0, 16).replace('T', ' '))}` : ''
+              }</span>
+              ${row.rejectReason ? `<span class="tiny muted">거절 사유: ${esc(row.rejectReason)}</span>` : ''}
+              ${row.contractId ? `<span class="tiny muted">도급계약서 ${esc(row.contractNo || '')}${row.confirmedAt ? ' · 서명 완료 — 담당 확정' : ' · 서명 대기'}</span>` : ''}
+            </div>
+            <div class="assign-row__right">
+              <span class="badge ${status.badge}">${esc(status.label)}</span>
+              ${row.contractId ? `<button class="link-btn" type="button" data-open-staff="${esc(row.contractId)}">계약서</button>` : ''}
+              ${row.status === 'pending' ? `<button class="link-btn" type="button" data-assign-cancel="${esc(row.id)}" data-assign-site="${esc(site.id)}">철회</button>` : ''}
+            </div>
+          </li>`;
+        })
+        .join('')}
+    </ul>`;
+  }
+
+  /**
+   * 업장 카드 안의 인수인계 · 팀장 배정 상자.
+   *  대표가 인수인계를 저장하고 → 도급조건을 담아 [팀장 배정 요청]을 보냅니다.
+   */
+  function siteHandoverPanelTemplate(site, leaders) {
+    const id = `ho-${site.id}`;
+    const h = site.handover || {};
+    const secret = site.secret || {};
+    const latest = (site.assignments || [])[0] || null;
+    const latestStatus = latest ? ASSIGN_STATUS[latest.status] || ASSIGN_STATUS.pending : null;
+    const catalog = handoverPhotoCatalog(site);
+    const picked = new Set((h.photos || []).map((row) => `${row.group}:${row.index}`));
+    const payAmount = (h.pay && h.pay.amount) || (site.contract && site.contract.subcontractAmount) || '';
+    const paid = h.pay || {};
+    const confirmed = h.confirmed || {};
+    return `
+      <details class="settings site-handover" data-site-handover="${esc(site.id)}" ${state.openHandover === site.id ? 'open' : ''}>
+        <summary>인수인계 · 팀장 배정${h.version ? ` (v${esc(String(h.version))})` : ' (미등록)'}</summary>
+        <div class="settings__body">
+          <div class="rev-mini">
+            <span>인수인계 <strong>${h.version ? `v${esc(String(h.version))}` : '미등록'}</strong></span>
+            <span>저장 <strong>${h.updatedAt ? esc(String(h.updatedAt).slice(0, 16).replace('T', ' ')) : '-'}</strong></span>
+            <span>팀장 배정 <strong>${latest ? `${esc(latestStatus.label)} · ${esc(latest.leaderName)}` : '요청 전'}</strong></span>
+          </div>
+          <form class="form" data-handover-form="${esc(site.id)}" novalidate>
+            <p class="details-head">현장 · 출입</p>
+            ${handoverInput(id, 'address', '현장 주소', h.address || site.address, { placeholder: '예: 서울 양천구 목동서로 100, 6층' })}
+            <div class="field-row">
+              <div class="field">
+                <label for="${esc(id)}-accessType">출입 방식</label>
+                <select class="input" id="${esc(id)}-accessType" data-handover-field="accessType">
+                  <option value="">선택</option>
+                  ${HANDOVER_ACCESS_TYPES.map(
+                    (row) => `<option value="${esc(row.key)}"${h.accessType === row.key ? ' selected' : ''}>${esc(row.label)}</option>`,
+                  ).join('')}
+                </select>
+              </div>
+              ${handoverInput(id, 'accessHours', '출입 가능 시간', h.accessHours, { placeholder: '예: 평일 18:30 이후' })}
+            </div>
+            ${handoverInput(id, 'accessMethod', '출입 방법 · 시건장치', h.accessMethod, { rows: 2, placeholder: '예: 공동현관 #1234 → 6층 카드키' })}
+            <div class="field-row">
+              ${handoverInput(id, 'accessContact', '출입 담당자', h.accessContact)}
+              ${handoverInput(id, 'accessNote', '출입 주의사항', h.accessNote)}
+            </div>
+            <p class="details-head">경비실 · 관리실</p>
+            <div class="field-row">
+              ${handoverInput(id, 'guardDesk', '경비실 · 관리실 안내', h.guardDesk, { placeholder: '예: 1층 경비실 24시간' })}
+              ${handoverInput(id, 'guardContact', '관리실 연락처', h.guardContact)}
+            </div>
+            <p class="details-head">주차</p>
+            <div class="field-row">
+              ${handoverInput(id, 'parking', '주차 안내', h.parking, { placeholder: '예: 지하 2층 방문 주차 2대' })}
+              ${handoverInput(id, 'parkingNote', '주차 위치 · 비용', h.parkingNote)}
+            </div>
+            <p class="details-head">쓰레기 · 분리수거</p>
+            <div class="field-row">
+              ${handoverInput(id, 'trashLocation', '배출 위치', h.trashLocation)}
+              ${handoverInput(id, 'trashTime', '배출 시간', h.trashTime)}
+            </div>
+            <label class="check-item">
+              <input type="checkbox" data-handover-field="trashSeparate"${h.trashSeparate !== false ? ' checked' : ''}>
+              <span>분리수거 실시</span>
+            </label>
+            <div class="field-row">
+              ${handoverInput(id, 'trashFood', '음식물 쓰레기', h.trashFood)}
+              ${handoverInput(id, 'trashNote', '폐기물 관련 사항', h.trashNote)}
+            </div>
+            <p class="details-head">청소도구 · 비품 · 시설</p>
+            <div class="field-row">
+              ${handoverInput(id, 'storageTools', '청소도구 보관 위치', h.storageTools)}
+              ${handoverInput(id, 'storageSupplies', '비품 보관 위치', h.storageSupplies)}
+            </div>
+            <div class="field-row">
+              ${handoverInput(id, 'facilityWater', '물 사용', h.facilityWater)}
+              ${handoverInput(id, 'facilityPower', '전기 사용', h.facilityPower)}
+            </div>
+            ${handoverInput(id, 'facilityContact', '시설 고장 연락처', h.facilityContact)}
+            <p class="details-head">청소 조건 · 주의사항</p>
+            <div class="field-row">
+              ${handoverInput(id, 'workDays', '청소 요일', h.workDays, { placeholder: '예: 주 2회 (화 · 금)' })}
+              ${handoverInput(id, 'workHours', '작업 시간', h.workHours, { placeholder: '예: 19:00 ~ 21:00' })}
+            </div>
+            ${handoverInput(id, 'workTarget', '완료 목표시간', h.workTarget)}
+            ${handoverInput(id, 'workScope', '청소 범위', h.workScope, { rows: 2 })}
+            ${handoverInput(id, 'cautions', '주의사항 · 특이사항', h.cautions, { rows: 2 })}
+            <p class="details-head">현장 사진 연결 (첫 방문 · 구역 사진)</p>
+            ${
+              catalog.length
+                ? `<div class="handover-photo-pick" data-handover-photo-pick="${esc(site.id)}">
+                     ${catalog
+                       .map(
+                         (photo) => `<label class="handover-photo-item">
+                           <input type="checkbox" value="${esc(photo.group)}:${esc(String(photo.index))}" data-handover-photo${picked.has(`${photo.group}:${photo.index}`) ? ' checked' : ''}>
+                           <img src="${esc(photo.thumb)}" alt="${esc(photo.label)}" loading="lazy" decoding="async">
+                           <span>${esc(photo.label)}${photo.caption ? ` · ${esc(photo.caption)}` : ''}</span>
+                         </label>`,
+                       )
+                       .join('')}
+                   </div>`
+                : '<p class="tiny muted">연결할 현장 사진이 없습니다. 업장 카드의 「처음 상태 사진」이나 현장 방문 사진을 먼저 등록하세요.</p>'
+            }
+            <p class="details-head">도급 금액 · 지급일</p>
+            <div class="field-row">
+              ${handoverInput(id, 'pay.amount', '도급금액(원)', payAmount, { type: 'number', max: 12 })}
+              ${handoverInput(id, 'pay.payDay', '지급일', paid.payDay || '15', { placeholder: '예: 15 (익월 15일)' })}
+            </div>
+            ${handoverInput(id, 'pay.terms', '지급 조건', paid.terms, { placeholder: '예: 익월 15일 계좌 입금' })}
+            <p class="details-head">항목별 확인</p>
+            <div class="check-list check-list--compact">
+              ${HANDOVER_CHECK_KEYS.map(
+                (row) => `<label class="check-item">
+                  <input type="checkbox" data-handover-confirm="${esc(row.key)}"${confirmed[row.key] ? ' checked' : ''}>
+                  <span>${esc(row.label)}</span>
+                </label>`,
+              ).join('')}
+            </div>
+            <button class="btn btn--primary btn--sm" type="submit">인수인계 저장</button>
+            <p class="hint">저장한 내용은 팀장 배정 요청에 담겨 전달되고, 수락한 팀장 화면에 그대로 보입니다.</p>
+          </form>
+
+          <details class="settings site-secret" data-site-secret-box="${esc(site.id)}">
+            <summary>출입 비밀번호 · 보안 메모</summary>
+            <div class="settings__body">
+              <p class="tiny muted">일반 업장 정보와 따로 저장합니다. 팀장은 배정이 확정된 뒤에만 열람할 수 있고, 열람한 기록이 남습니다.</p>
+              <form class="form" data-site-secret-form="${esc(site.id)}" novalidate>
+                <div class="field">
+                  <label for="${esc(id)}-secret-code">출입 비밀번호 <span class="tiny muted">(바꿀 때만 입력)</span></label>
+                  <input class="input" id="${esc(id)}-secret-code" type="text" autocomplete="off" spellcheck="false" maxlength="40"
+                         data-secret-field="doorCode" placeholder="${secret.doorCode ? '저장됨 · 바꿀 때만 입력' : '예: #1234*5678'}">
+                </div>
+                <div class="field">
+                  <label for="${esc(id)}-secret-note">보안 메모</label>
+                  <textarea class="textarea" id="${esc(id)}-secret-note" rows="2" maxlength="200" data-secret-field="note">${esc(secret.note || '')}</textarea>
+                </div>
+                <div class="btn-row">
+                  <button class="btn btn--quiet btn--sm" type="submit">보안정보 저장</button>
+                  ${secret.doorCode ? `<button class="link-btn" type="button" data-reveal-secret-admin="${esc(site.id)}">현재 비밀번호 보기</button>` : ''}
+                </div>
+                <p class="hint" data-secret-admin-view>${secret.doorCode ? `저장됨 · 열람 기록 ${esc(String((secret.log || []).length))}건` : '아직 저장된 비밀번호가 없습니다.'}</p>
+              </form>
+            </div>
+          </details>
+
+          <div class="assign-box" data-assign-box="${esc(site.id)}">
+            <p class="details-head">팀장 배정 요청</p>
+            <form class="form" data-assign-form="${esc(site.id)}" novalidate>
+              <div class="field-row">
+                <div class="field">
+                  <label for="${esc(id)}-assign-leader">관리팀장</label>
+                  <select class="input" id="${esc(id)}-assign-leader" data-assign-leader>
+                    <option value="">팀장 선택</option>
+                    ${leaders
+                      .map((account) => `<option value="${esc(account.id)}">${esc(account.name)} ${esc(account.title || '팀장')}</option>`)
+                      .join('')}
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="${esc(id)}-assign-amount">도급금액(원)</label>
+                  <input class="input" id="${esc(id)}-assign-amount" type="number" inputmode="numeric" min="0" step="1000"
+                         value="${esc(payAmount)}" data-assign-amount>
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="${esc(id)}-assign-payday">지급일</label>
+                  <input class="input" id="${esc(id)}-assign-payday" type="text" maxlength="20" value="${esc(paid.payDay || '15')}" data-assign-payday>
+                </div>
+                <div class="field">
+                  <label for="${esc(id)}-assign-terms">지급 조건</label>
+                  <input class="input" id="${esc(id)}-assign-terms" type="text" maxlength="120" value="${esc(paid.terms || '')}" data-assign-terms>
+                </div>
+              </div>
+              <div class="field">
+                <label for="${esc(id)}-assign-note">메모 (선택)</label>
+                <textarea class="textarea" id="${esc(id)}-assign-note" rows="2" maxlength="200" data-assign-note></textarea>
+              </div>
+              <button class="btn btn--primary btn--sm" type="submit">팀장 배정 요청 보내기</button>
+              <p class="hint">팀장은 인수인계 내용과 도급금액만 보고 수락 또는 거절합니다. 고객 계약 금액 · 계약서 · 견적서는 보이지 않습니다.</p>
+            </form>
+            ${siteAssignmentsBlock(site)}
+          </div>
+
+          ${
+            (site.handoverHistory || []).length
+              ? `<details class="site-history" data-handover-history="${esc(site.id)}">
+                   <summary>인수인계 이력 ${esc(String((site.handoverHistory || []).length))}건</summary>
+                   <ul class="site-history__list">
+                     ${(site.handoverHistory || [])
+                       .slice(0, 6)
+                       .map(
+                         (row) => `<li>
+                           <span class="site-history__when">${esc(String(row.at || '').slice(0, 16).replace('T', ' '))}</span>
+                           <span class="site-history__what"><strong>v${esc(String(row.version))}</strong> ${esc(row.action)} · ${esc(row.by)}</span>
+                           ${(row.changes || [])
+                             .slice(0, 8)
+                             .map(
+                               (change) => `<span class="site-history__note">· ${esc(change.field)}: ${esc(String(change.from || '없음'))} → <strong>${esc(String(change.to || '없음'))}</strong></span>`,
+                             )
+                             .join('')}
+                         </li>`,
+                       )
+                       .join('')}
+                   </ul>
+                 </details>`
+              : ''
+          }
+        </div>
+      </details>`;
+  }
+
+  function siteCodeCardTemplate(site, codes, link, leaders = []) {
     const unused = codes.filter((code) => !code.usedAt);
     const used = codes.filter((code) => code.usedAt);
     const meta = CATEGORY_META[site.category] || {};
@@ -553,6 +814,7 @@ export function createAdminView(container) {  const state = {
 
         ${siteMoneyLine(site)}
         ${siteDetailsTemplate(site, link)}
+        ${siteHandoverPanelTemplate(site, leaders)}
 
         ${
           link && link.quote && link.quote.status !== 'contracted'
@@ -1351,7 +1613,7 @@ export function createAdminView(container) {  const state = {
         </div>
         <div class="stack-10">
           ${sites
-            .map((site) => siteCodeCardTemplate(site, codes.filter((code) => code.siteId === site.id), links[site.id] || null))
+            .map((site) => siteCodeCardTemplate(site, codes.filter((code) => code.siteId === site.id), links[site.id] || null, leaders))
             .join('')}
         </div>
       </section>
@@ -1486,6 +1748,89 @@ export function createAdminView(container) {  const state = {
     }
 
     container.innerHTML = await dashboardTemplate(session);
+  }
+
+  /* ---------------- 4단계 — 인수인계 · 팀장 배정 저장 ---------------- */
+
+  async function submitSiteHandover(form) {
+    const siteId = form.dataset.handoverForm;
+    const values = {};
+    form.querySelectorAll('[data-handover-field]').forEach((input) => {
+      const key = input.dataset.handoverField;
+      const value = input.type === 'checkbox' ? !!input.checked : input.value;
+      if (key.indexOf('pay.') === 0) {
+        values.pay = values.pay || {};
+        values.pay[key.slice(4)] = value;
+      } else {
+        values[key] = value;
+      }
+    });
+    values.photos = Array.from(form.querySelectorAll('[data-handover-photo]:checked')).map((input) => {
+      const [group, index] = String(input.value).split(':');
+      return { group, index: Number(index) || 0 };
+    });
+    values.confirmed = {};
+    form.querySelectorAll('[data-handover-confirm]').forEach((input) => {
+      values.confirmed[input.dataset.handoverConfirm] = !!input.checked;
+    });
+    values.actor = state.session ? state.session.name : '';
+    state.openHandover = siteId;
+    try {
+      const site = await store.saveSiteHandover(siteId, values, { actor: state.session });
+      await render();
+      toast(`${site.name} 인수인계를 저장했습니다 · v${site.handover.version}`);
+    } catch (error) {
+      toast(error.message || '인수인계를 저장하지 못했습니다.', { tone: 'error' });
+    }
+  }
+
+  async function submitSiteSecret(form) {
+    const siteId = form.dataset.siteSecretForm;
+    const patch = {};
+    const code = form.querySelector('[data-secret-field="doorCode"]');
+    const note = form.querySelector('[data-secret-field="note"]');
+    // 비밀번호를 새로 입력했을 때만 바꿉니다(빈 칸 = 기존 값 유지).
+    if (code && code.value.trim()) patch.doorCode = code.value.trim();
+    if (note) patch.note = note.value.trim();
+    patch.actor = state.session ? state.session.name : '';
+    state.openHandover = siteId;
+    try {
+      await store.saveSiteSecret(siteId, patch, { actor: state.session });
+      await render();
+      toast('출입 보안정보를 저장했습니다. 팀장은 배정 확정 뒤에 열람할 수 있습니다.');
+    } catch (error) {
+      toast(error.message || '보안정보를 저장하지 못했습니다.', { tone: 'error' });
+    }
+  }
+
+  async function submitSiteAssignment(form) {
+    const siteId = form.dataset.assignForm;
+    const leader = form.querySelector('[data-assign-leader]');
+    const amount = form.querySelector('[data-assign-amount]');
+    const payDay = form.querySelector('[data-assign-payday]');
+    const terms = form.querySelector('[data-assign-terms]');
+    const note = form.querySelector('[data-assign-note]');
+    state.openHandover = siteId;
+    try {
+      const assignment = await store.requestSiteAssignment(
+        siteId,
+        {
+          leaderId: leader ? leader.value : '',
+          amount: amount ? amount.value : 0,
+          payDay: payDay ? payDay.value : '',
+          terms: terms ? terms.value : '',
+          note: note ? note.value : '',
+          actor: state.session ? state.session.name : '',
+        },
+        { actor: state.session },
+      );
+      await render();
+      toast(`${assignment.leaderName} 팀장에게 배정 요청을 보냈습니다 · 도급 ${fmtWon(assignment.amount)}`, {
+        duration: 7000,
+      });
+    } catch (error) {
+      toast(error.message || '배정 요청을 보내지 못했습니다.', { tone: 'error' });
+    }
   }
 
   /* ---------------- events ---------------- */
@@ -1924,6 +2269,21 @@ export function createAdminView(container) {  const state = {
   /* ---------------- events ---------------- */
 
   async function onSubmit(event) {
+    if (event.target.matches('[data-handover-form]')) {
+      event.preventDefault();
+      await submitSiteHandover(event.target);
+      return;
+    }
+    if (event.target.matches('[data-site-secret-form]')) {
+      event.preventDefault();
+      await submitSiteSecret(event.target);
+      return;
+    }
+    if (event.target.matches('[data-assign-form]')) {
+      event.preventDefault();
+      await submitSiteAssignment(event.target);
+      return;
+    }
     if (event.target.matches('[data-staff-account-form]')) {
       event.preventDefault();
       await submitStaffAccount(event.target);
@@ -2037,6 +2397,42 @@ export function createAdminView(container) {  const state = {
   }
 
   async function onClick(event) {
+    /* ---------------- 4단계 — 배정 철회 · 보안정보 보기 ---------------- */
+    const cancelAssignment = event.target.closest('[data-assign-cancel]');
+    if (cancelAssignment) {
+      state.openHandover = cancelAssignment.dataset.assignSite || '';
+      const ok = await confirmDialog({
+        title: '배정 요청을 철회할까요?',
+        message: '팀장 화면에서 이 요청이 사라집니다. 다른 팀장에게 새로 보낼 수 있습니다.',
+        confirmLabel: '철회',
+        tone: 'danger',
+      });
+      if (!ok) return;
+      try {
+        await store.cancelSiteAssignment(cancelAssignment.dataset.assignSite, cancelAssignment.dataset.assignCancel, {
+          actor: state.session,
+        });
+        await render();
+        toast('배정 요청을 철회했습니다.');
+      } catch (error) {
+        toast(error.message || '배정 요청을 철회하지 못했습니다.', { tone: 'error' });
+      }
+      return;
+    }
+
+    const adminReveal = event.target.closest('[data-reveal-secret-admin]');
+    if (adminReveal) {
+      try {
+        const secret = await store.revealSiteSecret(adminReveal.dataset.revealSecretAdmin, { actor: state.session });
+        const box = adminReveal.closest('[data-site-secret-box]');
+        const view = box ? $('[data-secret-admin-view]', box) : null;
+        if (view) view.textContent = secret.doorCode ? `현재 비밀번호: ${secret.doorCode}` : '저장된 비밀번호가 없습니다.';
+      } catch (error) {
+        toast(error.message || '비밀번호를 열 수 없습니다.', { tone: 'error' });
+      }
+      return;
+    }
+
     /* ---------------- 직원 계정 등록 · 코드 설정 ---------------- */
     const genCode = event.target.closest('[data-gen-code]');
     if (genCode) {

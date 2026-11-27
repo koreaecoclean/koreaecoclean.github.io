@@ -24,7 +24,7 @@ import {
   openLightbox,
   modeSwitchTemplate,
 } from '../ui.js';
-import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, canUseSupply, MAX_BASELINE_PHOTOS } from '../store.js';
+import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, canUseSupply, MAX_BASELINE_PHOTOS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, HANDOVER_ACCESS_TYPES } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
 import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
@@ -420,6 +420,7 @@ export function createLeaderView(container) {
     teamContracts: [],
     teamLeadId: '',
     siteStaff: [],
+    assignments: [],
     supplyOrders: [],
     supplyCatalog: [],
     supplyRequestOpen: true,
@@ -531,6 +532,11 @@ export function createLeaderView(container) {
       { key: 'sites', label: '관리업장' },
       { key: 'contracts', label: '계약서' },
     ];
+    // 4단계 — 내게 온 팀장 배정 요청 (대표 요청 → 수락/거절 → 도급계약서 서명)
+    if (session && session.role === 'leader') {
+      const pending = (state.assignments || []).filter((row) => row.status === 'pending').length;
+      tabs.push({ key: 'assign', label: pending ? `내 배정 ${pending}` : '내 배정' });
+    }
     // 청소장비 · 봉투는 구입 당사자 직원만 봅니다. 부관리자(본부장) 화면에는 나오지 않습니다.
     if (session && session.role === 'leader' && canUseSupply(session)) {
       tabs.push({ key: 'supply', label: '장비 · 봉투' });
@@ -574,6 +580,192 @@ export function createLeaderView(container) {
           <dd>내 도급계약서 확인</dd>
         </dl>
         <p class="hint">고객과의 계약 조건은 이 화면에 나오지 않습니다. 문의는 대표에게 해 주세요.</p>
+      </section>`;
+  }
+
+  /* ---------------- 4단계 — 내 배정 요청 · 인수인계 (기획서 10·11장) ---------------- */
+
+  /** 금액 표시 — 팀장 화면은 본인 도급금액만 보여 줍니다(고객 금액 없음). */
+  function wonText(value) {
+    const amount = Math.round(Number(value) || 0);
+    if (!amount) return '미정';
+    return `${String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}원`;
+  }
+
+  function accessTypeLabel(key) {
+    return (HANDOVER_ACCESS_TYPES.find((row) => row.key === key) || {}).label || '';
+  }
+
+  /** 인수인계 항목 — 값이 있는 줄만 보여 줍니다. */
+  function handoverRowsHtml(handover) {
+    const h = handover || {};
+    const join = (...parts) => parts.filter(Boolean).join(' · ');
+    const rows = [
+      ['현장 주소', h.address],
+      ['출입 방식', join(accessTypeLabel(h.accessType), h.accessMethod)],
+      ['출입 가능 시간', h.accessHours],
+      ['출입 담당', join(h.accessContact, h.accessNote)],
+      ['경비실 · 관리실', join(h.guardDesk, h.guardContact)],
+      ['주차', join(h.parking, h.parkingNote)],
+      ['쓰레기', join(h.trashLocation, h.trashTime, h.trashSeparate ? '분리수거' : '분리수거 안 함', h.trashFood, h.trashNote)],
+      ['도구 · 비품', join(h.storageTools, h.storageSupplies)],
+      ['시설 · 연락처', join(h.facilityWater, h.facilityPower, h.facilityContact)],
+      ['청소 요일 · 시간', join(h.workDays, h.workHours, h.workTarget)],
+      ['청소 범위', h.workScope],
+      ['주의사항', h.cautions],
+    ].filter(([, value]) => value);
+    if (!rows.length) return '';
+    return `<dl class="kv kv--left handover-list">${rows
+      .map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`)
+      .join('')}</dl>`;
+  }
+
+  function handoverPhotosHtml(photos) {
+    const list = Array.isArray(photos) ? photos : [];
+    if (!list.length) return '';
+    return `<div class="handover-photos" data-handover-photos>
+      ${list
+        .map(
+          (photo) => `<figure class="handover-photo">
+            <img src="${esc(photo.thumb)}" alt="${esc(photo.label || '현장 사진')}" loading="lazy" decoding="async">
+            <figcaption>${esc(photo.label || photo.area || '현장')}${photo.caption ? ` · ${esc(photo.caption)}` : ''}</figcaption>
+          </figure>`,
+        )
+        .join('')}
+    </div>`;
+  }
+
+  function assignmentBadge(status) {
+    const meta = ASSIGN_STATUS[status] || ASSIGN_STATUS.pending;
+    return `<span class="badge ${meta.badge}">${esc(meta.label)}</span>`;
+  }
+
+  /** 수락 전 — 대표가 보낸 인수인계 · 도급금액만 보고 수락/거절합니다. */
+  function pendingAssignmentCard(row) {
+    const h = row.handover || {};
+    return `
+      <article class="panel assign-card" data-assignment="${esc(row.id)}" data-assignment-status="${esc(row.status)}">
+        <div class="section-head">
+          <div>
+            <h2>${esc(row.site.name)}</h2>
+            <p>${esc(row.site.code)} · ${esc(row.site.area || '')} · ${esc(row.site.frequency || '')}</p>
+          </div>
+          ${assignmentBadge(row.status)}
+        </div>
+        <p class="tiny muted">${esc(row.sentBy || '대표')}님이 ${esc(String(row.sentAt).slice(0, 16).replace('T', ' '))}에 보낸 배정 요청입니다.
+          인수인계 v${esc(String(row.handoverVersion || 0))} · 아래 내용을 확인하고 수락 또는 거절해 주세요.</p>
+        <div class="assign-pay" data-assign-pay="${esc(row.id)}">
+          <span>도급금액 <strong>${esc(wonText(row.amount))}</strong></span>
+          <span>지급일 <strong>${esc(row.payDay || '15')}일</strong></span>
+        </div>
+        ${handoverRowsHtml(h)}
+        ${handoverPhotosHtml(h.photos)}
+        ${row.terms ? `<p class="hint">지급 조건: ${esc(row.terms)}</p>` : ''}
+        ${row.note ? `<p class="hint">대표 메모: ${esc(row.note)}</p>` : ''}
+        <p class="hint">고객과의 계약 금액 · 계약 문서 · 견적 내용은 이 화면에 나오지 않습니다. 수락하면 이 내용으로 팀장 도급계약서가 만들어집니다.</p>
+        <div class="btn-row">
+          <button class="btn btn--primary" type="button" data-assign-accept="${esc(row.id)}">배정 수락</button>
+        </div>
+        <details class="assign-reject" data-assign-reject-box="${esc(row.id)}">
+          <summary>거절하기 (사유 입력)</summary>
+          <div class="field" style="margin-top:10px">
+            <label for="reason-code-${esc(row.id)}">거절 사유</label>
+            <select class="input" id="reason-code-${esc(row.id)}" data-assign-code="${esc(row.id)}">
+              ${ASSIGN_REJECT_REASONS.map(
+                (reason) => `<option value="${esc(reason.key)}">${esc(reason.label)}</option>`,
+              ).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label for="reason-text-${esc(row.id)}">사유 메모 <span class="tiny muted">(기타를 고르면 필수)</span></label>
+            <textarea class="textarea" id="reason-text-${esc(row.id)}" rows="2" maxlength="200" data-assign-reason="${esc(row.id)}"
+                      placeholder="예: 그 시간대 다른 현장과 겹칩니다."></textarea>
+          </div>
+          <button class="btn btn--quiet" type="button" data-assign-reject="${esc(row.id)}">이 배정 거절</button>
+        </details>
+      </article>`;
+  }
+
+  /** 수락·거절·대체된 요청 — 결과와 계약서로 이어집니다. */
+  function decidedAssignmentRow(row) {
+    const when = String(row.decisionAt || row.sentAt || '').slice(0, 16).replace('T', ' ');
+    return `
+      <div class="my-doc-row assign-row" data-assignment="${esc(row.id)}" data-assignment-status="${esc(row.status)}">
+        <div class="my-doc-row__who">
+          <strong>${esc(row.site.name)}</strong>
+          <span>${esc(row.site.code)} · 도급 ${esc(wonText(row.amount))} · ${esc(row.payDay || '15')}일 지급${when ? ` · ${esc(when)}` : ''}</span>
+          ${row.rejectReason ? `<span class="tiny muted">거절 사유: ${esc(row.rejectReason)}</span>` : ''}
+        </div>
+        <div class="my-doc-row__right">
+          ${assignmentBadge(row.status)}
+          ${
+            row.contractId
+              ? `<button class="btn btn--sm btn--ghost" type="button" data-open-staff-contract="${esc(row.contractId)}">
+                   ${row.confirmedAt ? '도급계약서 보기' : '확인 · 서명'}
+                 </button>`
+              : ''
+          }
+        </div>
+      </div>`;
+  }
+
+  function assignmentPanelTemplate(session) {
+    const rows = state.assignments || [];
+    const pending = rows.filter((row) => row.status === 'pending');
+    const decided = rows.filter((row) => row.status !== 'pending');
+    return `
+      <section data-assign-panel>
+        <div class="section-head">
+          <h2>내 배정</h2>
+          <p>${pending.length ? `수락 대기 ${pending.length}건` : '대기 중인 배정 없음'}</p>
+        </div>
+        ${pending.length
+          ? pending.map(pendingAssignmentCard).join('')
+          : `<section class="panel"><div class="empty"><strong>지금은 받은 배정 요청이 없습니다</strong>
+               <span>대표가 업장 · 도급금액 · 인수인계 내용을 담아 배정을 요청하면 이곳에 표시됩니다.</span></div></section>`}
+        ${decided.length
+          ? `<section class="panel" data-assign-history>
+               <div class="section-head"><h2>지난 배정</h2><p>${decided.length}건</p></div>
+               ${decided.map(decidedAssignmentRow).join('')}
+             </section>`
+          : ''}
+        <section class="panel">
+          <div class="section-head"><h2>최근 7일</h2></div>
+          <div class="kv" id="week-summary"><dt>불러오는 중</dt><dd>-</dd></div>
+        </section>
+      </section>
+      ${settingsTemplate(session)}`;
+  }
+
+  /** 배정이 확정된 업장의 인수인계 — 현장에서 바로 보는 정보(+출입 비밀번호 열람). */
+  function handoverCardTemplate(site) {
+    const handover = site.handover || {};
+    if (!handover.version) return '';
+    return `
+      <section class="panel handover-card" data-handover-card="${esc(site.id)}" data-handover-version="${esc(String(handover.version))}">
+        <div class="section-head">
+          <h2>인수인계</h2>
+          <p>v${esc(String(handover.version))} · ${esc(String(handover.updatedAt || '').slice(0, 10))} 저장</p>
+        </div>
+        ${site.assignee && site.assignee.name ? `<p class="tiny muted">담당 확정 ${esc(site.assignee.name)} · ${esc(String(site.assignee.since || '').slice(0, 10))}</p>` : ''}
+        ${handoverRowsHtml(handover)}
+        ${handoverPhotosHtml(handover.photos)}
+        <dl class="kv kv--left handover-pay">
+          <dt>도급금액</dt><dd data-handover-pay>${esc(wonText(handover.pay && handover.pay.amount))}</dd>
+          <dt>지급일</dt><dd>${esc((handover.pay && handover.pay.payDay) || '15')}일</dd>
+          ${handover.pay && handover.pay.terms ? `<dt>지급 조건</dt><dd>${esc(handover.pay.terms)}</dd>` : ''}
+        </dl>
+        <div class="secret-row" data-site-secret="${esc(site.id)}">
+          <span>출입 비밀번호</span>
+          ${
+            site.secretSet
+              ? `<strong data-secret-value>••••••</strong>
+                 <button class="link-btn" type="button" data-reveal-secret="${esc(site.id)}">보기</button>
+                 <span class="tiny muted" data-secret-note>열람 기록 ${esc(String(site.secretLogCount || 0))}건 · 누르면 기록이 남습니다</span>`
+              : '<span class="ops-empty">미등록 · 대표에게 확인</span>'
+          }
+        </div>
+        <p class="hint">현장에서 확인한 출입 · 쓰레기 · 주차 정보입니다. 바뀐 내용은 대표에게 알려 주세요.</p>
       </section>`;
   }
 
@@ -784,12 +976,13 @@ export function createLeaderView(container) {
             : myDocsTemplate(state.myContracts) ||
               `<section class="panel">${`<div class="empty"><strong>아직 계약서가 없습니다</strong><span>대표가 계약서를 보내면 이곳에 표시됩니다.</span></div>`}</section>`
           : tab === 'supply'
-            ? supplyStaffPanel({
-                  catalog: state.supplyCatalog,
+            ? supplyStaffPanel({                  catalog: state.supplyCatalog,
                   orders: state.supplyOrders,
                   session,
                   state: { supply: { open: state.supplyRequestOpen } },
                 })
+              : tab === 'assign' && session.role === 'leader'
+                ? assignmentPanelTemplate(session)
               : state.managerMode
                 ? await managerSitesTemplate(session, sites)
                 : `<section>
@@ -1049,6 +1242,8 @@ export function createLeaderView(container) {
       ${state.sent ? sentTemplate(state.sent) : ''}
 
       ${staffPayTemplate(site, session)}
+
+      ${handoverCardTemplate(site)}
 
       ${
         hasManual
@@ -1435,7 +1630,7 @@ export function createLeaderView(container) {
 
   async function render(options = {}) {
     mount();
-    if (options && options.tab && ['sites', 'contracts', 'supply'].includes(options.tab)) {
+    if (options && options.tab && ['sites', 'contracts', 'supply', 'assign'].includes(options.tab)) {
       state.leaderTab = options.tab;
     }
     const session = await getSession();
@@ -1447,6 +1642,7 @@ export function createLeaderView(container) {
       state.myContracts = [];
       state.leaderTab = 'sites';
       state.siteStaff = [];
+      state.assignments = [];
       state.supplyCatalog = [];
       state.supplyOrders = [];
       state.managerMode = false;
@@ -1516,6 +1712,8 @@ export function createLeaderView(container) {
       { accountId: state.session.accountId },
       { actor: state.session },
     );
+    // 4단계 — 내게 온 팀장 배정 요청 (본인 계정 것만 · 고객 금액 없음).
+    state.assignments = state.session.role === 'leader' ? await store.listAssignmentRequests(state.session) : [];
 
     // 청소장비 · 봉투: 구입 당사자 직원(부관리자·대표 제외)에게만 열립니다.
     const supplyAllowed = state.session.role === 'leader' && canUseSupply(state.session);
@@ -1923,6 +2121,80 @@ export function createLeaderView(container) {
         role: 'staff',
         onChanged: render,
       });
+      return;
+    }
+
+    /* -------- 4단계 — 배정 수락 / 거절 / 출입 비밀번호 열람 -------- */
+    const acceptAssignment = event.target.closest('[data-assign-accept]');
+    if (acceptAssignment) {
+      const id = acceptAssignment.dataset.assignAccept;
+      const row = (state.assignments || []).find((item) => item.id === id);
+      const ok = await confirmDialog({
+        title: '배정을 수락할까요?',
+        message: `${row ? `${row.site.name} · 도급 ${wonText(row.amount)} · ${row.payDay || '15'}일 지급` : '배정 요청'}\n수락하면 이 내용으로 팀장 도급계약서가 만들어집니다. 서명을 마치면 담당 팀장으로 확정됩니다.`,
+        confirmLabel: '수락',
+      });
+      if (!ok) return;
+      setBusy(acceptAssignment, true, '수락 중…');
+      try {
+        const result = await store.acceptSiteAssignment(id, { actor: state.session });
+        await render();
+        toast(`배정을 수락했습니다. 도급계약서 ${result.contract.no}가 만들어졌습니다. 확인 후 서명해 주세요.`, {
+          duration: 9000,
+        });
+        await openStaffContractSheet(result.contract.id, { role: 'staff', onChanged: render });
+      } catch (error) {
+        toast(error.message || '배정을 수락하지 못했습니다.', { tone: 'error' });
+      } finally {
+        setBusy(acceptAssignment, false);
+      }
+      return;
+    }
+
+    const rejectAssignment = event.target.closest('[data-assign-reject]');
+    if (rejectAssignment) {
+      const id = rejectAssignment.dataset.assignReject;
+      const codeInput = $(`[data-assign-code="${id}"]`, container);
+      const reasonInput = $(`[data-assign-reason="${id}"]`, container);
+      const code = codeInput ? codeInput.value : 'etc';
+      const reason = reasonInput ? reasonInput.value.trim() : '';
+      const ok = await confirmDialog({
+        title: '배정을 거절할까요?',
+        message: '거절 사유가 대표에게 전달됩니다. 대표는 다른 팀장에게 바로 다시 배정할 수 있습니다.',
+        confirmLabel: '거절',
+        tone: 'danger',
+      });
+      if (!ok) return;
+      setBusy(rejectAssignment, true, '보내는 중…');
+      try {
+        await store.rejectSiteAssignment(id, { code, reason }, { actor: state.session });
+        await render();
+        toast('배정을 거절했습니다.');
+      } catch (error) {
+        toast(error.message || '배정을 거절하지 못했습니다.', { tone: 'error' });
+      } finally {
+        setBusy(rejectAssignment, false);
+      }
+      return;
+    }
+
+    const revealSecret = event.target.closest('[data-reveal-secret]');
+    if (revealSecret) {
+      const siteId = revealSecret.dataset.revealSecret;
+      try {
+        const secret = await store.revealSiteSecret(siteId, { actor: state.session });
+        const box = revealSecret.closest('[data-site-secret]');
+        const value = box ? $('[data-secret-value]', box) : null;
+        if (value) {
+          value.textContent = secret.doorCode || '미등록';
+          value.dataset.secretRevealed = 'true';
+        }
+        const note = box ? $('[data-secret-note]', box) : null;
+        if (note) note.textContent = '열람 기록이 남았습니다 · 화면을 나가면 다시 가려집니다';
+        if (revealSecret.parentNode) revealSecret.remove();
+      } catch (error) {
+        toast(error.message || '출입 비밀번호를 열 수 없습니다.', { tone: 'error' });
+      }
       return;
     }
 

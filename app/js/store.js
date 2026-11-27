@@ -925,6 +925,256 @@ export function normalizeOps(ops) {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* 4단계 — 업장 인수인계 · 팀장 배정 (기획서 10·11·12장)               */
+/* ------------------------------------------------------------------ */
+
+/** 출입 방식 — 지문 ‘원본’은 저장하지 않고 방식만 기록합니다(기획서 10장). */
+export const HANDOVER_ACCESS_TYPES = [
+  { key: 'common', label: '공동현관 번호' },
+  { key: 'card', label: '출입카드' },
+  { key: 'keypad', label: '출입문 비밀번호' },
+  { key: 'key', label: '열쇠' },
+  { key: 'fingerprint', label: '지문 출입 (방식만 기록)' },
+  { key: 'desk', label: '경비실 · 관리실 호출' },
+  { key: 'staff', label: '상주 직원 안내' },
+  { key: 'etc', label: '기타' },
+];
+
+/** 인수인계 항목별 확인 — 구역(출입·쓰레기·주차·시설·청소 조건)마다 확인 여부. */
+export const HANDOVER_CHECK_KEYS = [
+  { key: 'access', label: '출입 정보 확인' },
+  { key: 'trash', label: '쓰레기 · 분리수거 확인' },
+  { key: 'parking', label: '주차 확인' },
+  { key: 'facility', label: '시설 · 보관 장소 확인' },
+  { key: 'condition', label: '청소 조건 확인' },
+];
+
+/** 팀장 배정 요청 상태 — 제안 중 → 수락/거절 → (계약 서명 시) 확정. */
+export const ASSIGN_STATUS = {
+  pending: { label: '배정 제안 중', short: '수락 대기', badge: 'badge--wait' },
+  accepted: { label: '수락 완료', short: '수락', badge: 'badge--done' },
+  rejected: { label: '거절됨', short: '거절', badge: 'badge--stop' },
+  canceled: { label: '철회됨', short: '철회', badge: 'badge--stop' },
+  superseded: { label: '새 요청으로 대체', short: '대체', badge: 'badge' },
+};
+
+/** 거절 사유 선택지 (기획서 11장 — 사유를 선택하거나 직접 입력). */
+export const ASSIGN_REJECT_REASONS = [
+  { key: 'schedule', label: '일정이 맞지 않음' },
+  { key: 'distance', label: '거리가 멂' },
+  { key: 'amount', label: '도급금액이 맞지 않음' },
+  { key: 'scope', label: '업무 범위가 맞지 않음' },
+  { key: 'condition', label: '현장 조건(출입 · 주차)이 어려움' },
+  { key: 'etc', label: '기타 (직접 입력)' },
+];
+
+/** 업장 인수인계 — 출입 · 시설 · 청소 조건 · 현장 사진 · 도급 조건을 한곳에. */
+export function normalizeHandover(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const text = (key) => toText(source[key]);
+  const pay = source.pay && typeof source.pay === 'object' ? source.pay : {};
+  const confirmed = source.confirmed && typeof source.confirmed === 'object' ? source.confirmed : {};
+  const seenPhoto = new Set();
+  const photos = [];
+  for (const row of Array.isArray(source.photos) ? source.photos : []) {
+    const group = row && ['quote', 'deepClean', 'survey'].includes(row.group) ? row.group : '';
+    const index = Math.max(0, Math.round(Number(row && row.index) || 0));
+    const key = group ? `${group}:${index}` : '';
+    if (!key || seenPhoto.has(key)) continue;
+    seenPhoto.add(key);
+    photos.push({ group, index, caption: toText(row && row.caption) });
+  }
+  return {
+    version: Math.max(0, Math.round(Number(source.version) || 0)),
+    updatedAt: text('updatedAt'),
+    updatedBy: text('updatedBy'),
+    address: text('address'),
+    accessType: HANDOVER_ACCESS_TYPES.some((row) => row.key === source.accessType) ? source.accessType : '',
+    accessMethod: text('accessMethod'),
+    accessContact: text('accessContact'),
+    accessHours: text('accessHours'),
+    accessNote: text('accessNote'),
+    guardDesk: text('guardDesk'),
+    guardContact: text('guardContact'),
+    parking: text('parking'),
+    parkingNote: text('parkingNote'),
+    trashLocation: text('trashLocation'),
+    trashTime: text('trashTime'),
+    trashSeparate: source.trashSeparate !== false,
+    trashFood: text('trashFood'),
+    trashNote: text('trashNote'),
+    storageTools: text('storageTools'),
+    storageSupplies: text('storageSupplies'),
+    facilityWater: text('facilityWater'),
+    facilityPower: text('facilityPower'),
+    facilityContact: text('facilityContact'),
+    workDays: text('workDays'),
+    workHours: text('workHours'),
+    workTarget: text('workTarget'),
+    workScope: text('workScope'),
+    cautions: text('cautions'),
+    photos,
+    pay: { amount: toAmount(pay.amount), payDay: toText(pay.payDay), terms: toText(pay.terms) },
+    confirmed: Object.fromEntries(HANDOVER_CHECK_KEYS.map(({ key }) => [key, confirmed[key] === true])),
+  };
+}
+
+/** 인수인계 이력 — 언제 누가 몇 번째 버전을 바꿨는지(값은 사람이 읽는 이름으로). */
+export function normalizeHandoverHistory(list) {
+  return (Array.isArray(list) ? list : [])
+    .slice(0, 50)
+    .map((row) => ({
+      id: toText(row && row.id),
+      at: toText(row && row.at),
+      by: toText(row && row.by),
+      version: Math.max(0, Math.round(Number(row && row.version) || 0)),
+      action: toText(row && row.action),
+      changes: (Array.isArray(row && row.changes) ? row.changes : [])
+        .map((change) => ({ field: toText(change && change.field), from: toText(change && change.from), to: toText(change && change.to) }))
+        .filter((change) => change.field),
+    }));
+}
+
+/** 출입 비밀번호 · 보안 메모 — 일반 업장 정보와 분리해 두고 열람 기록을 남깁니다. */
+export function normalizeSiteSecret(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    doorCode: toText(source.doorCode),
+    note: toText(source.note),
+    updatedAt: toText(source.updatedAt),
+    updatedBy: toText(source.updatedBy),
+    log: (Array.isArray(source.log) ? source.log : [])
+      .map((row) => ({ at: toText(row && row.at), by: toText(row && row.by), action: toText(row && row.action) }))
+      .slice(0, 50),
+  };
+}
+
+/** 팀장 배정 요청 한 건 — 보낼 때의 인수인계 내용을 그대로 복사해 둡니다(감사 기록). */
+export function normalizeAssignment(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    id: toText(source.id),
+    leaderId: toText(source.leaderId),
+    leaderName: toText(source.leaderName),
+    leaderTitle: toText(source.leaderTitle),
+    status: ASSIGN_STATUS[source.status] ? source.status : 'pending',
+    sentAt: toText(source.sentAt),
+    sentBy: toText(source.sentBy),
+    amount: toAmount(source.amount),
+    payDay: toText(source.payDay),
+    terms: toText(source.terms),
+    note: toText(source.note),
+    handoverVersion: Math.max(0, Math.round(Number(source.handoverVersion) || 0)),
+    handoverAt: toText(source.handoverAt),
+    handover: normalizeHandover(source.handover),
+    decisionAt: toText(source.decisionAt),
+    rejectCode: toText(source.rejectCode),
+    rejectReason: toText(source.rejectReason),
+    contractId: toText(source.contractId),
+    contractNo: toText(source.contractNo),
+    confirmedAt: toText(source.confirmedAt),
+    canceledAt: toText(source.canceledAt),
+    canceledBy: toText(source.canceledBy),
+    history: normalizeHistory(source.history),
+  };
+}
+
+const HANDOVER_FIELD_LABELS = {
+  address: '현장 주소',
+  accessType: '출입 방식',
+  accessMethod: '출입 방법',
+  accessContact: '출입 담당자',
+  accessHours: '출입 가능 시간',
+  accessNote: '출입 주의사항',
+  guardDesk: '경비실 · 관리실',
+  guardContact: '관리실 연락처',
+  parking: '주차',
+  parkingNote: '주차 안내',
+  trashLocation: '쓰레기 배출 위치',
+  trashTime: '배출 시간',
+  trashSeparate: '분리수거',
+  trashFood: '음식물 쓰레기',
+  trashNote: '폐기물 안내',
+  storageTools: '청소도구 보관',
+  storageSupplies: '비품 보관',
+  facilityWater: '물 사용',
+  facilityPower: '전기 사용',
+  facilityContact: '시설 고장 연락처',
+  workDays: '청소 요일',
+  workHours: '작업 시간',
+  workTarget: '완료 목표시간',
+  workScope: '청소 범위',
+  cautions: '주의사항',
+  photos: '현장 사진',
+  confirmed: '항목별 확인',
+  'pay.amount': '도급금액',
+  'pay.payDay': '지급일',
+  'pay.terms': '지급 조건',
+};
+
+/** 인수인계 값 비교용 — 바뀐 칸만 이력에 남기려고 1단계로 펼칩니다. */
+function handoverSnapshot(handover) {
+  const row = normalizeHandover(handover);
+  const flat = {};
+  for (const key of Object.keys(HANDOVER_FIELD_LABELS)) {
+    if (key === 'photos' || key === 'confirmed' || key.startsWith('pay.')) continue;
+    flat[key] = key === 'trashSeparate' ? (row.trashSeparate ? '예' : '아니오') : String(row[key] ?? '');
+  }
+  flat['pay.amount'] = row.pay.amount ? String(row.pay.amount) : '';
+  flat['pay.payDay'] = row.pay.payDay;
+  flat['pay.terms'] = row.pay.terms;
+  flat.photos = row.photos.map((photo) => `${photo.group}:${photo.index}`).join(',');
+  flat.confirmed = Object.entries(row.confirmed)
+    .filter(([, on]) => on)
+    .map(([key]) => key)
+    .join(',');
+  return flat;
+}
+
+/** 현장에 붙어 있는 사진(첫 견적 · 첫 대청소 · 방문 구역) — 인수인계 사진 후보. */
+export function handoverPhotoCatalog(site) {
+  const out = [];
+  const baseline = normalizeBaseline(site && site.baseline);
+  const thumbOf = (photo) => {
+    const ref = photo && photo.ref ? photo.ref : photo;
+    return (ref && (ref.thumbAsset || ref.thumb || ref.asset)) || '';
+  };
+  for (const stage of BASELINE_STAGES) {
+    baseline[stage].photos.forEach((photo, index) => {
+      const thumb = thumbOf(photo);
+      if (!thumb) return;
+      out.push({
+        group: stage,
+        index,
+        area: '',
+        label: stage === 'quote' ? '첫 견적' : '첫 대청소',
+        caption: toText(photo && photo.caption),
+        thumb,
+      });
+    });
+  }
+  normalizeSitePhotos(site && site.surveyPhotos).forEach((photo, index) => {
+    const thumb = thumbOf(photo.ref);
+    if (!thumb) return;
+    const area = (SURVEY_PHOTO_AREAS.find((row) => row.key === photo.area) || {}).label || '기타';
+    out.push({ group: 'survey', index, area, label: area, caption: toText(photo.memo), thumb });
+  });
+  return out;
+}
+
+/** 인수인계에 연결된 사진 참조 → 실제 썸네일 (없어진 사진은 조용히 빠집니다). */
+export function resolveHandoverPhotos(site, refs) {
+  const catalog = handoverPhotoCatalog(site);
+  const picked = [];
+  for (const row of Array.isArray(refs) ? refs : []) {
+    const found = catalog.find((item) => item.group === row.group && item.index === Number(row.index));
+    if (!found) continue;
+    picked.push({ ...found, caption: toText(row && row.caption) || found.caption });
+  }
+  return picked;
+}
+
 /** 업장 정보에서 이력에 남길 칸의 사람이 읽는 이름. */
 const SITE_FIELD_LABELS = {
   name: '업장명',
@@ -1331,6 +1581,9 @@ export function normalizeStaffContract(input) {
     bankAccount: toText(source.bankAccount),
     accountHolder: toText(source.accountHolder) || toText(source.name),
     siteIds: Array.isArray(source.siteIds) ? source.siteIds.filter(Boolean).map(String) : [],
+    // 4단계 — 팀장 배정 수락으로 자동 만들어진 계약이면 그 배정 · 업장을 함께 기억합니다.
+    siteId: toText(source.siteId),
+    assignmentId: toText(source.assignmentId),
     startDate: toText(source.startDate),
     endDate: toText(source.endDate),
     monthlyAmount: toAmount(source.monthlyAmount),
@@ -1400,6 +1653,14 @@ function normalizeSite(site) {
     // 3단계 — 계약 체결과 함께 열린 업장 관리방
     contactPhone: toText(site.contactPhone),
     room: normalizeRoom(site.room),
+    // 4단계 — 인수인계 · 출입 보안정보 · 팀장 배정 요청
+    handover: normalizeHandover(site.handover),
+    handoverHistory: normalizeHandoverHistory(site.handoverHistory),
+    secret: normalizeSiteSecret(site.secret),
+    assignments: (Array.isArray(site.assignments) ? site.assignments : []).map(normalizeAssignment),
+    assignee: site.assignee && typeof site.assignee === 'object'
+      ? { accountId: toText(site.assignee.accountId), name: toText(site.assignee.name), since: toText(site.assignee.since) }
+      : null,
     // 업장(siteId) 중심 연결 고리 — 이 업장이 어느 견적/계약/팀장 계약에서 왔는지.
     quoteId: toText(site.quoteId),
     contractId: toText(site.contractId),
@@ -1615,6 +1876,7 @@ export function canOpenSite(session, siteId) {
 export function siteForStaff(site) {
   if (!site) return site;
   const contract = normalizeContract(site.contract);
+  const handover = normalizeHandover(site.handover);
   return {
     id: site.id,
     code: site.code,
@@ -1636,6 +1898,13 @@ export function siteForStaff(site) {
     locked: site.locked,
     annexHours: site.annexHours,
     staffContractIds: site.staffContractIds || [],
+    // 4단계 — 인수인계(고객 계약 금액·계약서·견적서는 포함하지 않음) · 담당 확정 · 보안정보 표시 여부.
+    handover: { ...handover, photos: resolveHandoverPhotos(site, handover.photos) },
+    assignee: site.assignee && typeof site.assignee === 'object'
+      ? { name: toText(site.assignee.name), since: toText(site.assignee.since) }
+      : null,
+    secretSet: !!(site.secret && site.secret.doorCode),
+    secretLogCount: site.secret && Array.isArray(site.secret.log) ? site.secret.log.length : 0,
     // 본인 도급 조건 — 이 업장의 도급금액만. (고객 청구일·계약일 등은 넘기지 않습니다.)
     staffPay: { amount: contract.subcontractAmount },
   };
@@ -2870,6 +3139,11 @@ export class Store {
       survey: normalizeSurvey(input.survey),
       surveyPhotos: normalizeSitePhotos(input.surveyPhotos),
       room: normalizeRoom(input.room),
+      // 4단계 — 인수인계 · 출입 보안정보 · 팀장 배정 요청 (빈 상태로 시작)
+      handover: normalizeHandover(input.handover),
+      handoverHistory: normalizeHandoverHistory(input.handoverHistory),
+      secret: normalizeSiteSecret(input.secret),
+      assignments: (Array.isArray(input.assignments) ? input.assignments : []).map(normalizeAssignment),
       createdAt: new Date().toISOString(),
       source: 'app',
     };
@@ -2886,7 +3160,7 @@ export class Store {
     // 새 업장은 담당 팀장의 도급계약서 별첨에도 바로 올립니다.
     await this.syncStaffContractSites(site.id);
     this._notify();
-    return site;
+    return normalizeSite(site);
   }
 
   async updateSite(id, patch = {}, { actor = null } = {}) {
@@ -3112,6 +3386,564 @@ export class Store {
       this._notify();
     }
     return changed;
+  }
+
+  /* ---------------- 4단계 — 업장 인수인계 (기획서 10장) ---------------- */
+
+  /**
+   * 인수인계 저장 (대표 전용).
+   *  · 바뀤 칸만 전/후 값으로 handoverHistory · 업장 history 에 남깁니다.
+   *  · 출입 · 쓰레기 · 주차 요약은 기존 현장 운영 정보(ops)에도 같은 값으로 맞춥니다.
+   *  · 도급금액을 적었으면 이 업장의 도급금액도 같은 값으로 맞춥니다(한 번만 입력).
+   */
+  async saveSiteHandover(siteId, patch = {}, { actor = null } = {}) {
+    if (actor && !isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '업장 인수인계는 대표(최고관리자)만 저장할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const source = patch && typeof patch === 'object' ? patch : {};
+    const before = normalizeHandover(site.handover);
+    const merged = normalizeHandover({
+      ...before,
+      ...source,
+      pay: { ...before.pay, ...(source.pay || {}) },
+      confirmed: { ...before.confirmed, ...(source.confirmed || {}) },
+      photos: source.photos !== undefined ? source.photos : before.photos,
+    });
+    if (!merged.address) merged.address = toText(site.address);
+    // 지워진 사진의 참조는 저장하지 않습니다(지금 있는 사진만 연결).
+    const knownPhotos = new Set(handoverPhotoCatalog(site).map((row) => `${row.group}:${row.index}`));
+    merged.photos = merged.photos.filter((row) => knownPhotos.has(`${row.group}:${row.index}`));
+    const changes = diffFields(handoverSnapshot(before), handoverSnapshot(merged), HANDOVER_FIELD_LABELS);
+    const now = new Date().toISOString();
+    const by = toText(source.actor) || (actor && actor.name) || '대표';
+    let handover = { ...merged, version: before.version, updatedAt: before.updatedAt, updatedBy: before.updatedBy };
+    let handoverHistory = site.handoverHistory;
+    if (changes.length || !before.version) {
+      handover.version = before.version + 1;
+      handover.updatedAt = now;
+      handover.updatedBy = by;
+      handoverHistory = normalizeHandoverHistory([
+        {
+          id: uid('hov'),
+          at: now,
+          by,
+          version: handover.version,
+          action: before.version ? '인수인계 수정' : '인수인계 등록',
+          changes,
+        },
+        ...handoverHistory,
+      ]);
+    }
+
+    // 팀장 화면의 현장 운영 정보(요약)도 같은 값으로 — 같은 내용을 두 번 입력하지 않습니다.
+    const typeLabel = (HANDOVER_ACCESS_TYPES.find((row) => row.key === handover.accessType) || {}).label || '';
+    const ops = normalizeOps(site.ops);
+    const nextOps = { ...ops };
+    if (handover.accessMethod || typeLabel) {
+      nextOps.accessMethod = [typeLabel, handover.accessMethod].filter(Boolean).join(' · ');
+    }
+    if (handover.trashLocation) nextOps.trashLocation = handover.trashLocation;
+    if (handover.parking) nextOps.parkingMethod = handover.parking;
+
+    // 도급금액 · 지급일은 업장의 도급 조건과 같은 값으로 맞춥니다.
+    const contract = normalizeContract(site.contract);
+    const nextContract = { ...contract };
+    if (handover.pay.amount) nextContract.subcontractAmount = handover.pay.amount;
+    const contractChanges = diffFields(contract, nextContract, CONTRACT_FIELD_LABELS);
+
+    await this.adapter.put('sites', {
+      ...site,
+      handover,
+      handoverHistory,
+      ops: nextOps,
+      contract: nextContract,
+      updatedAt: now,
+    });
+    if (changes.length || contractChanges.length) {
+      await this.recordHistory('sites', site.id, {
+        actor: by,
+        action: before.version ? '업장 인수인계 수정' : '업장 인수인계 등록',
+        note: `인수인계 v${handover.version} · ${changes.length + contractChanges.length}개 항목`,
+        changes: [...changes, ...contractChanges],
+      });
+    }
+    this._notify();
+    return normalizeSite(await this.adapter.get('sites', site.id));
+  }
+
+  /** 출입 비밀번호 · 보안 메모 — 일반 업장 정보와 분리해 저장합니다(대표 전용). */
+  async saveSiteSecret(siteId, patch = {}, { actor = null } = {}) {
+    denyStaff(actor, '출입 보안정보');
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const source = patch && typeof patch === 'object' ? patch : {};
+    const before = normalizeSiteSecret(site.secret);
+    const next = normalizeSiteSecret({
+      ...before,
+      doorCode: source.doorCode !== undefined ? source.doorCode : before.doorCode,
+      note: source.note !== undefined ? source.note : before.note,
+      log: before.log,
+      updatedAt: new Date().toISOString(),
+      updatedBy: toText(source.actor) || (actor && actor.name) || '대표',
+    });
+    await this.adapter.put('sites', { ...site, secret: next });
+    // 비밀번호 값은 이력에 남기지 않습니다 — 바뀌었다는 사실과 시각만.
+    await this.recordHistory('sites', site.id, {
+      actor: next.updatedBy,
+      action: '출입 보안정보 수정',
+      note: before.doorCode ? '출입 비밀번호 · 보안 메모 변경 (값은 기록하지 않음)' : '출입 비밀번호 · 보안 메모 등록 (값은 기록하지 않음)',
+    });
+    this._notify();
+    return normalizeSite(await this.adapter.get('sites', site.id));
+  }
+
+  /**
+   * 출입 비밀번호 열람 — 배정된 팀장만, 열람한 사실을 업장에 남깁니다(기획서 10장).
+   * 대표 화면은 값을 그대로 보여 주지 않고 이 함수로만 열어 봅니다.
+   */
+  async revealSiteSecret(siteId, { actor = null } = {}) {
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    if (!isCeoActor(actor)) {
+      if (!isStaffActor(actor) || !canOpenSite(actor, siteId)) {
+        throw new StoreError('permission-denied', '배정된 업장의 출입 정보만 볼 수 있습니다.');
+      }
+    }
+    const secret = normalizeSiteSecret(site.secret);
+    if (isStaffActor(actor)) {
+      const log = [
+        {
+          at: new Date().toISOString(),
+          by: toText(actor.name) || '직원',
+          action: '출입 비밀번호 열람',
+        },
+        ...secret.log,
+      ].slice(0, 50);
+      await this.adapter.put('sites', { ...site, secret: { ...secret, log } });
+      await this.recordHistory('sites', siteId, {
+        actor: toText(actor.name) || '직원',
+        action: '출입 비밀번호 열람',
+        note: '보안정보 열람 기록',
+      });
+      this._notify();
+    }
+    return { doorCode: secret.doorCode, note: secret.note, revealed: !!secret.doorCode };
+  }
+
+  /* ---------------- 4단계 — 팀장 배정 요청 · 수락 / 거절 (기획서 11장) ---------------- */
+
+  /** 배정 요청 한 건이 담긴 업장을 찾습니다. */
+  async _findAssignment(assignmentId) {
+    const id = toText(assignmentId);
+    if (!id) return null;
+    const sites = (await this.adapter.getAll('sites')).map(normalizeSite);
+    for (const site of sites) {
+      const assignment = site.assignments.find((row) => row.id === id);
+      if (assignment) return { site, assignment };
+    }
+    return null;
+  }
+
+  /**
+   * 팀장 배정 요청 (대표) — 인수인계 내용 · 도급금액 · 지급조건을 담아 보냅니다.
+   *  · 같은 업장에 수락된 배정이 있으면 재배정을 막습니다(계약 서명 전 철회 필요).
+   *  · 같은 팀장에게 대기 중인 요청이 있으면 새로 만들지 않고 조건만 갱신합니다.
+   */
+  async requestSiteAssignment(siteId, input = {}, { actor = null } = {}) {
+    if (actor && !isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '팀장 배정 요청은 대표(최고관리자)만 보낼 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const handover = normalizeHandover(site.handover);
+    if (!handover.version) {
+      throw new StoreError('handover-empty', '인수인계 내용을 먼저 저장해 주세요.');
+    }
+    const leader = await this.getAccount(toText(input.leaderId));
+    if (!leader || leader.role !== 'leader') {
+      throw new StoreError('assign-leader-missing', '배정할 관리팀장 계정을 고르세요.');
+    }
+    if (leader.canManageStaff || /본부장/.test(`${leader.title || ''}`)) {
+      throw new StoreError('assign-leader-invalid', '관리팀장 계정만 배정할 수 있습니다.');
+    }
+    if (leader.active === false) {
+      throw new StoreError('assign-leader-inactive', '사용이 중지된 계정입니다.');
+    }
+    const amount = toAmount(input.amount) || handover.pay.amount;
+    if (!amount) throw new StoreError('assign-amount-empty', '도급금액을 입력해 주세요.');
+    const now = new Date().toISOString();
+    const by = (actor && actor.name) || '대표';
+    // 보내는 도급 조건을 인수인계의 도급 조건에도 그대로 맞춥니다(한 곳만 보면 되게).
+    const payDayText = toText(input.payDay) || handover.pay.payDay || '15';
+    const handoverNext = normalizeHandover({ ...handover, pay: { ...handover.pay, amount, payDay: payDayText } });
+    let handoverVersion = handover.version;
+    let handoverHistory = site.handoverHistory;
+    if (handoverNext.pay.amount !== handover.pay.amount || handoverNext.pay.payDay !== handover.pay.payDay) {
+      handoverVersion = handover.version + 1;
+      handoverNext.version = handoverVersion;
+      handoverNext.updatedAt = now;
+      handoverNext.updatedBy = by;
+      const changes = [];
+      if (handoverNext.pay.amount !== handover.pay.amount) {
+        changes.push({ field: '도급금액', from: String(handover.pay.amount || ''), to: String(handoverNext.pay.amount) });
+      }
+      if (handoverNext.pay.payDay !== handover.pay.payDay) {
+        changes.push({ field: '지급일', from: handover.pay.payDay, to: handoverNext.pay.payDay });
+      }
+      handoverHistory = normalizeHandoverHistory([
+        { id: uid('hov'), at: now, by, version: handoverVersion, action: '배정 요청 도급 조건 반영', changes },
+        ...handoverHistory,
+      ]);
+    }
+    const rows = site.assignments;
+    const accepted = rows.find((row) => row.status === 'accepted');
+    if (accepted && accepted.confirmedAt) {
+      throw new StoreError(
+        'assign-confirmed',
+        `${accepted.leaderName} 팀장이 계약까지 마쳐 담당이 확정된 업장입니다. 재배정은 대표가 계약 · 배정을 정리한 뒤에 해 주세요.`,
+      );
+    }
+    if (accepted && accepted.leaderId !== leader.id) {
+      throw new StoreError(
+        'assign-accepted',
+        `이미 ${accepted.leaderName} 팀장이 수락한 업장입니다. 다른 팀장에게 보내려면 먼저 그 배정을 철회해 주세요.`,
+      );
+    }
+    // 같은 팀장이 이미 수락했고 아직 서명 전이면, 새 요청을 만들지 않고 도급 조건만 다시 맞춥니다.
+    if (accepted && accepted.leaderId === leader.id) {
+      const updated = normalizeAssignment({
+        ...accepted,
+        amount,
+        payDay: payDayText,
+        terms: toText(input.terms) || accepted.terms,
+        note: toText(input.note) || accepted.note,
+        handoverVersion,
+        handoverAt: handoverNext.updatedAt || handover.updatedAt || now,
+        handover: handoverNext,
+      });
+      const assignments = rows.map((row) => (row.id === updated.id ? updated : row));
+      await this.adapter.put('sites', { ...site, assignments, handover: handoverNext, handoverHistory });
+      if (accepted.contractId) {
+        const contract = await this.getStaffContract(accepted.contractId);
+        if (contract && contract.status !== 'signed') {
+          await this.adapter.put(
+            'staffContracts',
+            normalizeStaffContract({
+              ...contract,
+              monthlyAmount: amount,
+              settlementDay: payDayText,
+              workDays: handoverNext.workDays || contract.workDays,
+              workHours: handoverNext.workHours || contract.workHours,
+              scope: handoverNext.workScope || contract.scope,
+              updatedAt: now,
+              history: withHistory(
+                contract.history,
+                makeHistoryEntry({
+                  actor: by,
+                  action: '배정 조건 수정 (서명 전)',
+                  note: `도급금액 ${contract.monthlyAmount}원 → ${amount}원 · 지급일 ${contract.settlementDay}일 → ${payDayText}일`,
+                }),
+              ),
+            }),
+          );
+        }
+      }
+      await this.recordHistory('sites', site.id, {
+        actor: by,
+        action: '팀장 배정 조건 수정',
+        note: `${leader.name} · ${amount}원 · 인수인계 v${handoverVersion}`,
+      });
+      this._notify();
+      return updated;
+    }
+    const sameLeaderPending = rows.find((row) => row.status === 'pending' && row.leaderId === leader.id);
+    if (sameLeaderPending && !accepted) {
+      const updated = normalizeAssignment({
+        ...sameLeaderPending,
+        amount,
+        payDay: payDayText,
+        terms: toText(input.terms) || sameLeaderPending.terms,
+        note: toText(input.note) || sameLeaderPending.note,
+        sentAt: now,
+        sentBy: by,
+        handoverVersion,
+        handoverAt: handoverNext.updatedAt || handover.updatedAt || now,
+        handover: handoverNext,
+      });
+      const assignments = rows.map((row) => (row.id === updated.id ? updated : row));
+      await this.adapter.put('sites', { ...site, assignments, handover: handoverNext, handoverHistory });
+      await this.recordHistory('sites', site.id, {
+        actor: by,
+        action: '팀장 배정 요청 갱신',
+        note: `${leader.name} · ${amount}원 · 인수인계 v${handoverVersion}`,
+      });
+      this._notify();
+      return updated;
+    }
+    const assignment = normalizeAssignment({
+      id: uid('asg'),
+      leaderId: leader.id,
+      leaderName: leader.name,
+      leaderTitle: leader.title || '팀장',
+      status: 'pending',
+      sentAt: now,
+      sentBy: by,
+      amount,
+      payDay: payDayText,
+      terms: toText(input.terms) || handover.pay.terms,
+      note: toText(input.note),
+      handoverVersion,
+      handoverAt: handoverNext.updatedAt || handover.updatedAt || now,
+      handover: handoverNext,
+      history: [
+        {
+          id: uid('hist'),
+          at: now,
+          actor: by,
+          action: '팀장 배정 요청',
+          note: `${leader.name} · 도급금액 ${amount}원 · 지급일 ${payDayText}일`,
+          changes: [],
+        },
+      ],
+    });
+    const assignments = [
+      assignment,
+      ...rows.map((row) =>
+        row.status === 'pending' ? normalizeAssignment({ ...row, status: 'superseded', decisionAt: now }) : row,
+      ),
+    ];
+    await this.adapter.put('sites', { ...site, assignments, handover: handoverNext, handoverHistory });
+    await this.recordHistory('sites', site.id, {
+      actor: by,
+      action: '팀장 배정 요청',
+      note: `${leader.name} · ${amount}원 · 인수인계 v${handoverVersion}`,
+    });
+    this._notify();
+    return assignment;
+  }
+
+  /** 팀장 배정 요청 철회 (대표) — 수락 전 요청만 철회합니다. */
+  async cancelSiteAssignment(siteId, assignmentId, { actor = null, reason = '' } = {}) {
+    denyStaff(actor, '팀장 배정 철회');
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const target = site.assignments.find((row) => row.id === toText(assignmentId));
+    if (!target) throw new StoreError('no-assignment', '배정 요청을 찾을 수 없습니다.');
+    if (target.status !== 'pending') {
+      throw new StoreError(
+        'assign-not-cancelable',
+        target.status === 'accepted'
+          ? '이미 수락된 배정은 철회할 수 없습니다. 팀장과 계약 정리 후 새 배정을 보내 주세요.'
+          : `이미 ${ASSIGN_STATUS[target.status].label} 상태입니다.`,
+      );
+    }
+    const now = new Date().toISOString();
+    const by = (actor && actor.name) || '대표';
+    const assignments = site.assignments.map((row) =>
+      row.id === target.id
+        ? normalizeAssignment({ ...row, status: 'canceled', decisionAt: now, canceledAt: now, canceledBy: by, rejectReason: toText(reason) })
+        : row,
+    );
+    await this.adapter.put('sites', { ...site, assignments });
+    await this.recordHistory('sites', site.id, {
+      actor: by,
+      action: '팀장 배정 철회',
+      note: `${target.leaderName}${reason ? ` · ${reason}` : ''}`,
+    });
+    this._notify();
+    return assignments.find((row) => row.id === target.id);
+  }
+
+  /** 관리자 화면 — 한 업장의 배정 요청 이력(최신 먼저). */
+  async listSiteAssignments(siteId, { actor = null } = {}) {
+    if (actor && !isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '팀장 배정 요청은 대표(최고관리자)만 볼 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    return site ? site.assignments : [];
+  }
+
+  /**
+   * 팀장 본인 화면 — 나에게 온 배정 요청만. 고객 계약 금액 · 계약서 · 견적서와
+   * 다른 팀장의 요청은 담지 않습니다. (수락 전에도 인수인계 내용은 확인할 수 있습니다.)
+   */
+  async listAssignmentRequests(session, { pendingOnly = false } = {}) {
+    if (!session || !isStaffActor(session)) return [];
+    const accountId = toText(session.accountId);
+    if (!accountId) return [];
+    const sites = await this.listSites();
+    const out = [];
+    for (const site of sites) {
+      for (const row of site.assignments) {
+        if (row.leaderId !== accountId) continue;
+        if (pendingOnly && row.status !== 'pending') continue;
+        out.push({
+          id: row.id,
+          status: row.status,
+          sentAt: row.sentAt,
+          sentBy: row.sentBy,
+          decisionAt: row.decisionAt,
+          rejectCode: row.rejectCode,
+          rejectReason: row.rejectReason,
+          contractId: row.contractId,
+          contractNo: row.contractNo,
+          confirmedAt: row.confirmedAt,
+          amount: row.amount,
+          payDay: row.payDay,
+          terms: row.terms,
+          note: row.note,
+          handoverVersion: row.handoverVersion,
+          site: {
+            id: site.id,
+            name: site.name,
+            code: site.code,
+            category: site.category,
+            area: site.area,
+            address: site.handover.address || site.address,
+            frequency: site.frequency,
+          },
+          handover: {
+            ...row.handover,
+            photos: resolveHandoverPhotos(site, row.handover.photos),
+          },
+        });
+      }
+    }
+    return out.sort((a, b) => {
+      const rank = (row) => (row.status === 'pending' ? 0 : 1);
+      return rank(a) - rank(b) || String(b.sentAt).localeCompare(String(a.sentAt));
+    });
+  }
+
+  /**
+   * 배정 수락 (팀장 본인) — 수락하면 이 업장 · 도급금액 · 청소 범위 · 지급 조건으로
+   * 팀장 도급계약서(서명 대기)를 자동으로 만들고 업장에 연결합니다.
+   */
+  async acceptSiteAssignment(assignmentId, { actor = null } = {}) {
+    if (!isStaffActor(actor)) {
+      throw new StoreError('permission-denied', '배정 수락은 팀장 본인 계정으로만 할 수 있습니다.');
+    }
+    const found = await this._findAssignment(assignmentId);
+    if (!found) throw new StoreError('no-assignment', '배정 요청을 찾을 수 없습니다.');
+    const { site, assignment } = found;
+    if (assignment.leaderId !== toText(actor.accountId)) {
+      throw new StoreError('permission-denied', '본인에게 온 배정 요청만 수락할 수 있습니다.');
+    }
+    if (assignment.status !== 'pending') {
+      throw new StoreError('assign-not-pending', `이미 ${ASSIGN_STATUS[assignment.status].label} 상태입니다.`);
+    }
+    const now = new Date().toISOString();
+    const handover = normalizeHandover(site.handover);
+    const startDate = todayISO();
+    const contract = normalizeStaffContract({
+      id: uid('staff'),
+      accountId: toText(actor.accountId),
+      siteId: site.id,
+      assignmentId: assignment.id,
+      no: await this._nextDocNumber('staffContracts', 'S'),
+      name: toText(actor.name) || assignment.leaderName,
+      phone: toText(actor.phone),
+      roleTitle: toText(actor.title) || assignment.leaderTitle || '팀장',
+      employmentType: 'contract',
+      siteIds: [site.id],
+      startDate,
+      endDate: addDaysISO(addMonthsISO(startDate, 12), -1),
+      monthlyAmount: assignment.amount,
+      settlementDay: assignment.payDay || '15',
+      workDays: handover.workDays || site.frequency,
+      workHours: handover.workHours,
+      scope: handover.workScope || site.name,
+      process: normalizeOps(site.ops).process,
+      safety: handover.cautions,
+      specialTerms: assignment.terms || handover.pay.terms,
+      status: 'sent',
+      inviteCode: await this._nextStaffInviteCode(),
+      inviteIssuedAt: now,
+      inviteUsedAt: '',
+      inviteUsedBy: '',
+      createdAt: now,
+      updatedAt: now,
+      source: 'assignment',
+      history: [
+        {
+          id: uid('hist'),
+          at: now,
+          actor: '앱',
+          action: '배정 수락 · 팀장 도급계약서 자동 생성',
+          note: `${site.name} · 인수인계 v${assignment.handoverVersion} · ${assignment.amount}원 · 지급일 ${assignment.payDay || '15'}일`,
+          changes: [],
+        },
+      ],
+    });
+    await this.adapter.put('staffContracts', contract);
+    const assignments = site.assignments.map((row) => {
+      if (row.id === assignment.id) {
+        return normalizeAssignment({
+          ...row,
+          status: 'accepted',
+          decisionAt: now,
+          contractId: contract.id,
+          contractNo: contract.no,
+        });
+      }
+      return row.status === 'pending' ? normalizeAssignment({ ...row, status: 'superseded', decisionAt: now }) : row;
+    });
+    const linked = new Set(site.staffContractIds || []);
+    linked.add(contract.id);
+    await this.adapter.put('sites', { ...site, assignments, staffContractIds: [...linked] });
+    await this.recordHistory('sites', site.id, {
+      actor: contract.name,
+      action: '팀장 배정 수락',
+      note: `${contract.name} ${contract.roleTitle} · ${contract.no} 자동 생성 · 서명 대기`,
+    });
+    this._notify();
+    return {
+      assignment: assignments.find((row) => row.id === assignment.id),
+      contract: normalizeStaffContract(await this.adapter.get('staffContracts', contract.id)),
+    };
+  }
+
+  /** 배정 거절 (팀장 본인) — 사유를 남기고 대표가 바로 다른 팀장에게 재배정할 수 있게 합니다. */
+  async rejectSiteAssignment(assignmentId, input = {}, { actor = null } = {}) {
+    if (!isStaffActor(actor)) {
+      throw new StoreError('permission-denied', '배정 거절은 팀장 본인 계정으로만 할 수 있습니다.');
+    }
+    const found = await this._findAssignment(assignmentId);
+    if (!found) throw new StoreError('no-assignment', '배정 요청을 찾을 수 없습니다.');
+    const { site, assignment } = found;
+    if (assignment.leaderId !== toText(actor.accountId)) {
+      throw new StoreError('permission-denied', '본인에게 온 배정 요청만 거절할 수 있습니다.');
+    }
+    if (assignment.status !== 'pending') {
+      throw new StoreError('assign-not-pending', `이미 ${ASSIGN_STATUS[assignment.status].label} 상태입니다.`);
+    }
+    const code = ASSIGN_REJECT_REASONS.some((row) => row.key === input.code) ? input.code : 'etc';
+    const preset = ASSIGN_REJECT_REASONS.find((row) => row.key === code);
+    const typed = toText(input.reason);
+    const reason = code === 'etc' ? typed : typed || (preset ? preset.label : '');
+    if (!reason) throw new StoreError('assign-reason-empty', '거절 사유를 입력해 주세요.');
+    const now = new Date().toISOString();
+    const assignments = site.assignments.map((row) =>
+      row.id === assignment.id
+        ? normalizeAssignment({
+            ...row,
+            status: 'rejected',
+            decisionAt: now,
+            rejectCode: code,
+            rejectReason: reason,
+          })
+        : row,
+    );
+    await this.adapter.put('sites', { ...site, assignments });
+    await this.recordHistory('sites', site.id, {
+      actor: toText(actor.name) || assignment.leaderName,
+      action: '팀장 배정 거절',
+      note: `${assignment.leaderName} · ${reason}`,
+    });
+    this._notify();
+    return assignments.find((row) => row.id === assignment.id);
   }
 
   /** Save the 첫 견적(오염) or 첫 청소(대청소) record of a site. */
@@ -4905,6 +5737,37 @@ export class Store {
         action: '팀장 계약 체결',
         note: `${next.name} ${next.roleTitle || ''} · ${next.no}`.trim(),
       });
+    }
+
+    // 4단계 — 배정 수락으로 만들어진 도급계약서에 서명하면 담당 팀장이 정식 확정되고
+    //  그 업장의 현장 보고 · 체크리스트가 바로 열립니다(계정 배정은 위에서 이미 끝났습니다).
+    if (next.assignmentId) {
+      const found = await this._findAssignment(next.assignmentId);
+      if (found) {
+        const assignments = found.site.assignments.map((row) =>
+          row.id === next.assignmentId
+            ? normalizeAssignment({ ...row, status: 'accepted', confirmedAt: now, contractId: next.id, contractNo: next.no })
+            : row,
+        );
+        const siteContract = normalizeContract(found.site.contract);
+        const contractPatch =
+          next.monthlyAmount && next.monthlyAmount !== siteContract.subcontractAmount
+            ? { ...siteContract, subcontractAmount: next.monthlyAmount }
+            : siteContract;
+        await this.adapter.put('sites', {
+          ...found.site,
+          assignments,
+          manager: next.name || found.site.manager,
+          managerRole: next.roleTitle || found.site.managerRole,
+          assignee: { accountId: next.accountId || '', name: next.name || '', since: now },
+          contract: contractPatch,
+        });
+        await this.recordHistory('sites', found.site.id, {
+          actor: next.name || '팀장',
+          action: '팀장 배정 확정 · 현장 보고 활성화',
+          note: `${next.name} ${next.roleTitle || ''} · ${next.no} 서명 완료`.trim(),
+        });
+      }
     }
 
     this._notify();
