@@ -21,8 +21,16 @@ import {
   toISODate,
   nowHHMM,
   daysBetween,
+  openLightbox,
 } from '../ui.js';
-import { store, StoreError, countReportPhotos, STAFF_STATUS, canUseSupply } from '../store.js';
+import {
+  store,
+  StoreError,
+  countReportPhotos,
+  STAFF_STATUS,
+  canUseSupply,
+  MAX_BASELINE_PHOTOS,
+} from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
 import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, demoStaffCodes } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
@@ -95,6 +103,273 @@ function defaultManualDay(site) {
   if (!days.length) return '';
   const todayKey = WEEKDAY_KEYS[new Date().getDay()];
   return (days.find((day) => day.key === todayKey) || days[0]).key;
+}
+
+/* ---------------- 처음 상태 사진 시트 ---------------- */
+
+const BASELINE_STAGES_META = [
+  { key: 'quote', num: '①', label: '첫 견적 · 오염 상태', hint: '방문 견적 시점의 오염 상태를 남겨 주세요.' },
+  { key: 'deepClean', num: '②', label: '첫 청소 · 대청소', hint: '첫 대청소를 마친 뒤 결과 사진을 남겨 주세요.' },
+];
+
+let baselineSheet = null;
+const baselineSheetState = { siteId: '', siteName: '', onChanged: null };
+
+function stageMeta(stage) {
+  return BASELINE_STAGES_META.find((row) => row.key === stage) || BASELINE_STAGES_META[0];
+}
+
+function baselineRecord(site, stage) {
+  const record = site && site.baseline ? site.baseline[stage] : null;
+  return {
+    date: (record && record.date) || '',
+    note: (record && record.note) || '',
+    photos: (record && Array.isArray(record.photos) && record.photos) || [],
+  };
+}
+
+function ensureBaselineSheet() {
+  if (baselineSheet) return baselineSheet;
+  baselineSheet = document.createElement('div');
+  baselineSheet.className = 'baseline-sheet';
+  baselineSheet.id = 'baseline-sheet';
+  baselineSheet.hidden = true;
+  baselineSheet.setAttribute('role', 'dialog');
+  baselineSheet.setAttribute('aria-modal', 'true');
+  baselineSheet.setAttribute('aria-label', '처음 상태 사진');
+  baselineSheet.innerHTML = `
+    <div class="baseline-sheet__backdrop" data-baseline-sheet="close"></div>
+    <div class="baseline-sheet__panel">
+      <span class="baseline-sheet__grab" aria-hidden="true"></span>
+      <div class="baseline-sheet__bar">
+        <div class="baseline-sheet__title">
+          <strong>처음 상태 사진</strong>
+          <span data-baseline-sheet-sub>첫 견적 · 대청소 · 단계마다 최대 ${MAX_BASELINE_PHOTOS}장</span>
+        </div>
+        <button class="baseline-sheet__close" type="button" data-baseline-sheet="close" aria-label="시트 닫기">×</button>
+      </div>
+      <div class="baseline-sheet__body" data-baseline-sheet-body></div>
+    </div>
+  `;
+  baselineSheet.addEventListener('click', onBaselineSheetClick);
+  baselineSheet.addEventListener('change', onBaselineSheetChange);
+  document.addEventListener('keydown', onBaselineSheetKeydown);
+  document.addEventListener('kec:navigate', () => closeBaselineSheet());
+  document.body.appendChild(baselineSheet);
+  return baselineSheet;
+}
+
+function closeBaselineSheet() {
+  if (!baselineSheet || baselineSheet.hidden) return;
+  baselineSheet.hidden = true;
+  document.body.classList.remove('baseline-sheet-open');
+  baselineSheetState.onChanged = null;
+}
+
+/** 팀장 화면의 '처음 상태 사진' 카드 → 시트를 엽니다. */
+async function openBaselineSheet(siteId, options = {}) {
+  if (!siteId) return;
+  const box = ensureBaselineSheet();
+  baselineSheetState.siteId = siteId;
+  baselineSheetState.onChanged = typeof options.onChanged === 'function' ? options.onChanged : null;
+  box.hidden = false;
+  document.body.classList.add('baseline-sheet-open');
+  await paintBaselineSheet();
+}
+
+async function paintBaselineSheet() {
+  const box = ensureBaselineSheet();
+  const site = await store.getSite(baselineSheetState.siteId);
+  if (!site) {
+    closeBaselineSheet();
+    return;
+  }
+  baselineSheetState.siteName = site.name;
+  const sub = $('[data-baseline-sheet-sub]', box);
+  if (sub) sub.textContent = `${site.name} · 단계마다 최대 ${MAX_BASELINE_PHOTOS}장`;
+  const body = $('[data-baseline-sheet-body]', box);
+  if (!body) return;
+  body.innerHTML = BASELINE_STAGES_META.map((meta) => {
+    const record = baselineRecord(site, meta.key);
+    const count = record.photos.length;
+    const remaining = Math.max(0, MAX_BASELINE_PHOTOS - count);
+    const full = remaining === 0;
+    return `
+      <section class="bs-stage" data-bs-stage="${meta.key}">
+        <div class="bs-stage__head">
+          <div class="bs-stage__title">
+            <strong>${meta.num} ${esc(meta.label)}</strong>
+            <span>${record.date ? esc(fmtDateLong(record.date)) : '날짜 미등록'}</span>
+          </div>
+          <span class="bs-stage__count${full ? ' is-full' : ''}">${count}/${MAX_BASELINE_PHOTOS}장</span>
+        </div>
+        <div class="bs-grid">
+          ${record.photos
+            .map(
+              (photo, index) => `
+                <span class="bs-thumb">
+                  <button class="bs-thumb__view" type="button" data-baseline-view="${meta.key}" data-baseline-index="${index}"
+                          aria-label="${esc(meta.label)} 사진 ${index + 1} 크게 보기">
+                    <img src="${esc(store.photoThumbUrl(photo))}" alt="${esc(photo.caption || meta.label)}" loading="lazy" decoding="async">
+                  </button>
+                  <button class="bs-thumb__del" type="button" data-baseline-remove="${meta.key}" data-baseline-index="${index}"
+                          aria-label="${esc(meta.label)} 사진 ${index + 1} 삭제">×</button>
+                </span>`,
+            )
+            .join('')}
+          ${
+            full
+              ? '<span class="bs-add bs-add--full"><span class="bs-add__label">20장 모두 등록</span></span>'
+              : `<label class="bs-add">
+                   <span class="bs-add__plus">+</span>
+                   <span class="bs-add__label">사진 추가</span>
+                   <input type="file" accept="image/*" capture="environment" multiple hidden data-bs-input="${meta.key}">
+                 </label>`
+          }
+        </div>
+        <p class="bs-stage__note">
+          ${esc(meta.hint)}
+          ${full ? `<br><strong>최대 ${MAX_BASELINE_PHOTOS}장까지 등록했습니다.</strong> 새로 넣으려면 사진을 하나 삭제해 주세요.` : `<br>${remaining}장 더 추가할 수 있습니다.`}
+        </p>
+      </section>`;
+  }).join('');
+}
+
+async function notifyBaselineChanged() {
+  if (!baselineSheetState.onChanged) return;
+  try {
+    await baselineSheetState.onChanged();
+  } catch (error) {
+    console.warn('[leader] baseline refresh failed', error);
+  }
+}
+
+async function addBaselinePhotos(stage, files) {
+  const siteId = baselineSheetState.siteId;
+  if (!siteId) return;
+  const list = Array.from(files || []);
+  if (!list.length) return;
+  const site = await store.getSite(siteId);
+  if (!site) return;
+  const record = baselineRecord(site, stage);
+  const remaining = Math.max(0, MAX_BASELINE_PHOTOS - record.photos.length);
+  if (!remaining) {
+    toast(`사진은 최대 ${MAX_BASELINE_PHOTOS}장까지 등록할 수 있습니다.`, { tone: 'error' });
+    return;
+  }
+  if (list.length > remaining) {
+    toast(`최대 ${MAX_BASELINE_PHOTOS}장이라 ${remaining}장만 추가합니다.`, { tone: 'error' });
+  }
+  const accepted = list.slice(0, remaining);
+  const added = [];
+  for (let index = 0; index < accepted.length; index += 1) {
+    toast(`사진 처리 중… (${index + 1}/${accepted.length})`, { duration: 1200 });
+    try {
+      const prepared = await preparePhoto(accepted[index]);
+      added.push(
+        await store.savePhoto({
+          dataUrl: prepared.dataUrl,
+          thumb: prepared.thumb,
+          width: prepared.width,
+          height: prepared.height,
+          caption: stageMeta(stage).label,
+        }),
+      );
+    } catch (error) {
+      console.warn('[leader] baseline photo failed', error);
+    }
+  }
+  if (!added.length) {
+    toast('사진을 추가하지 못했습니다. 다른 사진으로 시도해 주세요.', { tone: 'error' });
+    return;
+  }
+  await store.saveSiteBaseline(siteId, stage, {
+    photos: record.photos.concat(added),
+    date: record.date || toISODate(),
+    note: record.note || (stage === 'quote' ? '첫 견적 방문 · 오염 상태 기록' : '첫 청소(대청소) 완료 기록'),
+  });
+  toast(`${stageMeta(stage).label} 사진 ${added.length}장을 저장했습니다.`);
+  await paintBaselineSheet();
+  await notifyBaselineChanged();
+}
+
+async function removeBaselinePhoto(stage, index) {
+  const siteId = baselineSheetState.siteId;
+  if (!siteId) return;
+  const site = await store.getSite(siteId);
+  if (!site) return;
+  const record = baselineRecord(site, stage);
+  const photo = record.photos[index];
+  if (!photo) return;
+  const ok = await confirmDialog({
+    title: '사진을 삭제할까요?',
+    message: `${stageMeta(stage).label} 사진 ${index + 1}번째를 이 현장에서 뺍니다. 고객 화면에서도 보이지 않습니다.`,
+    confirmLabel: '삭제',
+    tone: 'danger',
+  });
+  if (!ok) return;
+  await store.saveSiteBaseline(siteId, stage, {
+    photos: record.photos.filter((_, position) => position !== index),
+  });
+  toast('사진을 삭제했습니다.');
+  await paintBaselineSheet();
+  await notifyBaselineChanged();
+}
+
+async function viewBaselinePhotos(stage, startIndex = 0) {
+  const siteId = baselineSheetState.siteId;
+  if (!siteId) return;
+  const site = await store.getSite(siteId);
+  if (!site) return;
+  const record = baselineRecord(site, stage);
+  const items = [];
+  let start = 0;
+  for (let index = 0; index < record.photos.length; index += 1) {
+    const photo = record.photos[index];
+    const url = await store.photoFullUrl(photo);
+    if (!url) continue;
+    if (index === startIndex) start = items.length;
+    items.push({ url, caption: photo.caption || stageMeta(stage).label });
+  }
+  if (!items.length) {
+    toast('사진을 불러오지 못했습니다.', { tone: 'error' });
+    return;
+  }
+  openLightbox(items, start);
+}
+
+async function onBaselineSheetClick(event) {
+  if (event.target.closest('[data-baseline-sheet="close"]')) {
+    closeBaselineSheet();
+    return;
+  }
+  const viewButton = event.target.closest('[data-baseline-view]');
+  if (viewButton) {
+    await viewBaselinePhotos(viewButton.dataset.baselineView, Number(viewButton.dataset.baselineIndex) || 0);
+    return;
+  }
+  const removeButton = event.target.closest('[data-baseline-remove]');
+  if (removeButton) {
+    await removeBaselinePhoto(removeButton.dataset.baselineRemove, Number(removeButton.dataset.baselineIndex) || 0);
+  }
+}
+
+async function onBaselineSheetChange(event) {
+  const input = event.target.closest('[data-bs-input]');
+  if (!input) return;
+  const files = Array.from(input.files || []);
+  input.value = '';
+  await addBaselinePhotos(input.dataset.bsInput, files);
+}
+
+function onBaselineSheetKeydown(event) {
+  if (!baselineSheet || baselineSheet.hidden) return;
+  if (event.key === 'Escape') closeBaselineSheet();
+}
+
+/** 다른 화면(관리)에서도 같은 시트를 열 수 있게 내보냅니다. */
+export async function openInitialPhotoSheet(siteId, options = {}) {
+  await openBaselineSheet(siteId, options);
 }
 
 export function createLeaderView(container) {
@@ -700,42 +975,32 @@ export function createLeaderView(container) {
     `;
   }
 
+  /** 기본 화면에는 등록 장수만 — 사진은 시트에서 보고 · 추가 · 삭제합니다. */
   function baselinePanelTemplate(site) {
     const baseline = site.baseline || {};
-    const row = (key, num, label, hint, record) => {
-      const photos = (record && record.photos) || [];
-      return `
-        <div class="baseline-row">
-          <div class="baseline-row__who">
-            <strong>${num} ${esc(label)}</strong>
-            <span>${record && record.date ? esc(fmtDateLong(record.date)) : '날짜 미등록'} · ${photos.length}장</span>
-          </div>
-          <div class="baseline-row__thumbs">
-            ${photos
-              .slice(0, 4)
-              .map((photo) => `<img src="${esc(store.photoThumbUrl(photo))}" alt="${esc(photo.caption || label)}" loading="lazy" decoding="async">`)
-              .join('')}
-          </div>
-          <label class="btn btn--quiet btn--sm baseline-row__add">
-            사진 추가
-            <input type="file" accept="image/*" capture="environment" multiple hidden
-                   data-leader-baseline="${key}" data-site-id="${esc(site.id)}">
-          </label>
-          <p class="hint" style="margin:0">${esc(hint)}</p>
-        </div>`;
-    };
-
+    const countOf = (key) => ((baseline[key] && baseline[key].photos) || []).length;
+    const quoteCount = countOf('quote');
+    const deepCleanCount = countOf('deepClean');
     return `
-      <section class="panel">
+      <section class="panel baseline-card" data-baseline-card="${esc(site.id)}">
         <div class="section-head">
           <h2>처음 상태 사진</h2>
           <p>첫 견적 · 대청소</p>
         </div>
-        <p class="tiny muted" style="margin:-6px 0 10px">
-          고객이 “예전 상태”와 비교할 수 있도록, 첫 견적(오염 상태)과 첫 대청소 후 사진을 현장에 남깁니다.
-        </p>
-        ${row('quote', '①', '첫 견적 · 오염 상태', '방문 견적 시점의 오염 상태를 남겨 주세요.', baseline.quote)}
-        ${row('deepClean', '②', '첫 청소 · 대청소', '첫 대청소를 마친 뒤 결과 사진을 남겨 주세요.', baseline.deepClean)}
+        <button class="baseline-card__open" type="button" data-baseline-open="${esc(site.id)}">
+          <span class="baseline-card__body">
+            <span class="baseline-card__counts">
+              <span><em>①</em> 첫 견적 <strong>${quoteCount}</strong>장</span>
+              <span><em>②</em> 첫 대청소 <strong>${deepCleanCount}</strong>장</span>
+            </span>
+            <span class="baseline-card__hint">${
+              quoteCount + deepCleanCount
+                ? '눌러서 사진 보기 · 추가 · 삭제'
+                : '아직 등록된 사진이 없습니다 · 눌러서 추가'
+            } · 단계마다 최대 ${MAX_BASELINE_PHOTOS}장</span>
+          </span>
+          <span class="baseline-card__cta">열기</span>
+        </button>
       </section>
     `;
   }
@@ -1122,6 +1387,7 @@ export function createLeaderView(container) {
       state.teamContracts = [];
       state.teamLeadId = '';
       state.staffCodes = await demoStaffCodes().catch(() => []);
+      closeBaselineSheet();
       container.innerHTML = gateTemplate();
       return;
     }
@@ -1230,41 +1496,6 @@ export function createLeaderView(container) {
   }
 
   /* ---------------- photos ---------------- */
-
-  async function addBaselinePhotos(siteId, stage, files) {
-    const site = await store.getSite(siteId);
-    if (!site) return;
-    const record = (site.baseline && site.baseline[stage]) || { date: '', note: '', photos: [] };
-    const added = [];
-    for (const file of Array.from(files || [])) {
-      try {
-        toast('사진 처리 중…', { duration: 1200 });
-        const prepared = await preparePhoto(file);
-        added.push(
-          await store.savePhoto({
-            dataUrl: prepared.dataUrl,
-            thumb: prepared.thumb,
-            width: prepared.width,
-            height: prepared.height,
-            caption: stage === 'quote' ? '첫 견적 · 오염 상태' : '첫 청소 · 대청소',
-          }),
-        );
-      } catch (error) {
-        console.warn('[leader] baseline photo failed', error);
-      }
-    }
-    if (!added.length) {
-      toast('사진을 추가하지 못했습니다. 다른 사진으로 시도해 주세요.', { tone: 'error' });
-      return;
-    }
-    await store.saveSiteBaseline(siteId, stage, {
-      photos: (record.photos || []).concat(added),
-      date: record.date || toISODate(),
-      note: record.note || (stage === 'quote' ? '첫 견적 방문 · 오염 상태 기록' : '첫 청소(대청소) 완료 기록'),
-    });
-    toast(`${stage === 'quote' ? '첫 견적(오염)' : '첫 청소(대청소)'} 사진 ${added.length}장을 현장에 저장했습니다.`);
-    await render();
-  }
 
   async function addFiles(groupKey, files) {
     const draft = state.draft;
@@ -1499,14 +1730,6 @@ export function createLeaderView(container) {
     const target = event.target;
     const draft = state.draft;
 
-    const baselineInput = target.closest('[data-leader-baseline]');
-    if (baselineInput) {
-      const files = Array.from(baselineInput.files || []);
-      baselineInput.value = '';
-      await addBaselinePhotos(baselineInput.dataset.siteId, baselineInput.dataset.leaderBaseline, files);
-      return;
-    }
-
     const photoInput = target.closest('[data-photo-input]');
     if (photoInput) {
       const files = Array.from(photoInput.files || []);
@@ -1551,6 +1774,12 @@ export function createLeaderView(container) {
   }
 
   async function onClick(event) {
+    const baselineOpen = event.target.closest('[data-baseline-open]');
+    if (baselineOpen) {
+      await openBaselineSheet(baselineOpen.dataset.baselineOpen, { onChanged: render });
+      return;
+    }
+
     const manualDay = event.target.closest('[data-manual-day]');
     if (manualDay) {
       await switchManualDay(manualDay.dataset.manualDay);
@@ -1621,6 +1850,7 @@ export function createLeaderView(container) {
 
     const pick = event.target.closest('[data-pick-site]');
     if (pick) {
+      closeBaselineSheet();
       state.siteId = pick.dataset.pickSite;
       state.sent = null;
       const site = await store.getSite(state.siteId);
@@ -1682,6 +1912,7 @@ export function createLeaderView(container) {
       return;
     }
     if (action === 'change-site') {
+      closeBaselineSheet();
       state.siteId = null;
       state.draft = null;
       await render();

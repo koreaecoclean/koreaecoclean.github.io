@@ -142,6 +142,9 @@ function normalizeReport(report) {
 /** A site's 첫 상태 기록: ① 첫 견적(오염) ② 첫 청소(대청소). */
 export const BASELINE_STAGES = ['quote', 'deepClean'];
 
+/** 첫 상태 사진은 단계별 최대 20장까지 저장합니다. */
+export const MAX_BASELINE_PHOTOS = 20;
+
 export function normalizeBaseline(baseline) {
   const source = baseline && typeof baseline === 'object' ? baseline : {};
   const out = {};
@@ -1405,7 +1408,9 @@ export class Store {
     baseline[stage] = {
       date: patch.date !== undefined ? String(patch.date) : current.date,
       note: patch.note !== undefined ? String(patch.note) : current.note,
-      photos: Array.isArray(patch.photos) ? patch.photos.slice() : current.photos,
+      photos: Array.isArray(patch.photos)
+        ? patch.photos.slice(0, MAX_BASELINE_PHOTOS)
+        : current.photos.slice(0, MAX_BASELINE_PHOTOS),
     };
     const next = { ...site, baseline, updatedAt: new Date().toISOString() };
     await this.adapter.put('sites', next);

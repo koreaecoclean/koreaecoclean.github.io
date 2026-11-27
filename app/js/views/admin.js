@@ -7,7 +7,7 @@
  */
 
 import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate } from '../ui.js';
-import { store, netProfit } from '../store.js';
+import { store, netProfit, MAX_BASELINE_PHOTOS } from '../store.js';
 import { CATEGORY_META } from '../seed.js';
 import { preparePhoto } from '../photos.js';
 import { getSession, loginAdmin, logout, demoAccounts } from '../auth.js';
@@ -277,8 +277,8 @@ export function createAdminView(container) {  const state = {
                 }
               </div>
             </div>
-            ${photoRow('quote', '① 첫 견적 사진 (오염 상태)', '지금 상태 그대로를 남깁니다. 나중에 고객이 비교해 볼 수 있습니다.')}
-            ${photoRow('deepClean', '② 첫 청소 사진 (대청소)', '첫 대청소 완료 후 사진입니다.')}
+            ${photoRow('quote', '① 첫 견적 사진 (오염 상태)', `지금 상태 그대로를 남깁니다. 나중에 고객이 비교해 볼 수 있습니다. 단계당 최대 ${MAX_BASELINE_PHOTOS}장.`)}
+            ${photoRow('deepClean', '② 첫 청소 사진 (대청소)', `첫 대청소 완료 후 사진입니다. 단계당 최대 ${MAX_BASELINE_PHOTOS}장.`)}
             ${state.newSiteError ? `<p class="field__error">${esc(state.newSiteError)}</p>` : ''}
             <button class="btn btn--primary btn--block" type="submit">현장 저장</button>
             <p class="hint">저장하면 현장 카드가 생기고 바로 1회용 청소코드를 발급할 수 있습니다.</p>
@@ -291,23 +291,32 @@ export function createAdminView(container) {  const state = {
 
   function baselineAdminTemplate(site) {
     const baseline = site.baseline || {};
-    const stage = (key, label, record) => `
+    const stage = (key, label, record) => {
+      const count = (record && record.photos ? record.photos.length : 0);
+      const full = count >= MAX_BASELINE_PHOTOS;
+      return `
       <div class="baseline-row">
         <div class="baseline-row__who">
           <strong>${label}</strong>
-          <span>${record && record.date ? formatStamp(record.date) : '날짜 미등록'} · ${(record && record.photos ? record.photos.length : 0)}장</span>
+          <span>${record && record.date ? formatStamp(record.date) : '날짜 미등록'} · ${count}/${MAX_BASELINE_PHOTOS}장</span>
         </div>
         <div class="baseline-row__thumbs">
           ${((record && record.photos) || [])
             .slice(0, 3)
             .map((photo) => `<img src="${esc(store.photoThumbUrl(photo))}" alt="${esc(photo.caption || label)}" loading="lazy" decoding="async">`)
             .join('')}
+          ${count > 3 ? `<span class="baseline-row__more">+${count - 3}</span>` : ''}
         </div>
-        <label class="link-btn baseline-row__add">
-          사진 추가
-          <input type="file" accept="image/*" multiple hidden data-baseline-input="${key}" data-site-id="${esc(site.id)}">
-        </label>
+        ${
+          full
+            ? `<span class="link-btn baseline-row__add is-full">${MAX_BASELINE_PHOTOS}장 모두 등록</span>`
+            : `<label class="link-btn baseline-row__add">
+                 사진 추가 (${MAX_BASELINE_PHOTOS - count}장 가능)
+                 <input type="file" accept="image/*" multiple hidden data-baseline-input="${key}" data-site-id="${esc(site.id)}">
+               </label>`
+        }
       </div>`;
+    };
     return `
       <div class="baseline-admin">
         ${stage('quote', '① 첫 견적 · 오염 상태', baseline.quote)}
@@ -714,8 +723,17 @@ export function createAdminView(container) {  const state = {
     const site = await store.getSite(siteId);
     if (!site) return;
     const existing = (site.baseline && site.baseline[stage] && site.baseline[stage].photos) || [];
+    const remaining = Math.max(0, MAX_BASELINE_PHOTOS - existing.length);
+    if (!remaining) {
+      toast(`처음 상태 사진은 최대 ${MAX_BASELINE_PHOTOS}장까지 등록할 수 있습니다.`, { tone: 'error' });
+      return;
+    }
+    const list = Array.from(files || []).slice(0, remaining);
+    if (list.length < (files || []).length) {
+      toast(`최대 ${MAX_BASELINE_PHOTOS}장이라 ${list.length}장만 추가합니다.`, { tone: 'error' });
+    }
     const added = [];
-    for (const file of Array.from(files || [])) {
+    for (const file of list) {
       try {
         toast('사진 처리 중…', { duration: 1200 });
         const prepared = await preparePhoto(file);
@@ -752,7 +770,16 @@ export function createAdminView(container) {  const state = {
     const list = Array.from(files || []);
     if (!list.length) return;
     const box = $(`[data-new-photos="${stage}"]`, container);
-    for (const file of list) {
+    const remaining = Math.max(0, MAX_BASELINE_PHOTOS - (state.newSite[stage] || []).length);
+    if (!remaining) {
+      toast(`처음 상태 사진은 최대 ${MAX_BASELINE_PHOTOS}장까지 등록할 수 있습니다.`, { tone: 'error' });
+      return;
+    }
+    const accepted = list.slice(0, remaining);
+    if (accepted.length < list.length) {
+      toast(`최대 ${MAX_BASELINE_PHOTOS}장이라 ${accepted.length}장만 추가합니다.`, { tone: 'error' });
+    }
+    for (const file of accepted) {
       try {
         toast('사진 처리 중…', { duration: 1200 });
         const prepared = await preparePhoto(file);
