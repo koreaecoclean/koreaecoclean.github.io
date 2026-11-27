@@ -134,9 +134,41 @@ function normalizePhotos(photos) {
   };
 }
 
+/**
+ * 청소 보고 상태 — 팀장이 등록하면 `pending`(관리자 확인 대기),
+ * 최고관리자(대표)가 확인해 고객사에 제출하면 `submitted`(고객사 제출 완료)입니다.
+ * 고객 방에는 `submitted` 만 보입니다.
+ */
+export const REPORT_STATUS = {
+  pending: { label: '관리자 확인 대기', short: '확인 대기', badge: 'badge--wait' },
+  submitted: { label: '고객사 제출 완료', short: '제출 완료', badge: 'badge--done' },
+};
+
+/** 상태 값이 없는 예전 보고는 이미 고객에게 보이던 기록이라 `submitted` 로 봅니다. */
+export function reportStatusKey(report) {
+  const key = report && report.status;
+  return REPORT_STATUS[key] ? key : 'submitted';
+}
+
+export function reportStatus(report) {
+  return REPORT_STATUS[reportStatusKey(report)];
+}
+
+/** 고객 방에 보여 줄 보고인지 — 승인 전 보고는 고객에게 보이지 않습니다. */
+export function isReportVisible(report) {
+  return reportStatusKey(report) === 'submitted';
+}
+
 function normalizeReport(report) {
   if (!report) return report;
-  return { ...report, photos: normalizePhotos(report.photos), issueNote: report.issueNote || '' };
+  return {
+    ...report,
+    photos: normalizePhotos(report.photos),
+    issueNote: report.issueNote || '',
+    status: reportStatusKey(report),
+    approvedAt: report.approvedAt || '',
+    approvedBy: report.approvedBy || '',
+  };
 }
 
 /** A site's 첫 상태 기록: ① 첫 견적(오염) ② 첫 청소(대청소). */
@@ -2355,10 +2387,11 @@ export class Store {
     return `${report.date || ''} ${report.time || '00:00'}`;
   }
 
-  async listReports({ siteId = null, leader = null, limit = 0 } = {}) {
+  async listReports({ siteId = null, leader = null, status = null, limit = 0 } = {}) {
     let reports = await this.adapter.getAll('reports');
     if (siteId) reports = reports.filter((report) => report.siteId === siteId);
     if (leader) reports = reports.filter((report) => report.leader === leader);
+    if (status) reports = reports.filter((report) => reportStatusKey(report) === status);
     reports = reports.map(normalizeReport);
     reports.sort((a, b) => Store.sortKey(b).localeCompare(Store.sortKey(a)));
     return limit > 0 ? reports.slice(0, limit) : reports;
@@ -2388,6 +2421,10 @@ export class Store {
       photos: normalizePhotos(input.photos),
       manualDay: String(input.manualDay || '').trim(),
       manualTime: String(input.manualTime || '').trim(),
+      // 팀장이 등록한 보고는 곧바로 고객에게 가지 않고 최고관리자 확인을 기다립니다.
+      status: 'pending',
+      approvedAt: '',
+      approvedBy: '',
       createdAt: new Date().toISOString(),
       source: 'app',
     };
@@ -2395,6 +2432,22 @@ export class Store {
     await this.adapter.put('reports', report);
     this._notify();
     return report;
+  }
+
+  /** 최고관리자(대표)가 내용을 확인하고 고객사에 제출합니다 — 이때 고객 방에 보입니다. */
+  async approveReport(id, { by = '' } = {}) {
+    const report = await this.getReport(id);
+    if (!report) throw new StoreError('no-report', '보고를 찾지 못했습니다.');
+    if (reportStatusKey(report) === 'submitted') return report;
+    const next = {
+      ...report,
+      status: 'submitted',
+      approvedAt: new Date().toISOString(),
+      approvedBy: String(by || '').trim(),
+    };
+    await this.adapter.put('reports', next);
+    this._notify();
+    return normalizeReport(next);
   }
 
   async deleteReport(id) {
@@ -2741,8 +2794,10 @@ export class Store {
 
   /* ---------------- aggregates ---------------- */
 
-  async statsForSite(site) {
-    const reports = await this.listReports({ siteId: site.id });
+  /** customerFacing: 고객 방(그리고 그 미리보기)에서 쓰는 값 — 승인 전 보고는 빼고 셉니다. */
+  async statsForSite(site, { customerFacing = false } = {}) {
+    const all = await this.listReports({ siteId: site.id });
+    const reports = customerFacing ? all.filter(isReportVisible) : all;
     const monthKey = new Date().toISOString().slice(0, 7);
     const last = reports[0] || null;
     const photoCount = reports.reduce((sum, report) => sum + countReportPhotos(report), 0);

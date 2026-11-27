@@ -354,7 +354,7 @@ export function createCustomerView(container) {
       return `
         <div class="empty">
           <strong>아직 남겨진 보고가 없습니다</strong>
-          <span>방문 후 팀장이 보고를 등록하면 이곳에 표시됩니다.</span>
+          <span>방문 후 팀장이 보고를 등록하고 대표 확인이 끝나면 이곳에 표시됩니다.</span>
         </div>`;
     }
     const rows = [];
@@ -828,7 +828,7 @@ export function createCustomerView(container) {
       return;
     }
 
-    const stats = await store.statsForSite(site);
+    const stats = await store.statsForSite(site, { customerFacing: true });
     if (token !== renderToken) return;
 
     reportsById.clear();
@@ -881,7 +881,7 @@ export function createCustomerView(container) {
     state.site = site;
     state.category = site.category;
 
-    const stats = await store.statsForSite(site);
+    const stats = await store.statsForSite(site, { customerFacing: true });
     reportsById.clear();
     stats.reports.forEach((report) => reportsById.set(report.id, report));
     const documents = {

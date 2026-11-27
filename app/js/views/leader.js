@@ -28,6 +28,7 @@ import {
   StoreError,
   countReportPhotos,
   STAFF_STATUS,
+  reportStatus,
   canUseSupply,
   MAX_BASELINE_PHOTOS,
 } from '../store.js';
@@ -66,6 +67,37 @@ const SAMPLE_POOL = {
 };
 
 const MEMO_CHIPS = ['소모품 보충 필요', '추가 견적 안내 필요', '다음 방문 시 재확인', '시설 문제 발견'];
+
+/**
+ * 전달 메모 칩 → `- 항목` 한 줄로 추가합니다.
+ * 첫 항목은 그대로 `- 소모품 보충 필요`, 그다음부터는 줄바꿈 뒤에 붙습니다.
+ * 이미 들어 있는 항목은 다시 넣지 않고, 빈 줄과 줄 끝 공백은 정리합니다.
+ */
+function memoChipLines(note) {
+  return String(note || '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/, ''));
+}
+
+function memoHasChip(note, chip) {
+  const wanted = `- ${chip}`;
+  return memoChipLines(note).some((line) => {
+    const row = line.trim();
+    return row === wanted || row === chip || row === `• ${chip}`;
+  });
+}
+
+function addMemoChip(note, chip) {
+  const raw = String(note || '').replace(/\r\n/g, '\n');
+  if (memoHasChip(raw, chip)) return raw;
+  const body = memoChipLines(raw)
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+/, '')
+    .trimEnd();
+  return body ? `${body}\n- ${chip}` : `- ${chip}`;
+}
 
 /* ---------------- 청소공정 매뉴얼 ---------------- */
 
@@ -1106,9 +1138,17 @@ export function createLeaderView(container) {
         </div>
         <textarea class="textarea" id="r-note" rows="4" placeholder="예: 회의실 카펫 얼룩 제거 완료, 핸드타월 2박스 보충했습니다.">${esc(draft.note)}</textarea>
         <div class="memo-chips">
-          ${MEMO_CHIPS.map((chip) => `<button class="memo-chip" type="button" data-memo="${esc(chip)}">+ ${esc(chip)}</button>`).join('')}
+          ${MEMO_CHIPS.map((chip) => {
+            const on = memoHasChip(draft.note, chip);
+            return `<button class="memo-chip${on ? ' is-on' : ''}" type="button" data-memo="${esc(chip)}" aria-pressed="${on}">+ ${esc(chip)}</button>`;
+          }).join('')}
         </div>
+        <p class="tiny muted memo-hint">칩을 누르면 한 줄에 하나씩 <strong>- 항목</strong> 으로 들어갑니다. 직접 쓰셔도 됩니다.</p>
       </section>
+
+      <p class="tiny muted" style="text-align:center;margin:4px 0 8px">
+        등록한 보고는 <strong>최고관리자(대표) 확인</strong>을 거쳐 고객사에 제출됩니다.
+      </p>
 
       <div class="submit-bar">
         <button class="btn btn--primary" type="button" data-action="submit-report">보고 등록하기</button>
@@ -1131,13 +1171,13 @@ export function createLeaderView(container) {
       <section class="sent-card">
         <span class="sent-card__icon">${icons.check}</span>
         <div>
-          <strong>보고가 등록되었습니다</strong>
+          <strong>보고를 등록했습니다 · 관리자 확인 대기</strong>
           <p>${esc(sent.siteName)} · ${esc(fmtDateLong(sent.date))} ${esc(fmtTime(sent.time))}<br>
           시건장치 ${sent.photos.security.length}장 · 맞춤 청소 ${sent.photos.cleaning.length}장 · 특이사항 ${sent.photos.issue.length}장 ·
           점검 ${sent.doneCount}/${sent.totalCount}</p>
+          <p class="sent-card__hint">최고관리자(대표)가 확인해 고객사에 제출하면 그때 고객 방에 보입니다.</p>
         </div>
         <div class="btn-row">
-          <button class="btn btn--primary btn--sm" type="button" data-action="view-customer">고객 화면 보기</button>
           <button class="btn btn--quiet btn--sm" type="button" data-action="dismiss-sent">닫기</button>
         </div>
       </section>
@@ -1358,15 +1398,19 @@ export function createLeaderView(container) {
     const names = new Map(sites.map((site) => [site.id, site.name]));
     box.innerHTML = rows
       .map(
-        (report) => `
+        (report) => {
+          const status = reportStatus(report);
+          return `
           <div class="my-report">
             <div>
               <strong>${esc(names.get(report.siteId) || report.siteName)}</strong>
               <span>${esc(fmtDateLong(report.date))} ${esc(fmtTime(report.time))} · 사진 ${countReportPhotos(report)}장</span>
+              <em class="badge ${status.badge} my-report__status">${esc(status.label)}</em>
             </div>
             <button class="link-btn" style="background:var(--surface-3);color:var(--body);border-color:var(--line)"
                     type="button" data-delete-report="${esc(report.id)}">삭제</button>
-          </div>`,
+          </div>`;
+        },
       )
       .join('');
   }
@@ -1694,10 +1738,7 @@ export function createLeaderView(container) {
       startDraft(session, site);
       await render();
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      toast('보고를 등록했습니다. 고객 방에 바로 표시됩니다.', {
-        actionLabel: '고객 화면',
-        onAction: () => goToCustomer(),
-      });
+      toast('보고를 등록했습니다. 최고관리자(대표) 확인 후 고객사에 제출됩니다.');
     } catch (error) {
       console.error('[leader] submit failed', error);
       const message =
@@ -1922,9 +1963,17 @@ export function createLeaderView(container) {
       const draft = state.draft;
       if (!draft) return;
       const chip = memo.dataset.memo;
-      if (!draft.note.includes(chip)) draft.note = draft.note ? `${draft.note.trim()} ${chip}` : chip;
+      draft.note = addMemoChip(draft.note, chip);
       const note = $('#r-note', container);
-      if (note) note.value = draft.note;
+      if (note) {
+        note.value = draft.note;
+        note.scrollTop = note.scrollHeight;
+      }
+      $$('[data-memo]', container).forEach((button) => {
+        const on = memoHasChip(draft.note, button.dataset.memo);
+        button.classList.toggle('is-on', on);
+        button.setAttribute('aria-pressed', String(on));
+      });
       return;
     }
 

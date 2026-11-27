@@ -6,9 +6,9 @@
  * - 고객 계정과 방 입장 상태 확인
  */
 
-import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate } from '../ui.js';
-import { store, netProfit, MAX_BASELINE_PHOTOS } from '../store.js';
-import { CATEGORY_META } from '../seed.js';
+import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate, fmtDateLong, fmtTime, openLightbox } from '../ui.js';
+import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, countReportPhotos } from '../store.js';
+import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import { preparePhoto } from '../photos.js';
 import { getSession, loginAdmin, logout, demoAccounts } from '../auth.js';
 import {
@@ -526,6 +526,144 @@ export function createAdminView(container) {  const state = {
     `;
   }
 
+  /* ---------------- 보고 확인 · 고객사 제출 (대표) ---------------- */
+
+  function approvalThumbsTemplate(report, groupKey) {
+    const photos = (report.photos && report.photos[groupKey]) || [];
+    if (!photos.length) return '';
+    const shown = photos.slice(0, 4);
+    return `
+      <div class="approval-photos">
+        ${shown
+          .map(
+            (photo, index) => `
+              <button class="approval-thumb" type="button" data-approval-photo="${esc(report.id)}"
+                      data-photo-group="${esc(groupKey)}" data-photo-index="${index}"
+                      aria-label="${esc(photo.caption || '현장 사진')} 크게 보기">
+                <img src="${esc(store.photoThumbUrl(photo))}" alt="${esc(photo.caption || '현장 사진')}" loading="lazy" decoding="async">
+              </button>`,
+          )
+          .join('')}
+        ${photos.length > shown.length ? `<span class="approval-more">+${photos.length - shown.length}</span>` : ''}
+      </div>`;
+  }
+
+  function approvalCardTemplate(report) {
+    const status = reportStatus(report);
+    const done = (report.checklist || []).filter((item) => item.done).length;
+    const total = (report.checklist || []).length;
+    const pending = report.status !== 'submitted';
+    const groupRows = PHOTO_GROUPS.map((group) => {
+      const count = ((report.photos && report.photos[group.key]) || []).length;
+      return `
+        <div class="approval-group">
+          <div class="approval-group__head">
+            <strong>${esc(group.label)}</strong>
+            <span>${count}장</span>
+          </div>
+          ${approvalThumbsTemplate(report, group.key)}
+        </div>`;
+    }).join('');
+
+    return `
+      <article class="approval-card" data-approval-card="${esc(report.id)}">
+        <header class="approval-card__head">
+          <div>
+            <strong>${esc(report.siteName || '')}</strong>
+            <span>${esc(fmtDateLong(report.date))} ${esc(fmtTime(report.time))} · ${esc(report.leader)} ${esc(report.leaderRole || '팀장')}${report.durationMin ? ` · ${report.durationMin}분` : ''}</span>
+          </div>
+          <span class="badge ${status.badge}">${esc(status.label)}</span>
+        </header>
+        <p class="tiny muted approval-meta">사진 ${countReportPhotos(report)}장 · 점검 ${done}/${total}</p>
+        ${groupRows}
+        ${report.note ? `<div class="approval-block"><strong>전달 메모</strong><p class="report__note">${esc(report.note)}</p></div>` : ''}
+        ${report.issueNote ? `<div class="approval-block"><strong>특이사항 메모</strong><p class="issue-note">${esc(report.issueNote)}</p></div>` : ''}
+        ${
+          pending
+            ? `<div class="approval-actions">
+                 <button class="btn btn--primary btn--sm" type="button" data-approve-report="${esc(report.id)}">확인 · 고객사 제출</button>
+                 <span class="tiny muted">제출하면 고객 방에 바로 보입니다.</span>
+               </div>`
+            : `<p class="tiny muted approval-done">${esc(report.approvedAt ? `${fmtDateLong(String(report.approvedAt).slice(0, 10))} 고객사 제출 완료` : '고객사 제출 완료')}${report.approvedBy ? ` · ${esc(report.approvedBy)}` : ''}</p>`
+        }
+      </article>`;
+  }
+
+  function reportApprovalPanelTemplate({ pending, recent }) {
+    return `
+      <section class="panel approval-panel" data-approval-panel>
+        <div class="section-head">
+          <h2>보고 확인 · 고객사 제출</h2>
+          <p>${pending.length ? `${pending.length}건 확인 대기` : '확인 대기 없음'}</p>
+        </div>
+        <p class="tiny muted" style="margin:-4px 0 12px">
+          팀장이 등록한 보고는 <strong>대표 확인 전까지 고객에게 보이지 않습니다.</strong>
+          사진 · 전달 메모 · 특이사항을 확인하고 <strong>확인 · 고객사 제출</strong>을 누르면 그때 고객 방에 표시됩니다.
+        </p>
+        ${pending.length ? pending.map(approvalCardTemplate).join('') : '<p class="tiny muted">확인을 기다리는 보고가 없습니다.</p>'}
+        ${
+          recent.length
+            ? `<details class="approval-recent">
+                 <summary>최근 고객사 제출 ${recent.length}건</summary>
+                 <div class="stack-10" style="margin-top:8px">${recent.map(approvalCardTemplate).join('')}</div>
+               </details>`
+            : ''
+        }
+      </section>
+    `;
+  }
+
+  async function openApprovalPhoto(reportId, groupKey, startIndex) {
+    const report = await store.getReport(reportId);
+    if (!report) return;
+    const photos = (report.photos && report.photos[groupKey]) || [];
+    if (!photos.length) return;
+    const groupLabel = (PHOTO_GROUPS.find((group) => group.key === groupKey) || {}).label || '현장 사진';
+    const items = [];
+    for (const photo of photos) {
+      const url = await store.photoFullUrl(photo);
+      if (!url) continue;
+      items.push({
+        url,
+        caption: [groupLabel, photo.caption || '', `${fmtDateLong(report.date)} ${fmtTime(report.time)} · ${report.leader}`]
+          .filter(Boolean)
+          .join(' · '),
+      });
+    }
+    if (!items.length) {
+      toast('사진을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.', { tone: 'error' });
+      return;
+    }
+    openLightbox(items, Math.min(Number(startIndex) || 0, items.length - 1));
+  }
+
+  async function approveReportToCustomer(reportId, button) {
+    if (state.busy) return;
+    const report = await store.getReport(reportId);
+    if (!report) {
+      toast('보고를 찾지 못했습니다.', { tone: 'error' });
+      return;
+    }
+    const ok = await confirmDialog({
+      title: '고객사에 제출할까요?',
+      message: `${report.siteName || ''} · ${fmtDateLong(report.date)} ${fmtTime(report.time)} 보고를 고객 방에 제출합니다. 제출 후에는 고객이 바로 볼 수 있습니다.`,
+      confirmLabel: '고객사 제출',
+    });
+    if (!ok) return;
+    state.busy = true;
+    setBusy(button, true, '제출 중…');
+    try {
+      const next = await store.approveReport(reportId, { by: state.session ? state.session.name : '' });
+      toast(`${next.siteName || ''} 보고를 고객사에 제출했습니다.`);
+      await render();
+    } catch (error) {
+      toast('보고를 제출하지 못했습니다. 잠시 후 다시 시도해 주세요.', { tone: 'error' });
+    } finally {
+      state.busy = false;
+      setBusy(button, false);
+    }
+  }
+
   async function dashboardTemplate(session) {
     const sites = await store.listSites();
     const codes = await store.listRoomCodes();
@@ -540,6 +678,8 @@ export function createAdminView(container) {  const state = {
     const staffChecks = await store.listStaffChecks();
     const supplyCatalog = await store.listSupplyCatalog();
     const supplyOrders = await store.listSupplyOrders();
+    const pendingReports = await store.listReports({ status: 'pending' });
+    const recentSubmitted = await store.listReports({ status: 'submitted', limit: 3 });
 
     const unusedTotal = codes.filter((code) => !code.usedAt).length;
     const usedTotal = codes.filter((code) => code.usedAt).length;
@@ -564,6 +704,8 @@ export function createAdminView(container) {  const state = {
           <div><strong>${leaders.length}</strong><span>팀장</span></div>
         </div>
       </section>
+
+      ${reportApprovalPanelTemplate({ pending: pendingReports, recent: recentSubmitted })}
 
       ${revenueSummaryTemplate(revenue)}
 
@@ -1176,6 +1318,23 @@ export function createAdminView(container) {  const state = {
   }
 
   async function onClick(event) {
+    /* ---------------- 보고 확인 · 고객사 제출 ---------------- */
+    const approvalPhoto = event.target.closest('[data-approval-photo]');
+    if (approvalPhoto) {
+      await openApprovalPhoto(
+        approvalPhoto.dataset.approvalPhoto,
+        approvalPhoto.dataset.photoGroup,
+        approvalPhoto.dataset.photoIndex,
+      );
+      return;
+    }
+
+    const approveButton = event.target.closest('[data-approve-report]');
+    if (approveButton) {
+      await approveReportToCustomer(approveButton.dataset.approveReport, approveButton);
+      return;
+    }
+
     /* ---------------- 청소장비 · 봉투 영수증 (대표) ---------------- */
     const blankSubcontract = event.target.closest('[data-blank-subcontract]');
     if (blankSubcontract) {
