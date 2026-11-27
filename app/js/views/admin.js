@@ -130,7 +130,8 @@ export function createAdminView(container) {  const state = {
         <p class="tiny muted">
           <strong>최고관리자(대표)</strong>는 전화번호와 비밀번호로,
           <strong>부관리자(본부장)</strong>은 팀장 고유코드까지 함께 입력해 입장합니다.
-          본부장 화면에는 금액 정보가 표시되지 않습니다.
+          부관리자 화면에는 <strong>본인 담당 현장의 제한 정보만</strong> 나오고,
+          금액 · 직원 평가 · 다른 팀장의 관리 · 고객 계약서 · 견적서는 표시되지 않습니다.
         </p>
         <form class="form" id="admin-login" style="margin-top:14px" novalidate>
           <div class="field">
@@ -1243,19 +1244,20 @@ export function createAdminView(container) {  const state = {
   }
 
   async function dashboardTemplate(session) {
+    const actor = { actor: session };
     const sites = await store.listSites();
-    const codes = await store.listRoomCodes();
-    const accounts = await store.listAccounts();
+    const codes = await store.listRoomCodes({}, actor);
+    const accounts = await store.listAccounts({}, actor);
     const leaders = accounts.filter((account) => account.role === 'leader');
     const customers = accounts.filter((account) => account.role === 'customer');
-    const grants = await store.listGrants();
-    const revenue = await store.revenueSummary();
-    const quotes = await store.listQuotes();
-    const agreements = await store.listAgreements();
-    const staffContracts = await store.listStaffContracts();
-    const staffChecks = await store.listStaffChecks();
+    const grants = await store.listGrants({}, actor);
+    const revenue = await store.revenueSummary(actor);
+    const quotes = await store.listQuotes({}, actor);
+    const agreements = await store.listAgreements({}, actor);
+    const staffContracts = await store.listStaffContracts({}, actor);
+    const staffChecks = await store.listStaffChecks({}, actor);
     const supplyCatalog = await store.listSupplyCatalog();
-    const supplyOrders = await store.listSupplyOrders();
+    const supplyOrders = await store.listSupplyOrders({}, actor);
     const pendingReports = await store.listReports({ status: 'pending' });
     const recentSubmitted = await store.listReports({ status: 'submitted', limit: 3 });
     // 업장(siteId) 중심 연결 요약 — 견적 · 계약 · 팀장 계약 · 보고 · 이력을 한 번에 읽습니다.
@@ -1414,37 +1416,45 @@ export function createAdminView(container) {  const state = {
     if (state.isCeo && getWorkMode() !== 'admin') setWorkMode('admin');
 
     if (state.staffDetail) {
-      const sites = await store.listSites();
-      const contract = await store.getStaffContract(state.staffDetail);
-      if (contract) {
-        const checks = await store.listStaffChecks();
-        const reportsBySite = {};
-        for (const id of contract.siteIds) {
-          const rows = await store.listReports({ siteId: id, limit: 1 });
-          reportsBySite[id] = rows[0] || null;
+      // 직원방(계약서 · 관리업장 · 근무태도)은 대표만 — 부관리자도 들어가지 않습니다(v2.8.2).
+      if (!state.isCeo) {
+        state.staffDetail = '';
+      } else {
+        const sites = await store.listSites();
+        const contract = await store.getStaffContract(state.staffDetail, { actor: session });
+        if (contract) {
+          const checks = await store.listStaffChecks({}, { actor: session });
+          const reportsBySite = {};
+          for (const id of contract.siteIds) {
+            const rows = await store.listReports({ siteId: id, limit: 1 });
+            reportsBySite[id] = rows[0] || null;
+          }
+          if (token !== renderToken) return;
+          container.innerHTML = staffRoomTemplate({
+            contract,
+            checks,
+            sites,
+            canSeeMoney: state.isCeo,
+            canSeeEvaluation: state.isCeo,
+            reportsBySite,
+          });
+          return;
         }
-        if (token !== renderToken) return;
-        container.innerHTML = staffRoomTemplate({
-          contract,
-          checks,
-          sites,
-          canSeeMoney: state.isCeo,
-          reportsBySite,
-        });
-        return;
+        state.staffDetail = '';
       }
-      state.staffDetail = '';
     }
 
     if (!state.isCeo) {
-      const sites = await store.listSites();
-      const assigned = session.assignedSiteIds || [];
-      const allowed = assigned.length ? sites.filter((site) => assigned.includes(site.id)) : sites;
-      const staffContracts = await store.listStaffContracts();
-      const checks = await store.listStaffChecks();
+      // 부관리자(본부장) — 본인에게 배정된 업장만. 다른 직원의 관리·평가·계약은 열리지 않습니다.
+      const sites = await store.listSitesFor(session);
+      const allowed = sites;
+      const myContracts = await store.listStaffContracts(
+        { accountId: session.accountId },
+        { actor: session },
+      );
       const lastBySite = {};
       for (const site of allowed) {
-        const reports = await store.listReports({ siteId: site.id, limit: 1 });
+        const reports = await store.listReports({ siteId: site.id, limit: 1 }, { actor: session });
         lastBySite[site.id] = reports[0] || null;
       }
       if (token !== renderToken) return;
@@ -1452,8 +1462,7 @@ export function createAdminView(container) {  const state = {
         session,
         sites: allowed,
         lastBySite,
-        staffContracts,
-        checks,
+        myContracts,
       });
       return;
     }
@@ -1590,7 +1599,7 @@ export function createAdminView(container) {  const state = {
           parkingMethod: $('#ns-parking-method', container)?.value || '',
         },
         leaderIds,
-      });
+      }, { actor: state.session });
 
       for (const stage of ['quote', 'deepClean']) {
         const prepared = state.newSite[stage] || [];
@@ -1691,10 +1700,10 @@ export function createAdminView(container) {  const state = {
         terms: $('#nq-terms', container)?.value || '',
         memo: $('#nq-memo', container)?.value || '',
         photos,
-      });
+      }, { actor: state.session });
       state.newQuote = { photos: [] };
       state.newQuoteOpen = false;
-      await store.sendQuote(quote.id);
+      await store.sendQuote(quote.id, { actor: state.session });
       await render();
       toast(`${quote.clientCompany} 견적 · 초대코드 ${quote.inviteCode}`, {
         actionLabel: '초대 문구 복사',
@@ -1739,7 +1748,7 @@ export function createAdminView(container) {  const state = {
         process: $('#st-process', container)?.value || '',
         safety: $('#st-safety', container)?.value || '',
         specialTerms: $('#st-terms', container)?.value || '',
-      });
+      }, { actor: state.session });
       state.newStaffOpen = false;
       await render();
       toast(`${contract.name} ${contract.no} · 초대코드 ${contract.inviteCode}`, {
@@ -1844,11 +1853,15 @@ export function createAdminView(container) {  const state = {
     });
     state.openDetails = siteId;
     try {
-      const site = await store.updateSiteDetails(siteId, {
-        contract,
-        ops,
-        actor: state.session ? state.session.name : '',
-      });
+      const site = await store.updateSiteDetails(
+        siteId,
+        {
+          contract,
+          ops,
+          actor: state.session ? state.session.name : '',
+        },
+        { actor: state.session },
+      );
       await render();
       toast(`${site.name} 계약 · 운영 정보를 저장했습니다.`);
     } catch (error) {
@@ -1949,15 +1962,18 @@ export function createAdminView(container) {  const state = {
       event.preventDefault();
       const form = event.target;
       try {
-        await store.addStaffCheck({
-          staffContractId: form.dataset.staffCheckForm,
-          grade: form.querySelector('[data-check-grade]')?.value || 'A',
-          siteId: form.querySelector('[data-check-site]')?.value || '',
-          date: form.querySelector('[data-check-date]')?.value || '',
-          memo: form.querySelector('[data-check-memo]')?.value || '',
-          reviewerId: state.session ? state.session.accountId : '',
-          reviewerName: state.session ? state.session.name : '',
-        });
+        await store.addStaffCheck(
+          {
+            staffContractId: form.dataset.staffCheckForm,
+            grade: form.querySelector('[data-check-grade]')?.value || 'A',
+            siteId: form.querySelector('[data-check-site]')?.value || '',
+            date: form.querySelector('[data-check-date]')?.value || '',
+            memo: form.querySelector('[data-check-memo]')?.value || '',
+            reviewerId: state.session ? state.session.accountId : '',
+            reviewerName: state.session ? state.session.name : '',
+          },
+          { actor: state.session },
+        );
         await render();
         toast('근무태도 체크를 저장했습니다.');
       } catch (error) {
@@ -2406,7 +2422,7 @@ export function createAdminView(container) {  const state = {
       });
       if (!ok) return;
       try {
-        const contract = await store.regenerateStaffInvite(regenStaffInvite.dataset.regenStaffInvite);
+        const contract = await store.regenerateStaffInvite(regenStaffInvite.dataset.regenStaffInvite, { actor: state.session });
         await render();
         toast(`새 직원 초대코드 ${contract.inviteCode}`, {
           actionLabel: '초대 문구 복사',
@@ -2456,7 +2472,7 @@ export function createAdminView(container) {  const state = {
       state.busy = true;
       setBusy(issue, true, '발급 중…');
       try {
-        const record = await store.issueRoomCode(issue.dataset.issueSite);
+        const record = await store.issueRoomCode(issue.dataset.issueSite, '', { actor: state.session });
         await render();
         toast(`새 1회용 코드 ${record.code}를 발급했습니다.`, {
           actionLabel: '복사',
@@ -2480,7 +2496,7 @@ export function createAdminView(container) {  const state = {
       });
       if (!ok) return;
       try {
-        const account = await store.regenerateLeaderCode(regen.dataset.regenLeader);
+        const account = await store.regenerateLeaderCode(regen.dataset.regenLeader, { actor: state.session });
         await render();
         toast(`${account.name} 팀장 새 코드 ${account.leaderCode}`, {
           actionLabel: '복사',

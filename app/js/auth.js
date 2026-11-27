@@ -12,7 +12,7 @@
  */
 
 import { store, normalizeCode, normalizePhone, prettyPhone } from './store.js';
-import { DEMO_ACCOUNTS, STAFF_TYPES } from './seed.js';
+import { DEMO_ACCOUNTS } from './seed.js';
 
 export const SESSION_KEY = 'session';
 
@@ -74,6 +74,9 @@ function publicSession(account) {
     siteId: account.siteId || null,
     quoteId: account.quoteId || '',
     assignedSiteIds: (account.assignedSiteIds || []).slice(),
+    staffAccess: !!account.staffAccess,
+    canManageStaff: !!account.canManageStaff,
+    staffRole: account.staffRole || (account.canManageStaff ? 'manager' : 'leader'),
     loggedInAt: new Date().toISOString(),
   };
 }
@@ -108,6 +111,8 @@ export async function getSession() {
     quoteId: account.quoteId || '',
     assignedSiteIds: (account.assignedSiteIds || []).slice(),
     staffAccess: !!account.staffAccess,
+    canManageStaff: !!account.canManageStaff,
+    staffRole: account.staffRole || (account.canManageStaff ? 'manager' : 'leader'),
     account,
   };
 }
@@ -295,20 +300,10 @@ export async function demoRegisteredCustomers() {
   });
 }
 
-/** 미사용 직원 초대코드 (직원관리방 입장 테스트용). */
-export async function demoStaffCodes() {
-  const contracts = await store.listStaffContracts();
-  // 실제 직원(공개 데모 목록에서 빠진 계정)의 초대코드는 공개 목록에 올리지 않습니다.
-  const hiddenAccountIds = new Set(DEMO_ACCOUNTS.filter((account) => account.demoHidden).map((account) => account.id));
-  return contracts
-    .filter((row) => !row.inviteUsedAt && row.status !== 'draft' && !hiddenAccountIds.has(row.accountId))
-    .map((row) => ({
-      name: row.name,
-      phone: prettyPhone(row.phone),
-      code: row.inviteCode,
-      typeLabel: (STAFF_TYPES[row.employmentType] || {}).short || '직원',
-    }));
-}
+/*
+ * v2.8.2 — 다른 직원의 이름·전화번호·초대코드를 나열하는 데모 목록은 없앴습니다.
+ *  초대코드는 대표가 직원에게 직접 전달합니다.
+ */
 
 /** Room codes seeded for the demo (shown next to each demo customer account). */
 export async function demoRoomCodes() {

@@ -564,122 +564,59 @@ export function managerSitesTemplate(sites, lastBySite) {
     </section>`;
 }
 
-export function managerStaffTemplate({ staffContracts, checks, sites }) {
-  const siteName = (id) => (sites.find((site) => site.id === id) || {}).name || '';
-  return `
-    <section class="panel manager-staff" data-manager-staff>
-      <div class="section-head">
-        <div>
-          <h2>직원관리 &amp; 체크</h2>
-          <p>배정 현장 · 계약 상태 · 근무태도 A~F</p>
-        </div>
-        <span class="badge">${staffContracts.length}명</span>
-      </div>
-      <div class="grade-scale">${GRADES.map((grade) => `<span class="grade grade--${grade}">${grade}</span>`).join('')}</div>
-      <div class="stack-10">
-        ${
-          staffContracts.length
-            ? staffContracts
-                .map((contract) => {
-                  const meta = STAFF_TYPES[contract.employmentType] || STAFF_TYPES.freelancer;
-                  const status = STAFF_STATUS[contract.status] || STAFF_STATUS.draft;
-                  const own = checks.filter((row) => row.staffContractId === contract.id);
-                  const latest = own[0];
-                  return `
-                    <article class="manager-staff-card" data-manager-staff-card="${esc(contract.id)}">
-                      <header class="manager-site__head">
-                        <div>
-                          <strong>${esc(contract.name)} ${esc(contract.roleTitle || '')}</strong>
-                          <span>${esc(meta.short)} · ${esc(contract.siteIds.map(siteName).filter(Boolean).join(', ') || '현장 미배정')}</span>
-                        </div>
-                        ${latest ? gradeBadge(latest.grade) : '<span class="badge badge--wait">평가 전</span>'}
-                      </header>
-                      <p class="tiny muted">계약 ${esc(status.label)} · ${esc(contract.workDays || '일정 협의')}</p>
-                      <button class="btn btn--ghost btn--sm" type="button" data-open-staff-room="${esc(contract.id)}">직원방 열기 (계약서 · 관리업장 · 근무태도)</button>
-                      <details class="check-box">
-                        <summary>근무태도 체크 (A~F)</summary>
-                        <form class="form" data-staff-check-form="${esc(contract.id)}" novalidate>
-                          <div class="field-row">
-                            <div class="field">
-                              <label>등급</label>
-                              <select class="select" data-check-grade>
-                                ${GRADES.map((grade) => `<option value="${grade}">${grade}</option>`).join('')}
-                              </select>
-                            </div>
-                            <div class="field">
-                              <label>현장</label>
-                              <select class="select" data-check-site>
-                                ${contract.siteIds
-                                  .map((id) => `<option value="${esc(id)}">${esc(siteName(id) || id)}</option>`)
-                                  .join('')}
-                              </select>
-                            </div>
-                          </div>
-                          <div class="field">
-                            <label>날짜</label>
-                            <input class="input" type="date" data-check-date>
-                          </div>
-                          <div class="field">
-                            <label>체크 메모</label>
-                            <textarea class="textarea" rows="2" data-check-memo placeholder="예: 보고 누락 없음 · 현장 정리 상태 양호"></textarea>
-                          </div>
-                          <button class="btn btn--primary btn--sm" type="submit">등급 저장</button>
-                        </form>
-                      </details>
-                      ${
-                        own.length
-                          ? `<ul class="check-history">
-                              ${own
-                                .slice(0, 4)
-                                .map(
-                                  (row) => `<li>${gradeBadge(row.grade)}<span>${esc(row.date)} · ${esc(row.memo || '메모 없음')}</span></li>`,
-                                )
-                                .join('')}
-                            </ul>`
-                          : '<p class="tiny muted">아직 근무태도 체크가 없습니다.</p>'
-                      }
-                    </article>`;
-                })
-                .join('')
-            : '<p class="tiny muted">등록된 직원이 없습니다.</p>'
-        }
-      </div>
-      <p class="hint">이 화면에는 금액 정보가 표시되지 않습니다. 급여·계약 금액은 최고관리자(대표)만 확인합니다.</p>
-    </section>`;
-}
+/* v2.8.2 — 직원관리 & 근무태도 체크 패널은 없어졌습니다.
+   직원 평가(A~F)와 다른 직원의 관리는 대표만 봅니다. */
 
-export function managerDashboardTemplate({ session, sites, lastBySite, staffContracts, checks }) {
+export function managerDashboardTemplate({ session, sites, lastBySite, myContracts = [] }) {
+  const myContract = myContracts[0] || null;
+  const status = myContract ? STAFF_STATUS[myContract.status] || STAFF_STATUS.draft : null;
   return `
     <div class="leader-bar">
       <div class="leader-bar__who">
         <span class="avatar" aria-hidden="true">${esc(session.name.slice(0, 1))}</span>
         <div>
-          <strong>${esc(session.name)} 부관리자(본부장)</strong>
-          <span>${esc(session.phone || '')} · 현장 · 직원 체크 권한</span>
+          <strong>${esc(session.name)} ${esc(session.title || '본부장')}</strong>
+          <span>${esc(session.phone || '')} · 본인 담당 현장만</span>
         </div>
       </div>
       <button class="btn btn--sm btn--quiet" type="button" data-action="logout">로그아웃</button>
     </div>
     <section class="panel">
       <div class="admin-stats">
-        <div><strong>${sites.length}</strong><span>담당 현장</span></div>
-        <div><strong>${staffContracts.length}</strong><span>직원</span></div>
-        <div><strong>${checks.length}</strong><span>근무태도 체크</span></div>
-        <div><strong>${staffContracts.filter((row) => row.status === 'signed').length}</strong><span>계약 체결</span></div>
+        <div><strong>${sites.length}</strong><span>내 담당 현장</span></div>
+        <div><strong>${Object.values(lastBySite).filter(Boolean).length}</strong><span>보고 있는 현장</span></div>
+        <div><strong>${myContract ? '1' : '0'}</strong><span>내 계약서</span></div>
       </div>
+      <p class="hint" style="margin:10px 0 0">
+        다른 직원의 관리업장 · 직원 평가 · 고객 계약 관련 서류와 고객 금액은 이 화면에 나오지 않습니다.
+      </p>
     </section>
     ${managerSitesTemplate(sites, lastBySite)}
-    ${managerStaffTemplate({ staffContracts, checks, sites })}
-    <p class="hint">대표 전용 화면(매출 정리 · 고객 계약 · 직원 급여)은 부관리자 계정에서 열리지 않습니다.</p>
+    ${
+      myContract
+        ? `<section class="panel" data-manager-my-contract="${esc(myContract.id)}">
+             <div class="section-head"><h3>내 계약서</h3><p>${esc(myContract.no)}</p></div>
+             <div class="my-doc-row">
+               <div class="my-doc-row__who">
+                 <strong>${esc(myContract.name)} ${esc(myContract.roleTitle || '')}</strong>
+                 <span>${esc(myContract.startDate || '')} ~ ${esc(myContract.endDate || '')}</span>
+               </div>
+               <span class="badge ${status.badge}">${esc(status.label)}</span>
+             </div>
+             <button class="btn btn--primary btn--sm" type="button" data-open-staff="${esc(myContract.id)}">내 계약서 열기</button>
+           </section>`
+        : ''
+    }
+    <p class="hint">현장 보고 · 사진 · 청소공정은 [현장 보고] 탭에서 확인하세요.</p>
   `;
 }
 
 /* ------------------------------------------------------------------ */
 /* 직원방 — 직원 상세 (계약서 · 관리업장 · 근무태도)                      */
-/* 최고관리자(대표)와 부관리자(본부장)만 들어옵니다.                      */
+/* 최고관리자(대표) 전용. 직원 평가는 대표만 매기고 봅니다(v2.8.2).      */
 /* ------------------------------------------------------------------ */
 
-export function staffRoomTemplate({ contract, checks, sites, canSeeMoney, reportsBySite = {} }) {
+export function staffRoomTemplate({ contract, checks, sites, canSeeMoney, canSeeEvaluation = false, reportsBySite = {} }) {
   const meta = STAFF_TYPES[contract.employmentType] || STAFF_TYPES.freelancer;
   const status = STAFF_STATUS[contract.status] || STAFF_STATUS.draft;
   const siteName = (id) => (sites.find((site) => site.id === id) || {}).name || id;
@@ -691,69 +628,31 @@ export function staffRoomTemplate({ contract, checks, sites, canSeeMoney, report
         ? contract.hourlyAmount
         : contract.monthlyAmount;
 
-  return `
-    <div class="staff-room" data-staff-room="${esc(contract.id)}">
-      <div class="leader-bar">
-        <div class="leader-bar__who">
-          <button class="link-btn" type="button" data-close-staff-room>← 직원 목록</button>
-        </div>
-        <span class="badge ${status.badge}">${esc(status.label)}</span>
-        <span class="badge ${canSeeMoney ? 'badge--done' : 'badge--wait'}">${canSeeMoney ? '최고관리자(대표)' : '부관리자(본부장)'}</span>
-      </div>
+  const sitesBlock = contract.siteIds.length
+    ? `<div class="stack-10">${contract.siteIds
+        .map((id) => {
+          const site = sites.find((row) => row.id === id);
+          if (!site) return '';
+          const ops = site.ops || {};
+          const last = reportsBySite[id];
+          return `<article class="manager-site">
+            <header class="manager-site__head">
+              <div><strong>${esc(site.name)}</strong><span>${esc(site.code)} · ${esc(site.frequency)}</span></div>
+              ${last ? `<span class="badge badge--done">${esc(last.date)} 보고</span>` : '<span class="badge badge--wait">보고 없음</span>'}
+            </header>
+            <dl class="kv kv--left ops-list">
+              <dt>청소 공정</dt><dd>${esc(ops.process || '미등록')}</dd>
+              <dt>출입방법</dt><dd>${esc(ops.accessMethod || '미등록')}</dd>
+              <dt>쓰레기 배출위치</dt><dd>${esc(ops.trashLocation || '미등록')}</dd>
+              <dt>주차방법</dt><dd>${esc(ops.parkingMethod || '미등록')}</dd>
+            </dl>
+          </article>`;
+        })
+        .join('')}</div>`
+    : '<p class="tiny muted">배정된 현장이 없습니다.</p>';
 
-      <section class="panel staff-room__head">
-        <div class="section-head">
-          <div>
-            <h2>${esc(contract.name)} ${esc(contract.roleTitle || '')}</h2>
-            <p>${esc(meta.short)} · ${esc(contract.no)}</p>
-          </div>
-          ${own[0] ? `<span class="grade grade--${esc(own[0].grade)}">${esc(own[0].grade)}</span>` : '<span class="badge badge--wait">평가 전</span>'}
-        </div>
-        <p class="tiny muted">${esc(contract.phone)} · ${esc(contract.workDays || '일정 협의')} ${contract.workHours ? `· ${esc(contract.workHours)}` : ''}</p>
-      </section>
-
-      <section class="panel staff-room__section" data-staff-room-contract>
-        <div class="section-head"><h3>계약서</h3><p>${esc(meta.short)} · ${esc(status.label)}</p></div>
-        <dl class="kv kv--left">
-          <dt>계약기간</dt><dd>${esc(contract.startDate)} ~ ${esc(contract.endDate)}</dd>
-          <dt>체결일</dt><dd>${esc(contract.signedDate || '미체결')}</dd>
-          ${
-            canSeeMoney
-              ? `<dt>${esc(meta.amountLabel)}</dt><dd><strong>${money(amount)}</strong>${contract.employmentType === 'freelancer' ? ` <span class="tiny muted">${contract.feeRate}% 원천징수</span>` : ''}</dd>`
-              : '<dt>금액</dt><dd class="tiny muted">부관리자 화면에서는 금액이 표시되지 않습니다.</dd>'
-          }
-        </dl>
-        <button class="btn btn--primary btn--sm" type="button" data-open-staff="${esc(contract.id)}">계약서 열기 · 인쇄</button>
-      </section>
-
-      <section class="panel staff-room__section" data-staff-room-sites>
-        <div class="section-head"><h3>관리업장</h3><p>${contract.siteIds.length}곳</p></div>
-        ${
-          contract.siteIds.length
-            ? `<div class="stack-10">${contract.siteIds
-                .map((id) => {
-                  const site = sites.find((row) => row.id === id);
-                  if (!site) return '';
-                  const ops = site.ops || {};
-                  const last = reportsBySite[id];
-                  return `<article class="manager-site">
-                    <header class="manager-site__head">
-                      <div><strong>${esc(site.name)}</strong><span>${esc(site.code)} · ${esc(site.frequency)}</span></div>
-                      ${last ? `<span class="badge badge--done">${esc(last.date)} 보고</span>` : '<span class="badge badge--wait">보고 없음</span>'}
-                    </header>
-                    <dl class="kv kv--left ops-list">
-                      <dt>청소 공정</dt><dd>${esc(ops.process || '미등록')}</dd>
-                      <dt>출입방법</dt><dd>${esc(ops.accessMethod || '미등록')}</dd>
-                      <dt>쓰레기 배출위치</dt><dd>${esc(ops.trashLocation || '미등록')}</dd>
-                      <dt>주차방법</dt><dd>${esc(ops.parkingMethod || '미등록')}</dd>
-                    </dl>
-                  </article>`;
-                })
-                .join('')}</div>`
-            : '<p class="tiny muted">배정된 현장이 없습니다.</p>'
-        }
-      </section>
-
+  // 직원 평가(A~F) — 대표(최고관리자)만 봅니다.
+  const attitudeBlock = `
       <section class="panel staff-room__section" data-staff-room-attitude>
         <div class="section-head"><h3>근무태도</h3><p>A &gt; B &gt; C &gt; D &gt; E &gt; F</p></div>
         <div class="grade-scale">
@@ -791,7 +690,49 @@ export function staffRoomTemplate({ contract, checks, sites, canSeeMoney, report
                 .join('')}</ul>`
             : '<p class="tiny muted">아직 근무태도 체크가 없습니다.</p>'
         }
+      </section>`;
+
+  return `
+    <div class="staff-room" data-staff-room="${esc(contract.id)}">
+      <div class="leader-bar">
+        <div class="leader-bar__who">
+          <button class="link-btn" type="button" data-close-staff-room>← 직원 목록</button>
+        </div>
+        <span class="badge ${status.badge}">${esc(status.label)}</span>
+        <span class="badge ${canSeeMoney ? 'badge--done' : 'badge--wait'}">${canSeeMoney ? '최고관리자(대표)' : '부관리자(본부장)'}</span>
+      </div>
+
+      <section class="panel staff-room__head">
+        <div class="section-head">
+          <div>
+            <h2>${esc(contract.name)} ${esc(contract.roleTitle || '')}</h2>
+            <p>${esc(meta.short)} · ${esc(contract.no)}</p>
+          </div>
+          ${canSeeEvaluation ? (own[0] ? `<span class="grade grade--${esc(own[0].grade)}">${esc(own[0].grade)}</span>` : '<span class="badge badge--wait">평가 전</span>') : ''}
+        </div>
+        <p class="tiny muted">${esc(contract.phone)} · ${esc(contract.workDays || '일정 협의')} ${contract.workHours ? `· ${esc(contract.workHours)}` : ''}</p>
       </section>
+
+      <section class="panel staff-room__section" data-staff-room-contract>
+        <div class="section-head"><h3>계약서</h3><p>${esc(meta.short)} · ${esc(status.label)}</p></div>
+        <dl class="kv kv--left">
+          <dt>계약기간</dt><dd>${esc(contract.startDate)} ~ ${esc(contract.endDate)}</dd>
+          <dt>체결일</dt><dd>${esc(contract.signedDate || '미체결')}</dd>
+          ${
+            canSeeMoney
+              ? `<dt>${esc(meta.amountLabel)}</dt><dd><strong>${money(amount)}</strong>${contract.employmentType === 'freelancer' ? ` <span class="tiny muted">${contract.feeRate}% 원천징수</span>` : ''}</dd>`
+              : '<dt>금액</dt><dd class="tiny muted">부관리자 화면에서는 금액이 표시되지 않습니다.</dd>'
+          }
+        </dl>
+        <button class="btn btn--primary btn--sm" type="button" data-open-staff="${esc(contract.id)}">계약서 열기 · 인쇄</button>
+      </section>
+
+      <section class="panel staff-room__section" data-staff-room-sites>
+        <div class="section-head"><h3>관리업장</h3><p>${contract.siteIds.length}곳</p></div>
+        ${sitesBlock}
+      </section>
+
+      ${canSeeEvaluation ? attitudeBlock : ''}
     </div>`;
 }
 
@@ -1402,7 +1343,7 @@ export function staffAccountPanelTemplate({ accounts, sites, state }) {
               <label for="sa-role">역할</label>
               <select class="select" id="sa-role">
                 <option value="leader" ${values.staffRole === 'leader' ? 'selected' : ''}>관리팀장 — 담당 현장 관리 · 현장 보고</option>
-                <option value="manager" ${values.staffRole === 'manager' ? 'selected' : ''}>부관리자(본부장) — 현장 · 직원 체크 (금액 비노출)</option>
+                <option value="manager" ${values.staffRole === 'manager' ? 'selected' : ''}>부관리자(본부장) — 본인 담당 현장만 (금액 · 평가 비노출)</option>
               </select>
             </div>
             <div class="field">
@@ -1455,6 +1396,6 @@ export function staffAccountPanelTemplate({ accounts, sites, state }) {
             : '<p class="tiny muted">아직 등록된 직원 계정이 없습니다. 위에서 첫 직원을 등록하세요.</p>'
         }
       </div>
-      <p class="hint">부관리자(본부장)는 관리 탭에서 현장 · 직원 체크만 하고 금액은 보지 않습니다. 고유코드를 재발급하면 이전 코드는 즉시 사용할 수 없습니다.</p>
+      <p class="hint">부관리자(본부장)도 직원과 같이 본인 담당 현장만 봅니다. 직원 평가 · 다른 팀장의 관리 · 고객 계약서·견적서 · 금액은 대표만 봅니다. 고유코드를 재발급하면 이전 코드는 즉시 사용할 수 없습니다.</p>
     </section>`;
 }

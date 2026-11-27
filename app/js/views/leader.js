@@ -24,17 +24,9 @@ import {
   openLightbox,
   modeSwitchTemplate,
 } from '../ui.js';
-import {
-  store,
-  StoreError,
-  countReportPhotos,
-  STAFF_STATUS,
-  reportStatus,
-  canUseSupply,
-  MAX_BASELINE_PHOTOS,
-} from '../store.js';
+import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, canUseSupply, MAX_BASELINE_PHOTOS } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
-import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, demoStaffCodes, getWorkMode, setWorkMode } from '../auth.js';
+import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
 import { openStaffContractSheet } from './quote-contract.js';
 import { peekPendingInvite, clearPendingInvite, inviteKind, inviteLabel } from '../invite.js';
@@ -419,16 +411,15 @@ export function createLeaderView(container) {
     loginError: '',
     staffError: '',
     myContracts: [],
-    myChecks: [],
     leaderTab: 'sites',
-    // 관리자(대표·부관리자) 화면 — 팀장 목록 → 그 팀장의 관리업장
+    // 대표(최고관리자) 전용 — 팀장 목록 → 그 팀장의 관리업장
+    //  직원(관리팀장·부관리자) 화면에는 이 디렉토리가 열리지 않습니다(v2.8.2).
     managerMode: false,
     renderedMode: '',
     teamLeads: [],
     teamContracts: [],
     teamLeadId: '',
     siteStaff: [],
-    staffCodes: [],
     supplyOrders: [],
     supplyCatalog: [],
     supplyRequestOpen: true,
@@ -534,10 +525,11 @@ export function createLeaderView(container) {
   /* ---------------- site picker ---------------- */
 
   function employeeTabsTemplate(active, session) {
+    // 2026-11-27 지시 — 직원 평가(근무태도 A~F)는 대표만 봅니다.
+    //  직원 화면에는 평가 탭이 없고, 다른 직원의 관리업장도 열리지 않습니다.
     const tabs = [
       { key: 'sites', label: '관리업장' },
       { key: 'contracts', label: '계약서' },
-      { key: 'attitude', label: '근무태도' },
     ];
     // 청소장비 · 봉투는 구입 당사자 직원만 봅니다. 부관리자(본부장) 화면에는 나오지 않습니다.
     if (session && session.role === 'leader' && canUseSupply(session)) {
@@ -554,36 +546,36 @@ export function createLeaderView(container) {
       </nav>`;
   }
 
-  function attitudeTemplate(checks) {
-    const latest = checks[0];
+  /* ---------------- 관리팀장별 관리업장 (대표 전용) ---------------- */
+
+  /* ---------------- 내 도급 조건 (직원 화면 전용) ---------------- */
+
+  /**
+   * 직원이 확인할 수 있는 제한 정보 — 이 업장에 정해진 **본인 도급금액**과 지급일뿐입니다.
+   * 고객과의 계약 조건은 대표만 봅니다(v2.8.2).
+   */
+  function staffPayTemplate(site, session) {
+    if (!session || session.role !== 'leader') return '';
+    const pay = site.staffPay || {};
+    const amount = Number(pay.amount) || 0;
+    // 1,430,000 처럼 천단위로 보여 줍니다(기기 로케일 데이터에 기대지 않습니다).
+    const grouped = String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const amountText = amount ? `월 ${grouped}원` : '미정 · 대표에게 확인';
     return `
-      <section class="panel" data-my-attitude>
+      <section class="panel staff-pay-card" data-staff-pay="${esc(site.id)}">
         <div class="section-head">
-          <h2>근무태도</h2>
-          <p>본부장 체크 · A &gt; B &gt; C &gt; D &gt; E &gt; F</p>
+          <h2>내 도급 조건</h2>
+          <p>이 업장에 정해진 금액</p>
         </div>
-        <div class="grade-scale">
-          ${['A', 'B', 'C', 'D', 'E', 'F'].map((grade) => `<span class="grade grade--${grade}">${grade}</span>`).join('')}
-        </div>
-        ${
-          latest
-            ? `<p class="attitude-latest">최근 등급 <span class="grade grade--${esc(latest.grade)}">${esc(latest.grade)}</span> <span class="tiny muted">${esc(latest.date)} · ${esc(latest.reviewerName || '본부장')}</span></p>`
-            : '<p class="tiny muted">아직 등록된 근무태도 체크가 없습니다.</p>'
-        }
-        ${
-          checks.length
-            ? `<ul class="check-history">${checks
-                .map(
-                  (row) =>
-                    `<li><span class="grade grade--${esc(row.grade)}">${esc(row.grade)}</span><div><strong>${esc(row.date)}</strong><span>${esc(row.memo || '메모 없음')}</span></div></li>`,
-                )
-                .join('')}</ul>`
-            : ''
-        }
+        <dl class="kv kv--left">
+          <dt>도급금액</dt>
+          <dd data-staff-pay-amount>${esc(amountText)}</dd>
+          <dt>지급일</dt>
+          <dd>내 도급계약서 확인</dd>
+        </dl>
+        <p class="hint">고객과의 계약 조건은 이 화면에 나오지 않습니다. 문의는 대표에게 해 주세요.</p>
       </section>`;
   }
-
-  /* ---------------- 관리팀장별 관리업장 (대표 · 부관리자) ---------------- */
 
   function siteRowsTemplate(sites) {
     const today = toISODate();
@@ -775,7 +767,7 @@ export function createLeaderView(container) {
               <strong>${esc(site.name)}</strong>
               <span>${esc(meta.short || '')} · ${esc(site.code)} · ${esc(site.frequency)}</span>
             </span>
-            <span class="pick__right">${badge}<span class="site-item__code">담당 ${esc(site.manager)}</span></span>
+            <span class="pick__right">${badge}${site.manager ? `<span class="site-item__code">담당 ${esc(site.manager)}</span>` : ''}</span>
           </button>`;
       }),
     );
@@ -791,10 +783,8 @@ export function createLeaderView(container) {
               `<section class="panel">${`<div class="empty"><strong>아직 팀장 계약서가 없습니다</strong><span>관리 → 직원 · 계약 관리에서 만들 수 있습니다.</span></div>`}</section>`
             : myDocsTemplate(state.myContracts) ||
               `<section class="panel">${`<div class="empty"><strong>아직 계약서가 없습니다</strong><span>대표가 계약서를 보내면 이곳에 표시됩니다.</span></div>`}</section>`
-          : tab === 'attitude'
-            ? attitudeTemplate(state.myChecks)
-            : tab === 'supply'
-              ? supplyStaffPanel({
+          : tab === 'supply'
+            ? supplyStaffPanel({
                   catalog: state.supplyCatalog,
                   orders: state.supplyOrders,
                   session,
@@ -815,7 +805,7 @@ export function createLeaderView(container) {
                  <div class="kv" id="week-summary"><dt>불러오는 중</dt><dd>-</dd></div>
                </section>`
       }
-      ${settingsTemplate()}
+      ${settingsTemplate(session)}
     `;
   }
 
@@ -1014,21 +1004,7 @@ export function createLeaderView(container) {
           ${state.staffError ? `<p class="field__error">${esc(state.staffError)}</p>` : ''}
           <button class="btn btn--primary btn--block" type="submit">직원관리방 입장</button>
         </form>
-        ${state.staffCodes.length
-          ? `<details class="demo-panel" style="margin-top:10px">
-               <summary>미사용 직원 초대코드 보기</summary>
-               <div class="demo-panel__body">
-                 ${state.staffCodes
-                   .map(
-                     (row) => `<div class="demo-row">
-                        <div><strong>${esc(row.name)} · ${esc(row.typeLabel)}</strong><span>${esc(row.phone)} · ${esc(row.code)}</span></div>
-                        <button class="link-btn" type="button" data-fill-staff-code="${esc(row.phone)}|${esc(row.code)}">입력</button>
-                      </div>`,
-                   )
-                   .join('')}
-               </div>
-             </details>`
-          : ''}
+        <p class="hint">초대코드는 대표가 직원에게 직접 전달합니다. 화면에 다른 직원의 코드·번호는 표시하지 않습니다.</p>
       </section>
     `;
   }
@@ -1071,6 +1047,8 @@ export function createLeaderView(container) {
     return `
       ${leaderBarTemplate(session)}
       ${state.sent ? sentTemplate(state.sent) : ''}
+
+      ${staffPayTemplate(site, session)}
 
       ${hasManual ? '' : opsCardTemplate(site)}
 
@@ -1167,7 +1145,7 @@ export function createLeaderView(container) {
         <div id="my-reports"><p class="tiny muted">불러오는 중…</p></div>
       </section>
 
-      ${settingsTemplate()}
+      ${settingsTemplate(session)}
     `;
   }
 
@@ -1311,21 +1289,22 @@ export function createLeaderView(container) {
     return fmtBytes(bytes);
   }
 
-  function settingsTemplate() {
+  function settingsTemplate(session) {
+    const isCeo = !!session && session.role === 'admin';
     return `
       <details class="settings">
-        <summary>저장 공간 · 데모 설정</summary>
+        <summary>저장 공간 · 설정</summary>
         <div class="settings__body">
           <dl class="kv" id="storage-info">
             <dt>저장 방식</dt><dd>${esc(store.adapterName === 'indexeddb' ? 'IndexedDB (이 기기)' : store.adapterName === 'memory' ? '메모리 (임시)' : 'localStorage (이 기기)')}</dd>
             <dt>사용량</dt><dd id="storage-usage">계산 중…</dd>
           </dl>
           <div class="btn-row btn-row--stack">
-            <button class="btn btn--quiet btn--sm" type="button" data-action="reset-demo">데모 데이터 초기화</button>
+            ${isCeo ? '<button class="btn btn--quiet btn--sm" type="button" data-action="reset-demo">데모 데이터 초기화</button>' : ''}
             <button class="btn btn--quiet btn--sm" type="button" data-action="logout">로그아웃</button>
           </div>
           <p class="hint">
-            초기화하면 이 기기의 모든 계정·보고·코드가 샘플 상태로 되돌아갑니다.
+            ${isCeo ? '초기화하면 이 기기의 모든 계정·보고·코드가 샘플 상태로 되돌아갑니다.' : '데이터 초기화는 대표(최고관리자)만 할 수 있습니다.'}
             실제 운영에서는 Supabase로 옮겨 기기 간 공유가 필요합니다(README 7장).
           </p>
         </div>
@@ -1380,7 +1359,7 @@ export function createLeaderView(container) {
     const draft = state.draft;
     if (!draft || !dayKey) return;
     draft.manualDay = dayKey;
-    const site = await store.getSite(state.siteId);
+    const site = await store.getSiteFor(state.session, state.siteId);
     const body = $('[data-manual-body]', container);
     if (site && body) body.innerHTML = manualBodyTemplate(site, draft);
     const { day } = manualItems(site, dayKey);
@@ -1392,14 +1371,14 @@ export function createLeaderView(container) {
   async function refreshMyReports(session) {
     const box = $('#my-reports', container);
     if (!box) return;
-    const rows = await store.listReports({ leader: session.name, limit: 6 });
+    const rows = await store.listReports({ leader: session.name, limit: 6 }, { actor: session });
     const count = $('#my-report-count', container);
     if (count) count.textContent = rows.length ? `${rows.length}건` : '';
     if (!rows.length) {
       box.innerHTML = '<p class="tiny muted">아직 제출한 보고가 없습니다.</p>';
       return;
     }
-    const sites = await store.listSites();
+    const sites = await store.listSitesFor(session);
     const names = new Map(sites.map((site) => [site.id, site.name]));
     box.innerHTML = rows
       .map(
@@ -1428,10 +1407,12 @@ export function createLeaderView(container) {
       usage.supported && usage.quota ? `${fmtBytes(usage.usage)} / ${fmtBytes(usage.quota)}` : `${fmtBytes(usage.usage)} 사용`;
   }
 
-  async function refreshWeekSummary() {
+  async function refreshWeekSummary(allowed = null) {
     const box = $('#week-summary', container);
     if (!box) return;
-    const reports = await store.listReports({});
+    const scope = Array.isArray(allowed) ? new Set(allowed.map((site) => site.id)) : null;
+    let reports = await store.listReports({}, { actor: state.session });
+    if (scope) reports = reports.filter((report) => scope.has(report.siteId));
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
     const weekKey = toISODate(weekAgo);
@@ -1448,7 +1429,7 @@ export function createLeaderView(container) {
 
   async function render(options = {}) {
     mount();
-    if (options && options.tab && ['sites', 'contracts', 'attitude', 'supply'].includes(options.tab)) {
+    if (options && options.tab && ['sites', 'contracts', 'supply'].includes(options.tab)) {
       state.leaderTab = options.tab;
     }
     const session = await getSession();
@@ -1458,7 +1439,6 @@ export function createLeaderView(container) {
       state.siteId = null;
       state.draft = null;
       state.myContracts = [];
-      state.myChecks = [];
       state.leaderTab = 'sites';
       state.siteStaff = [];
       state.supplyCatalog = [];
@@ -1468,20 +1448,18 @@ export function createLeaderView(container) {
       state.teamLeads = [];
       state.teamContracts = [];
       state.teamLeadId = '';
-      state.staffCodes = await demoStaffCodes().catch(() => []);
       closeBaselineSheet();
       container.innerHTML = gateTemplate();
       return;
     }
 
-    const sites = await store.listSites();
-    // 대표 · 부관리자 — 관리자 화면: 팀장을 골라 그 팀장의 관리업장을 봅니다.
-    const managerRole =
-      state.session.role === 'admin' ||
-      !!(state.session.account && state.session.account.canManageStaff) ||
-      /본부장/.test(state.session.title || '');
+    // 직원에게는 배정된 업장만, 계약 금액·고객 개인정보를 뺀 제한 정보로 내려줍니다.
+    const sites = await store.listSitesFor(state.session);
+    // v2.8.2 — 팀장 목록(다른 직원의 관리)은 대표(최고관리자)만 봅니다.
+    //  부관리자(본부장)도 직원으로서 본인 배정 업장만 봅니다.
+    const managerRole = state.session.role === 'admin';
     // 최고관리자(대표)는 직원 모드로 바꿔 팀장처럼 보고서를 쓸 수 있습니다.
-    const staffMode = managerRole && state.session.role === 'admin' && getWorkMode() === 'staff';
+    const staffMode = managerRole && getWorkMode() === 'staff';
     const modeKey = managerRole ? (staffMode ? 'staff' : 'admin') : '';
     if (state.renderedMode !== modeKey) {
       if (state.renderedMode) {
@@ -1500,7 +1478,7 @@ export function createLeaderView(container) {
         ? sites.filter((site) => assigned.includes(site.id))
         : [];
     if (state.managerMode) {
-      const accounts = await store.listAccounts({ role: 'leader' });
+      const accounts = await store.listAccounts({ role: 'leader' }, { actor: state.session });
       state.teamLeads = accounts
         .filter((account) => account.active !== false)
         .filter((account) => !account.canManageStaff && !/본부장/.test(account.title || ''))
@@ -1515,7 +1493,7 @@ export function createLeaderView(container) {
           ),
         }))
         .filter((lead) => lead.sites.length);
-      state.teamContracts = await store.listStaffContracts();
+      state.teamContracts = await store.listStaffContracts({}, { actor: state.session });
       if (
         state.teamLeadId &&
         state.teamLeadId !== '__all__' &&
@@ -1528,14 +1506,19 @@ export function createLeaderView(container) {
       state.teamContracts = [];
       state.teamLeadId = '';
     }
-    state.myContracts = await store.listStaffContracts({ accountId: state.session.accountId });
-    state.myChecks = await store.listStaffChecks({ accountId: state.session.accountId });
+    state.myContracts = await store.listStaffContracts(
+      { accountId: state.session.accountId },
+      { actor: state.session },
+    );
 
     // 청소장비 · 봉투: 구입 당사자 직원(부관리자·대표 제외)에게만 열립니다.
     const supplyAllowed = state.session.role === 'leader' && canUseSupply(state.session);
     if (supplyAllowed) {
       state.supplyCatalog = await store.listSupplyCatalog();
-      state.supplyOrders = await store.listSupplyOrders({ accountId: state.session.accountId });
+      state.supplyOrders = await store.listSupplyOrders(
+        { accountId: state.session.accountId },
+        { actor: state.session },
+      );
     } else {
       state.supplyCatalog = [];
       state.supplyOrders = [];
@@ -1545,7 +1528,7 @@ export function createLeaderView(container) {
     if (!state.siteId) {
       state.draft = null;
       container.innerHTML = await sitePickerTemplate(state.session, allowed);
-      refreshWeekSummary();
+      refreshWeekSummary(allowed);
       refreshStorage();
       openInviteContractOnce(state.session);
       return;
@@ -1558,9 +1541,11 @@ export function createLeaderView(container) {
       return;
     }
 
-    const canManageStaff =
-      (state.session.account && state.session.account.canManageStaff) || /본부장/.test(state.session.title || '');
-    state.siteStaff = canManageStaff ? await store.listStaffContracts({ siteId: site.id }) : [];
+    // 배정 직원 목록은 대표만 — 직원은 다른 직원의 계약을 볼 수 없습니다.
+    state.siteStaff = state.managerMode
+      ? await store.listStaffContracts({ siteId: site.id }, { actor: state.session })
+      : [];
+
 
     container.innerHTML = formTemplate(state.session, site);
     refreshMyReports(state.session);
@@ -1573,7 +1558,7 @@ export function createLeaderView(container) {
   async function openMySentContract(session) {
     const accountId = (session && session.accountId) || (state.session && state.session.accountId);
     if (!accountId) return false;
-    const rows = await store.listStaffContracts({ accountId });
+    const rows = await store.listStaffContracts({ accountId }, { actor: session });
     const target = rows.find((row) => row.status === 'sent' && !row.signature);
     if (!target) return false;
     await openStaffContractSheet(target.id, { role: 'staff', onChanged: render });
@@ -1640,7 +1625,7 @@ export function createLeaderView(container) {
       toast(`${group.label} 사진은 최대 ${max}장까지 올릴 수 있습니다.`, { tone: 'error' });
       return;
     }
-    const site = await store.getSite(state.siteId);
+    const site = await store.getSiteFor(state.session, state.siteId);
     const category = site ? site.category : 'office';
     const pool =
       groupKey === 'cleaning'
@@ -1691,7 +1676,7 @@ export function createLeaderView(container) {
       toast('방문 날짜를 입력해 주세요.', { tone: 'error' });
       return;
     }
-    const site = await store.getSite(state.siteId);
+    const site = await store.getSiteFor(state.session, state.siteId);
     if (!site) {
       toast('현장 정보를 찾을 수 없습니다.', { tone: 'error' });
       return;
@@ -1970,7 +1955,7 @@ export function createLeaderView(container) {
       closeBaselineSheet();
       state.siteId = pick.dataset.pickSite;
       state.sent = null;
-      const site = await store.getSite(state.siteId);
+      const site = await store.getSiteFor(state.session, state.siteId);
       if (site && state.session) startDraft(state.session, site);
       await render();
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2030,7 +2015,7 @@ export function createLeaderView(container) {
         tone: 'danger',
       });
       if (!ok) return;
-      await store.deleteReport(deleteButton.dataset.deleteReport);
+      await store.deleteReport(deleteButton.dataset.deleteReport, { actor: state.session });
       if (state.sent && state.sent.id === deleteButton.dataset.deleteReport) state.sent = null;
       toast('보고를 삭제했습니다.');
       if (state.session) await refreshMyReports(state.session);
@@ -2099,7 +2084,7 @@ export function createLeaderView(container) {
         tone: 'danger',
       });
       if (!ok) return;
-      await store.resetDemo();
+      await store.resetDemo({ actor: state.session });
       await logout();
       state.siteId = null;
       state.draft = null;
@@ -2132,7 +2117,8 @@ export function createLeaderView(container) {
   async function openSite(siteId) {
     const session = await getSession();
     if (!session || (session.role !== 'leader' && session.role !== 'admin')) return false;
-    const site = await store.getSite(siteId);
+    // 딥링크로도 배정되지 않은 남의 업장은 열리지 않습니다(v2.8.2).
+    const site = await store.getSiteFor(session, siteId);
     if (!site) return false;
     state.session = session;
     state.siteId = site.id;

@@ -17,6 +17,7 @@ import {
   confirmDialog,
 } from '../ui.js';
 import { store, QUOTE_STATUS, AGREEMENT_STATUS } from '../store.js';
+import { getSession } from '../auth.js';
 import { CATEGORY_META, STAFF_TYPES, SUPPLIER, PAYMENT_ACCOUNT } from '../seed.js';
 import { companySealImg } from '../seal.js';
 import { inviteUrl } from '../invite.js';
@@ -470,6 +471,12 @@ export function quoteSheetHtml(quote, photos = []) {
 }
 
 export async function openQuoteSheet(quoteId, options = {}) {
+  // v2.8.2 — 견적서는 대표(최고관리자)와 그 견적의 고객만 열람합니다.
+  const viewer = await getSession().catch(() => null);
+  if (viewer && viewer.role === 'leader') {
+    toast('견적서는 대표(최고관리자)만 볼 수 있습니다.', { tone: 'error' });
+    return;
+  }
   const quote = await store.getQuote(quoteId);
   if (!quote) {
     toast('견적을 찾을 수 없습니다.', { tone: 'error' });
@@ -478,6 +485,7 @@ export async function openQuoteSheet(quoteId, options = {}) {
   const photos = await photoUrls(quote.photos);
   const role = options.role || 'admin';
   const reload = options.onChanged || (() => {});
+  const actor = viewer && viewer.role !== 'leader' ? viewer : null;
 
   active = {
     async onAction(action) {
@@ -488,14 +496,14 @@ export async function openQuoteSheet(quoteId, options = {}) {
           confirmLabel: '발송',
         });
         if (!ok) return;
-        await store.sendQuote(quote.id);
+        await store.sendQuote(quote.id, { actor });
         toast('견적서를 발송했습니다.');
         await reload();
         closeSheet();
         return;
       }
       if (action === 'to-contract') {
-        const agreement = await store.createAgreementFromQuote(quote.id);
+        const agreement = await store.createAgreementFromQuote(quote.id, { actor });
         await reload();
         closeSheet();
         await openAgreementSheet(agreement.id, { role: 'admin', onChanged: reload });
@@ -504,7 +512,7 @@ export async function openQuoteSheet(quoteId, options = {}) {
       if (action === 'copy-invite') {
         // 링크·문구를 보낸다는 것은 발송이라는 뜻 — 작성 중이면 발송 상태로 바꿉니다.
         if (quote.status === 'draft') {
-          const sent = await store.sendQuote(quote.id);
+          const sent = await store.sendQuote(quote.id, { actor });
           await reload();
           await copyInviteText(sent);
           closeSheet();
@@ -669,6 +677,12 @@ export function agreementSheetHtml(agreement, { role = 'admin' } = {}) {
 }
 
 export async function openAgreementSheet(agreementId, options = {}) {
+  // v2.8.2 — 고객 계약서는 대표와 그 고객만. 직원 화면에서는 열리지 않습니다.
+  const viewer = await getSession().catch(() => null);
+  if (viewer && viewer.role === 'leader') {
+    toast('고객 계약서는 대표(최고관리자)만 볼 수 있습니다.', { tone: 'error' });
+    return;
+  }
   const role = options.role || 'admin';
   const reload = options.onChanged || (() => {});
   let agreement = await store.getAgreement(agreementId);
@@ -685,7 +699,7 @@ export async function openAgreementSheet(agreementId, options = {}) {
         return;
       }
       if (action === 'send-agreement') {
-        agreement = await store.sendAgreement(agreement.id);
+        agreement = await store.sendAgreement(agreement.id, { actor: viewer });
         toast('계약서를 고객에게 보냈습니다. 고객 방에서 서명할 수 있습니다.');
         await reload();
         draw();
@@ -1323,7 +1337,15 @@ function paintAnnexAck(value) {
 export async function openStaffContractSheet(staffId, options = {}) {
   const role = options.role || 'admin';
   const reload = options.onChanged || (() => {});
-  let contract = await store.getStaffContract(staffId);
+  const viewer = await getSession().catch(() => null);
+  let contract = null;
+  try {
+    // 직원은 본인 계약서만 — 다른 직원의 계약서(급여·주민번호)는 열리지 않습니다.
+    contract = await store.getStaffContract(staffId, { actor: viewer && viewer.role === 'leader' ? viewer : null });
+  } catch (error) {
+    toast(error && error.message ? error.message : '내 계약서만 열 수 있습니다.', { tone: 'error' });
+    return;
+  }
   if (!contract) {
     toast('직원 계약서를 찾을 수 없습니다.', { tone: 'error' });
     return;
@@ -1356,7 +1378,11 @@ export async function openStaffContractSheet(staffId, options = {}) {
         // 같은 칸을 다시 누르면 체크를 취소합니다.
         const nextValue = contract.annexAck === value ? '' : value;
         try {
-          contract = await store.updateStaffContract(contract.id, { annexAck: nextValue });
+          contract = await store.updateStaffContract(
+            contract.id,
+            { annexAck: nextValue },
+            { actor: viewer && viewer.role === 'leader' ? viewer : null },
+          );
         } catch (error) {
           toast(error && error.message ? error.message : '확인 표시를 저장하지 못했습니다.', { tone: 'error' });
           return;
@@ -1365,7 +1391,7 @@ export async function openStaffContractSheet(staffId, options = {}) {
         return;
       }
       if (action === 'send-staff') {
-        contract = await store.sendStaffContract(contract.id);
+        contract = await store.sendStaffContract(contract.id, { actor: viewer });
         toast('직원에게 계약서를 보냈습니다. 직원관리방에서 서명할 수 있습니다.');
         await reload();
         draw();
@@ -1394,10 +1420,14 @@ export async function openStaffContractSheet(staffId, options = {}) {
             return;
           }
         }
-        contract = await store.signStaffContract(contract.id, {
-          signature: pad.pad.toDataURL(),
-          ...profile,
-        });
+        contract = await store.signStaffContract(
+          contract.id,
+          {
+            signature: pad.pad.toDataURL(),
+            ...profile,
+          },
+          { actor: viewer && viewer.role === 'leader' ? viewer : null },
+        );
         toast('직원 계약서 서명이 완료되었습니다.');
         await reload();
         draw();

@@ -1328,6 +1328,132 @@ function requireSupplyUser(actor) {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* 열람 권한 (v2.8.2)                                                  */
+/*  · 대표(최고관리자) : 모든 업장 · 견적서 · 고객 계약 · 팀장 계약 ·   */
+/*    직원 평가 · 금액(계약금·수수료·매출)                              */
+/*  · 직원(관리팀장·부관리자) : 본인에게 배정된 업장의 제한 정보        */
+/*    (본인 도급가 · 청소공정 · 출입/쓰레기/주차 · 현장 사진)과          */
+/*    본인 도급계약서만. 다른 직원의 관리·평가, 고객 계약서·견적서,      */
+/*    고객 계약금·수수료·매출은 열람할 수 없습니다.                     */
+/* ------------------------------------------------------------------ */
+
+export const ROLE_LABELS = { admin: '대표(최고관리자)', leader: '직원', customer: '고객' };
+
+export function actorRole(actor) {
+  return actor && typeof actor === 'object' ? String(actor.role || '') : '';
+}
+
+export function isCeoActor(actor) {
+  return actorRole(actor) === 'admin';
+}
+
+export function isStaffActor(actor) {
+  return actorRole(actor) === 'leader';
+}
+
+/** 직원 평가(A~F · 평가 내용)는 대표만 봅니다. */
+export function canSeeStaffEvaluation(session) {
+  return isCeoActor(session);
+}
+
+/** 계약금 · 수수료 · 순수 매출 · 견적 금액은 대표만 봅니다. */
+export function canSeeMoney(session) {
+  return isCeoActor(session);
+}
+
+/** 고객 계약서 · 견적서는 대표만 봅니다(직원 도급계약서와는 별개). */
+export function canSeeCustomerDocuments(session) {
+  return isCeoActor(session);
+}
+
+/** 관리팀장 목록·디렉토리(다른 직원의 관리업장)는 대표만 봅니다. */
+export function canSeeTeamDirectory(session) {
+  return isCeoActor(session);
+}
+
+/** 로그인한 직원이 볼 수 있는 업장 id — 계정에 배정된 곳만. */
+export function assignedSiteIdsOf(session) {
+  if (!session) return [];
+  const ids = Array.isArray(session.assignedSiteIds) ? session.assignedSiteIds : [];
+  const fromAccount =
+    session.account && Array.isArray(session.account.assignedSiteIds) ? session.account.assignedSiteIds : [];
+  return [...new Set([...ids, ...fromAccount].map((id) => toText(id)).filter(Boolean))];
+}
+
+/** 이 사람이 이 업장을 열 수 있는가 — 대표는 전부, 직원은 배정된 곳만. */
+export function canOpenSite(session, siteId) {
+  if (!session) return false;
+  if (isCeoActor(session)) return true;
+  if (!isStaffActor(session)) return false;
+  return assignedSiteIdsOf(session).includes(toText(siteId));
+}
+
+/**
+ * 직원 화면에 넘기는 업장 — 고객사 정보 · 견적/계약 연결 · 계약 메모 ·
+ * 사업자등록증 · 변경 이력은 지우고, 운영 정보와 **본인 도급가**만 남깁니다.
+ */
+export function siteForStaff(site) {
+  if (!site) return site;
+  const contract = normalizeContract(site.contract);
+  return {
+    id: site.id,
+    code: site.code,
+    name: site.name,
+    category: site.category,
+    address: site.address,
+    area: site.area,
+    frequency: site.frequency,
+    intervalDays: site.intervalDays,
+    startDate: site.startDate,
+    active: site.active,
+    manager: site.manager,
+    managerRole: site.managerRole,
+    accessNote: site.accessNote,
+    ops: normalizeOps(site.ops),
+    manual: site.manual,
+    checklist: site.checklist,
+    baseline: normalizeBaseline(site.baseline),
+    locked: site.locked,
+    annexHours: site.annexHours,
+    staffContractIds: site.staffContractIds || [],
+    // 본인 도급 조건 — 이 업장의 도급금액만. (고객 청구일·계약일 등은 넘기지 않습니다.)
+    staffPay: { amount: contract.subcontractAmount },
+  };
+}
+
+/** 세션에 맞춰 업장을 정리합니다 — 직원이면 제한 정보만. */
+export function siteForSession(session, site) {
+  if (!site) return site;
+  if (!isStaffActor(session)) return site;
+  const safe = siteForStaff(site);
+  // 다른 직원의 담당 표시는 넘기지 않습니다(본인 담당일 때만).
+  const mine = site.manager && session.name && site.manager === session.name;
+  safe.manager = mine ? site.manager : '';
+  safe.managerRole = mine ? site.managerRole : '';
+  return safe;
+}
+
+/**
+ * 직원(관리팀장 · 부관리자)이면 대표 전용 열람을 막습니다.
+ * actor 를 넘기지 않는 내부 호출(시드 · 로그인 · 고객 방)은 그대로 둡니다.
+ */
+function denyStaff(actor, what) {
+  if (isStaffActor(actor)) {
+    throw new StoreError('permission-denied', `${what}은(는) 대표(최고관리자)만 볼 수 있습니다.`);
+  }
+}
+
+function requireOwnStaffRecord(actor, row, what = '다른 직원의 계약서') {
+  if (!isStaffActor(actor)) return;
+  const sameAccount = row && actor.accountId && row.accountId && row.accountId === actor.accountId;
+  const samePhone =
+    row && actor.phone && row.phone && normalizePhone(row.phone) === normalizePhone(actor.phone);
+  if (!sameAccount && !samePhone) {
+    throw new StoreError('permission-denied', `${what}는 본인 것만 열 수 있습니다.`);
+  }
+}
+
 function isQuotaError(error) {
   if (!error) return false;
   return (
@@ -2396,10 +2522,35 @@ export class Store {
   }
 
   /**
+   * 화면이 쓰는 업장 목록 — 직원에게는 **배정된 업장만**, 계약 금액·고객 정보를
+   * 지운 형태로 돌려줍니다(v2.8.2). 대표는 기존과 같이 전체 업장입니다.
+   */
+  async listSitesFor(session) {
+    const sites = await this.listSites();
+    if (!session) return [];
+    if (isCeoActor(session)) return sites;
+    if (!isStaffActor(session)) return [];
+    const mine = new Set(assignedSiteIdsOf(session));
+    return sites.filter((site) => mine.has(site.id)).map((site) => siteForSession(session, site));
+  }
+
+  /** 업장 한 곳 — 직원이 배정받지 않은 업장이면 null. */
+  async getSiteFor(session, id) {
+    if (!session) return null;
+    if (!isCeoActor(session)) {
+      if (!isStaffActor(session) || !canOpenSite(session, id)) return null;
+    }
+    const site = await this.getSite(id);
+    if (!site) return null;
+    return siteForSession(session, site);
+  }
+
+  /**
    * Register a site from the admin screen (a new contract, a real client, ...).
    * Business registration details are kept with the site and shown in the app.
    */
-  async addSite(input = {}) {
+  async addSite(input = {}, { actor = null } = {}) {
+    denyStaff(actor, '새 현장 등록');
     const name = String(input.name || '').trim();
     if (!name) throw new StoreError('name-empty', '현장명(상호)을 입력해 주세요.');
 
@@ -2462,7 +2613,8 @@ export class Store {
     return site;
   }
 
-  async updateSite(id, patch = {}) {
+  async updateSite(id, patch = {}, { actor = null } = {}) {
+    denyStaff(actor, '현장 정보 수정');
     const site = await this.getSite(id);
     if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
     const next = { ...site, ...patch, id: site.id, updatedAt: new Date().toISOString() };
@@ -2498,7 +2650,8 @@ export class Store {
    * `contract` / `ops` patches are merged into the stored objects key by key, so a
    * form that edits only some fields never wipes the others.
    */
-  async updateSiteDetails(siteId, patch = {}) {
+  async updateSiteDetails(siteId, patch = {}, { actor = null } = {}) {
+    denyStaff(actor, '계약 · 운영 정보 수정');
     const site = await this.getSite(siteId);
     if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
     const next = { ...site };
@@ -2538,13 +2691,15 @@ export class Store {
   }
 
   /** 전체 매출 정리 — 행별 내역과 합계 (관리자 화면 전용). */
-  async revenueSummary() {
+  async revenueSummary({ actor = null } = {}) {
+    denyStaff(actor, '매출 정리');
     const sites = (await this.listSites()).filter((site) => site.active !== false);
     return { rows: sites.map(contractRow), totals: revenueTotals(sites) };
   }
 
   /** Give the chosen team leaders this site (never removes their other sites). */
-  async assignLeadersToSite(siteId, leaderIds = []) {
+  async assignLeadersToSite(siteId, leaderIds = [], { actor = null } = {}) {
+    denyStaff(actor, '담당 직원 배정');
     const wanted = new Set((leaderIds || []).filter(Boolean));
     if (!wanted.size) return [];
     const accounts = await this.adapter.getAll('accounts');
@@ -2682,6 +2837,7 @@ export class Store {
 
   /** 관리자가 기준표 · 조정 금액/률 · 산출 규칙을 바꿉니다. 바뀐 칸은 전/후 값과 함께 이력에 남습니다. */
   async saveQuoteSettings(patch = {}, { actor = '대표' } = {}) {
+    if (typeof actor === 'object' && actor) denyStaff(actor, '견적 기준표 설정');
     const before = await this.getQuoteSettings();
     const source = patch && typeof patch === 'object' ? patch : {};
     const merged = normalizeQuoteSettings({
@@ -2722,6 +2878,7 @@ export class Store {
   }
 
   async saveQuoteChecklist(input, { actor = '대표' } = {}) {
+    if (typeof actor === 'object' && actor) denyStaff(actor, '견적 체크리스트 설정');
     const before = await this.getQuoteChecklist();
     const next = normalizeQuoteChecklist({ ...input, updatedAt: new Date().toISOString(), by: toText(actor) || '대표' });
     const labels = {};
@@ -2756,6 +2913,7 @@ export class Store {
 
   /** 방문 기록 저장 — 비어 있는 칸만 바꾸고, 바뀐 칸은 업장 이력에 남깁니다. */
   async updateSiteSurvey(siteId, patch = {}, { actor = '앱' } = {}) {
+    if (typeof actor === 'object' && actor) denyStaff(actor, '현장 방문 · 견적 기록');
     const site = await this.getSite(siteId);
     if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
     const before = normalizeSurvey(site.survey);
@@ -2790,7 +2948,8 @@ export class Store {
    * 현장 사진 한 장 등록 — 같은 구역·같은 날짜라도 **덮어쓰지 않고** 뒤에 쌓습니다.
    * 계약 전에 찍은 사진은 `firstQuote: true` 로 남아 첫 견적 사진으로 쓰입니다.
    */
-  async addSitePhoto(siteId, input = {}) {
+  async addSitePhoto(siteId, input = {}, { actor = null } = {}) {
+    denyStaff(actor, '현장 방문 사진 · 견적 기록');
     const site = await this.getSite(siteId);
     if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
     if (!input.ref || typeof input.ref !== 'object' || !input.ref.id) {
@@ -2864,14 +3023,16 @@ export class Store {
     throw new StoreError('code-collision', '초대코드를 생성하지 못했습니다. 다시 시도해 주세요.');
   }
 
-  async listQuotes({ siteId = null, status = null } = {}) {
+  async listQuotes({ siteId = null, status = null } = {}, { actor = null } = {}) {
+    denyStaff(actor, '견적서');
     let rows = (await this.adapter.getAll('quotes')).map(normalizeQuote);
     if (siteId) rows = rows.filter((quote) => quote.siteId === siteId);
     if (status) rows = rows.filter((quote) => quote.status === status);
     return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
-  async getQuote(id) {
+  async getQuote(id, { actor = null } = {}) {
+    denyStaff(actor, '견적서');
     const row = await this.adapter.get('quotes', id);
     return row ? normalizeQuote(row) : null;
   }
@@ -2881,7 +3042,8 @@ export class Store {
    * `siteId`를 주면 그 업장의 고객사 · 주소 · 담당자 · 연락처 · 사업자번호 · 청소 조건을
    * **이미 등록된 값에서 그대로 가져 옵니다**(비어 있는 칸만 채움). 같은 내용을 두 번 적지 않습니다.
    */
-  async addQuote(input = {}) {
+  async addQuote(input = {}, { actor = null } = {}) {
+    denyStaff(actor, '견적서 작성');
     const site = input.siteId ? await this.getSite(input.siteId) : null;
     const pick = (key, siteValue) => toText(input[key]) || toText(siteValue);
     const fromSite = {
@@ -2957,7 +3119,8 @@ export class Store {
    * 기존 업장에서 바로 견적을 만듭니다(현장 방문 견적).
    * 금액만 정해 주면 업장 정보 · 청소 조건은 다시 적지 않습니다.
    */
-  async createQuoteForSite(siteId, patch = {}) {
+  async createQuoteForSite(siteId, patch = {}, { actor = null } = {}) {
+    denyStaff(actor, '견적서 작성');
     const site = await this.getSite(siteId);
     if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
     return this.addQuote({
@@ -2972,7 +3135,8 @@ export class Store {
     });
   }
 
-  async updateQuote(id, patch = {}) {
+  async updateQuote(id, patch = {}, { actor = null } = {}) {
+    denyStaff(actor, '견적서 수정');
     const quote = await this.getQuote(id);
     if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
     const next = normalizeQuote({
@@ -3167,7 +3331,8 @@ export class Store {
   }
 
   /** 견적서 발송 — 고객 방에서 열람할 수 있는 상태로 바꿉니다. */
-  async sendQuote(id) {
+  async sendQuote(id, { actor = null } = {}) {
+    denyStaff(actor, '견적서 발송');
     const quote = await this.getQuote(id);
     if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
     if (quote.status === 'contracted') return quote;
@@ -3179,7 +3344,8 @@ export class Store {
   }
 
   /** 초대코드 재발급 — 이전 코드는 즉시 쓸 수 없게 됩니다. */
-  async regenerateQuoteInvite(id) {
+  async regenerateQuoteInvite(id, { actor = null } = {}) {
+    denyStaff(actor, '견적서 초대코드');
     const quote = await this.getQuote(id);
     if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
     const now = new Date().toISOString();
@@ -3276,19 +3442,22 @@ export class Store {
 
   /* ---------------- contracts (도급 계약서 · 대표 전용) ---------------- */
 
-  async listAgreements({ siteId = null, status = null } = {}) {
+  async listAgreements({ siteId = null, status = null } = {}, { actor = null } = {}) {
+    denyStaff(actor, '고객 계약서');
     let rows = (await this.adapter.getAll('contracts')).map(normalizeAgreement);
     if (siteId) rows = rows.filter((row) => row.siteId === siteId);
     if (status) rows = rows.filter((row) => row.status === status);
     return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
-  async getAgreement(id) {
+  async getAgreement(id, { actor = null } = {}) {
+    denyStaff(actor, '고객 계약서');
     const row = await this.adapter.get('contracts', id);
     return row ? normalizeAgreement(row) : null;
   }
 
-  async getAgreementByQuote(quoteId) {
+  async getAgreementByQuote(quoteId, { actor = null } = {}) {
+    denyStaff(actor, '고객 계약서');
     if (!quoteId) return null;
     const rows = (await this.adapter.getAll('contracts')).map(normalizeAgreement);
     return rows.find((row) => row.quoteId === quoteId) || null;
@@ -3299,7 +3468,8 @@ export class Store {
    * 견적을 표준 도급 계약서로 전환합니다 (이미 있으면 그 계약서).
    * 견적이 업장에 연결되어 있으면 **그 업장을 그대로 이어받습니다**(새 업장을 만들지 않음).
    */
-  async createAgreementFromQuote(quoteId) {
+  async createAgreementFromQuote(quoteId, { actor = null } = {}) {
+    denyStaff(actor, '고객 계약서 작성');
     const quote = await this.getQuote(quoteId);
     if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
     const existing = await this.getAgreementByQuote(quote.id);
@@ -3370,7 +3540,8 @@ export class Store {
     return normalizeAgreement(await this.adapter.get('contracts', agreement.id));
   }
 
-  async updateAgreement(id, patch = {}) {
+  async updateAgreement(id, patch = {}, { actor = null } = {}) {
+    denyStaff(actor, '고객 계약서 수정');
     const agreement = await this.getAgreement(id);
     if (!agreement) throw new StoreError('no-contract', '계약서를 찾을 수 없습니다.');
     if (agreement.status === 'signed') {
@@ -3390,7 +3561,8 @@ export class Store {
   }
 
   /** 계약서에 붙는 고객사 사업자등록증 · 특이사항 (체결 후에도 고칠 수 있음). */
-  async updateAgreementMeta(id, patch = {}) {
+  async updateAgreementMeta(id, patch = {}, { actor = null } = {}) {
+    denyStaff(actor, '고객 계약서 수정');
     const agreement = await this.getAgreement(id);
     if (!agreement) throw new StoreError('no-contract', '계약서를 찾을 수 없습니다.');
     const next = normalizeAgreement({
@@ -3405,7 +3577,8 @@ export class Store {
   }
 
   /** 계약서를 고객에게 보냅니다 (고객 방에 ‘서명’ 카드가 뜨는 상태). */
-  async sendAgreement(id) {
+  async sendAgreement(id, { actor = null } = {}) {
+    denyStaff(actor, '고객 계약서 발송');
     const agreement = await this.getAgreement(id);
     if (!agreement) throw new StoreError('no-contract', '계약서를 찾을 수 없습니다.');
     if (agreement.status === 'signed') return agreement;
@@ -3597,7 +3770,11 @@ export class Store {
 
   /* ---------------- staff contracts (직원 계약 · 직원관리방) ---------------- */
 
-  async listStaffContracts({ accountId = null, siteId = null, status = null } = {}) {
+  async listStaffContracts({ accountId = null, siteId = null, status = null } = {}, { actor = null } = {}) {
+    // 직원은 자기 계약서만 — 다른 직원의 계약·급여는 대표만 봅니다.
+    if (isStaffActor(actor) && (!accountId || accountId !== actor.accountId)) {
+      throw new StoreError('permission-denied', '다른 직원의 계약서는 본인 것만 볼 수 있습니다.');
+    }
     let rows = (await this.adapter.getAll('staffContracts')).map(normalizeStaffContract);
     if (accountId) rows = rows.filter((row) => row.accountId === accountId);
     if (siteId) rows = rows.filter((row) => row.siteIds.includes(siteId));
@@ -3605,9 +3782,11 @@ export class Store {
     return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
-  async getStaffContract(id) {
+  async getStaffContract(id, { actor = null } = {}) {
     const row = await this.adapter.get('staffContracts', id);
-    return row ? normalizeStaffContract(row) : null;
+    if (!row) return null;
+    requireOwnStaffRecord(actor, row, '다른 직원의 계약서');
+    return normalizeStaffContract(row);
   }
 
   async findStaffContractByInviteCode(code) {
@@ -3637,8 +3816,11 @@ export class Store {
     throw new StoreError('code-collision', '직원 초대코드를 생성하지 못했습니다. 다시 시도해 주세요.');
   }
 
-  /** 직원 계약 등록 — 저장과 동시에 1회용 직원 초대코드를 발급합니다. */
-  async addStaffContract(input = {}) {
+  /** 직원 계약 등록 — 저장과 동시에 1회용 직원 초대코드를 발급합니다. (대표 전용) */
+  async addStaffContract(input = {}, { actor = null } = {}) {
+    if (actor && !isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '직원 계약 등록은 대표(최고관리자)만 할 수 있습니다.');
+    }
     const name = toText(input.name);
     if (!name) throw new StoreError('staff-name-empty', '직원 성명을 입력해 주세요.');
     const phone = normalizePhone(input.phone);
@@ -3708,8 +3890,17 @@ export class Store {
     return contract;
   }
 
-  async updateStaffContract(id, patch = {}) {
+  async updateStaffContract(id, patch = {}, { actor = null } = {}) {
     const contract = await this.getStaffContract(id);
+    // 직원은 본인 계약서의 별첨 확인 표시만 바꿀 수 있습니다.
+    requireOwnStaffRecord(actor, contract, '다른 직원의 계약서');
+    if (isStaffActor(actor)) {
+      const allowed = new Set(['annexAck', 'annexAckedAt']);
+      const keys = Object.keys(patch || {}).filter((key) => key !== 'actor');
+      if (keys.some((key) => !allowed.has(key))) {
+        throw new StoreError('permission-denied', '직원은 본인 계약서의 내용을 고칠 수 없습니다.');
+      }
+    }
     if (!contract) throw new StoreError('no-staff-contract', '직원 계약서를 찾을 수 없습니다.');
     if (contract.status === 'signed') {
       throw new StoreError('already-signed', '체결된 계약서는 수정할 수 없습니다.');
@@ -3766,7 +3957,8 @@ export class Store {
   }
 
   /** 직원에게 계약서를 보냅니다 (직원관리방에 ‘서명 대기’로 표시). */
-  async sendStaffContract(id) {
+  async sendStaffContract(id, { actor = null } = {}) {
+    denyStaff(actor, '직원 계약서 발송');
     const contract = await this.getStaffContract(id);
     if (!contract) throw new StoreError('no-staff-contract', '직원 계약서를 찾을 수 없습니다.');
     if (contract.status === 'signed') return contract;
@@ -3776,7 +3968,8 @@ export class Store {
     return normalizeStaffContract(next);
   }
 
-  async regenerateStaffInvite(id) {
+  async regenerateStaffInvite(id, { actor = null } = {}) {
+    denyStaff(actor, '직원 계약서 초대코드');
     const contract = await this.getStaffContract(id);
     if (!contract) throw new StoreError('no-staff-contract', '직원 계약서를 찾을 수 없습니다.');
     const now = new Date().toISOString();
@@ -3863,7 +4056,8 @@ export class Store {
   }
 
   /** 직원 전자서명 — 체결 완료로 저장합니다. */
-  async signStaffContract(id, payload = {}) {
+  async signStaffContract(id, payload = {}, { actor = null } = {}) {
+    requireOwnStaffRecord(actor, await this.getStaffContract(id), '다른 직원의 계약서');
     const contract = await this.getStaffContract(id);
     if (!contract) throw new StoreError('no-staff-contract', '직원 계약서를 찾을 수 없습니다.');
     if (contract.status === 'signed') return contract;
@@ -3945,7 +4139,8 @@ export class Store {
 
   /* ---------------- staff checks (근무태도 A~F · 본부장 체크) ---------------- */
 
-  async listStaffChecks({ staffContractId = null, accountId = null, siteId = null } = {}) {
+  async listStaffChecks({ staffContractId = null, accountId = null, siteId = null } = {}, { actor = null } = {}) {
+    denyStaff(actor, '직원 평가(근무태도)');
     let rows = (await this.adapter.getAll('staffChecks')).map(normalizeStaffCheck);
     if (staffContractId) rows = rows.filter((row) => row.staffContractId === staffContractId);
     if (accountId) rows = rows.filter((row) => row.accountId === accountId);
@@ -3953,8 +4148,11 @@ export class Store {
     return rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
   }
 
-  /** 본부장이 근무태도를 A~F로 체크합니다. */
-  async addStaffCheck(input = {}) {
+  /** 근무태도 A~F — 대표(최고관리자)만 체크합니다(v2.8.2). */
+  async addStaffCheck(input = {}, { actor = null } = {}) {
+    if (actor && !isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '직원 평가는 대표(최고관리자)만 매길 수 있습니다.');
+    }
     const contract = await this.getStaffContract(input.staffContractId);
     if (!contract) throw new StoreError('no-staff-contract', '직원 계약을 찾을 수 없습니다.');
     const grade = String(input.grade || '').toUpperCase();
@@ -4058,7 +4256,10 @@ export class Store {
     return { removed: true, item: normalizeSupplyItem(row) };
   }
 
-  async listSupplyOrders({ accountId = null, status = null } = {}) {
+  async listSupplyOrders({ accountId = null, status = null } = {}, { actor = null } = {}) {
+    if (isStaffActor(actor) && (!accountId || accountId !== actor.accountId)) {
+      throw new StoreError('permission-denied', '장비·봉투 영수증은 본인 것만 볼 수 있습니다.');
+    }
     let rows = (await this.adapter.getAll('supplyOrders')).map(normalizeSupplyOrder);
     if (accountId) rows = rows.filter((row) => row.toAccountId === accountId || row.requesterAccountId === accountId);
     if (status) rows = rows.filter((row) => row.status === status);
@@ -4067,8 +4268,12 @@ export class Store {
     );
   }
 
-  async getSupplyOrder(id) {
+  async getSupplyOrder(id, { actor = null } = {}) {
     const row = await this.adapter.get('supplyOrders', id);
+    if (isStaffActor(actor) && row) {
+      const own = row.requesterAccountId === actor.accountId || row.toAccountId === actor.accountId;
+      if (!own) throw new StoreError('permission-denied', '장비·봉투 영수증은 본인 것만 볼 수 있습니다.');
+    }
     return row ? normalizeSupplyOrder(row) : null;
   }
 
@@ -4195,8 +4400,13 @@ export class Store {
     return `${report.date || ''} ${report.time || '00:00'}`;
   }
 
-  async listReports({ siteId = null, leader = null, status = null, limit = 0 } = {}) {
+  async listReports({ siteId = null, leader = null, status = null, limit = 0 } = {}, { actor = null } = {}) {
     let reports = await this.adapter.getAll('reports');
+    // 직원은 본인 배정 업장의 보고만 — 다른 팀장 관리업장 보고는 보이지 않습니다.
+    if (isStaffActor(actor)) {
+      const mine = new Set(assignedSiteIdsOf(actor));
+      reports = reports.filter((report) => mine.has(report.siteId));
+    }
     if (siteId) reports = reports.filter((report) => report.siteId === siteId);
     if (leader) reports = reports.filter((report) => report.leader === leader);
     if (status) reports = reports.filter((report) => reportStatusKey(report) === status);
@@ -4275,7 +4485,8 @@ export class Store {
   }
 
   /** 최고관리자(대표)가 내용을 확인하고 고객사에 제출합니다 — 이때 고객 방에 보입니다. */
-  async approveReport(id, { by = '' } = {}) {
+  async approveReport(id, { by = '', actor = null } = {}) {
+    denyStaff(actor, '보고서 고객사 제출');
     const report = await this.getReport(id);
     if (!report) throw new StoreError('no-report', '보고를 찾지 못했습니다.');
     if (reportStatusKey(report) === 'submitted') return report;
@@ -4295,9 +4506,14 @@ export class Store {
     return normalizeReport(next);
   }
 
-  async deleteReport(id) {
+  async deleteReport(id, { actor = null } = {}) {
     const report = await this.getReport(id);
     if (!report) return false;
+    // 직원은 자기가 올린 보고만 삭제합니다.
+    if (isStaffActor(actor)) {
+      const own = report.accountId === actor.accountId || (!report.accountId && report.leader === actor.name);
+      if (!own) throw new StoreError('permission-denied', '다른 직원의 보고는 삭제할 수 없습니다.');
+    }
     await this.adapter.remove('reports', id);
     const groups = normalizePhotos(report.photos);
     for (const group of Object.values(groups)) {
@@ -4383,7 +4599,9 @@ export class Store {
 
   /* ---------------- accounts ---------------- */
 
-  async listAccounts({ role = null } = {}) {
+  async listAccounts({ role = null } = {}, { actor = null } = {}) {
+    // 직원 명부(전화번호·역할)는 대표만 봅니다.
+    denyStaff(actor, '직원 명부');
     const rows = await this.adapter.getAll('accounts');
     const filtered = role ? rows.filter((row) => row.role === role) : rows;
     return filtered.sort((a, b) => String(a.name).localeCompare(String(b.name)));
@@ -4569,7 +4787,8 @@ export class Store {
   }
 
   /** Issue a fresh team-leader code (admin action). The old code stops working. */
-  async regenerateLeaderCode(accountId) {
+  async regenerateLeaderCode(accountId, { actor = null } = {}) {
+    denyStaff(actor, '팀장 고유코드 재발급');
     const account = await this.getAccount(accountId);
     if (!account) throw new StoreError('no-account', '계정을 찾을 수 없습니다.');
     if (account.role === 'customer') {
@@ -4596,14 +4815,16 @@ export class Store {
 
   /* ---------------- one-time room codes ---------------- */
 
-  async listRoomCodes({ siteId = null, unusedOnly = false } = {}) {
+  async listRoomCodes({ siteId = null, unusedOnly = false } = {}, { actor = null } = {}) {
+    denyStaff(actor, '고객 1회용 코드');
     let rows = await this.adapter.getAll('roomCodes');
     if (siteId) rows = rows.filter((row) => row.siteId === siteId);
     if (unusedOnly) rows = rows.filter((row) => !row.usedAt);
     return rows.sort((a, b) => String(b.issuedAt).localeCompare(String(a.issuedAt)));
   }
 
-  async issueRoomCode(siteId, note = '') {
+  async issueRoomCode(siteId, note = '', { actor = null } = {}) {
+    denyStaff(actor, '고객 1회용 코드 발급');
     const site = await this.getSite(siteId);
     if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
 
@@ -4733,7 +4954,8 @@ export class Store {
 
   /* ---------------- room access grants ---------------- */
 
-  async listGrants({ accountId = null } = {}) {
+  async listGrants({ accountId = null } = {}, { actor = null } = {}) {
+    denyStaff(actor, '고객 방 입장 정보');
     const rows = await this.adapter.getAll('grants');
     return accountId ? rows.filter((row) => row.accountId === accountId) : rows;
   }
@@ -4743,7 +4965,8 @@ export class Store {
     return this.adapter.get('grants', id);
   }
 
-  async createGrant(accountId, siteId, codeId = '') {
+  async createGrant(accountId, siteId, codeId = '', { actor = null } = {}) {
+    denyStaff(actor, '고객 방 입장 권한');
     const grant = {
       id: `${accountId}::${siteId}`,
       accountId,
@@ -4843,7 +5066,9 @@ export class Store {
 
   /* ---------------- maintenance ---------------- */
 
-  async resetDemo() {
+  async resetDemo({ actor = null } = {}) {
+    // 이 기기의 모든 데이터를 샘플로 되돌립니다 — 직원 화면에서는 막습니다.
+    denyStaff(actor, '데모 데이터 초기화');
     await this.adapter.clear();
     await this._writeSeed();
     await this._migrateSiteLinks();
