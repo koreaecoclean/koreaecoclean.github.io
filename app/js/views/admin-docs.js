@@ -1382,16 +1382,14 @@ export function staffAccountPanelTemplate({ accounts, sites, state }) {
                 <input class="input" id="sa-title" type="text" maxlength="20" value="${esc(values.title)}" placeholder="예: 팀장 · 부장 · 본부장">
               </div>
             </div>
-            <div class="field-row">
-              <div class="field">
-                <label for="sa-phone">전화번호 (로그인 ID) <span class="req">*</span></label>
-                <input class="input" id="sa-phone" type="tel" inputmode="tel" maxlength="20" value="${esc(values.phone)}" placeholder="010-0000-0000">
-              </div>
-              <div class="field">
-                <label for="sa-password">비밀번호 <span class="req">*</span></label>
-                <input class="input" id="sa-password" type="text" maxlength="30" value="" placeholder="${editing ? '비우면 기존 비밀번호 유지' : '4자 이상'}">
-                <div class="inline-actions"><button class="link-btn link-btn--dark" type="button" data-gen-password>임시 비밀번호 만들기</button></div>
-              </div>
+            <div class="field">
+              <label for="sa-phone">전화번호 (로그인 ID) <span class="req">*</span></label>
+              <input class="input" id="sa-phone" type="tel" inputmode="tel" maxlength="20" value="${esc(values.phone)}" placeholder="010-0000-0000">
+            </div>
+            <div class="field">
+              <label for="sa-password">비밀번호 <span class="req">*</span></label>
+              <input class="input" id="sa-password" type="text" maxlength="30" value="" placeholder="${editing ? '비우면 기존 비밀번호 유지' : '4자 이상'}">
+              <div class="inline-actions"><button class="link-btn link-btn--dark" type="button" data-gen-password>임시 비밀번호 만들기</button></div>
             </div>
             <div class="field">
               <label for="sa-code">팀장 고유코드 <span class="req">*</span></label>
