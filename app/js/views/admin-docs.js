@@ -1306,3 +1306,160 @@ export function quoteSettingsPanelTemplate({ settings, checklist, state }) {
       </div>
     </details>`;
 }
+
+/* ------------------------------------------------------------------ */
+/* 직원 등록 · 코드 설정 (대표 전용)                                    */
+/* ------------------------------------------------------------------ */
+
+function staffAccountValues(account) {
+  if (!account) {
+    return {
+      name: '',
+      title: '팀장',
+      phone: '',
+      password: '',
+      leaderCode: '',
+      staffRole: 'leader',
+      assignedSiteIds: [],
+      active: true,
+    };
+  }
+  return {
+    name: account.name || '',
+    title: account.title || (account.canManageStaff ? '본부장' : '팀장'),
+    phone: account.phonePretty || account.phone || '',
+    password: '',
+    leaderCode: account.leaderCode || '',
+    staffRole: account.canManageStaff || account.staffRole === 'manager' ? 'manager' : 'leader',
+    assignedSiteIds: (account.assignedSiteIds || []).slice(),
+    active: account.active !== false,
+  };
+}
+
+export function staffAccountPanelTemplate({ accounts, sites, state }) {
+  const leaders = (accounts || []).filter((account) => account.role === 'leader');
+  const managers = leaders.filter((account) => account.canManageStaff || account.staffRole === 'manager');
+  const inactive = leaders.filter((account) => account.active === false);
+  const staffState = (state && state.staffAccount) || {};
+  const editing = leaders.find((account) => account.id === staffState.editId) || null;
+  const values = editing ? staffAccountValues(editing) : staffState.form || staffAccountValues(null);
+  const siteChips = (sites || [])
+    .map(
+      (site) => `
+      <label class="check-item">
+        <input type="checkbox" data-account-site value="${esc(site.id)}" ${values.assignedSiteIds.includes(site.id) ? 'checked' : ''}>
+        <span>${esc(site.name)}</span>
+      </label>`,
+    )
+    .join('');
+
+  return `
+    <section class="panel staff-account-panel" data-staff-account-panel>
+      <div class="section-head">
+        <div>
+          <h2>직원 등록 · 코드 설정</h2>
+          <p>대표 전용 · 새 직원 계정을 만들고 전화번호 · 비밀번호 · 고유코드로 바로 로그인</p>
+        </div>
+      </div>
+      <div class="admin-stats">
+        <div><strong>${leaders.length}</strong><span>직원 계정</span></div>
+        <div><strong>${leaders.length - managers.length}</strong><span>관리팀장</span></div>
+        <div><strong>${managers.length}</strong><span>부관리자</span></div>
+        <div><strong>${inactive.length}</strong><span>사용 중지</span></div>
+      </div>
+
+      <details class="settings" data-staff-account-box ${staffState.open || editing ? 'open' : ''}>
+        <summary>${editing ? `직원 정보 수정 · ${esc(editing.name)}` : '+ 새 직원 등록 (계정 · 고유코드 발급)'}</summary>
+        <div class="settings__body">
+          <form class="form" data-staff-account-form="${esc(editing ? editing.id : '')}" novalidate>
+            <div class="field-row">
+              <div class="field">
+                <label for="sa-name">이름 <span class="req">*</span></label>
+                <input class="input" id="sa-name" type="text" maxlength="30" value="${esc(values.name)}" placeholder="예: 홍길동">
+              </div>
+              <div class="field">
+                <label for="sa-title">직책</label>
+                <input class="input" id="sa-title" type="text" maxlength="20" value="${esc(values.title)}" placeholder="예: 팀장 · 부장 · 본부장">
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="sa-phone">전화번호 (로그인 ID) <span class="req">*</span></label>
+                <input class="input" id="sa-phone" type="tel" inputmode="tel" maxlength="20" value="${esc(values.phone)}" placeholder="010-0000-0000">
+              </div>
+              <div class="field">
+                <label for="sa-password">비밀번호 <span class="req">*</span></label>
+                <div class="inline-field">
+                  <input class="input" id="sa-password" type="text" maxlength="30" value="" placeholder="${editing ? '비우면 기존 비밀번호 유지' : '4자 이상'}">
+                  <button class="link-btn" type="button" data-gen-password>만들기</button>
+                </div>
+              </div>
+            </div>
+            <div class="field">
+              <label for="sa-code">팀장 고유코드 <span class="req">*</span></label>
+              <div class="inline-field">
+                <input class="input" id="sa-code" type="text" maxlength="8" value="${esc(values.leaderCode)}" placeholder="예: TL-0000">
+                <button class="link-btn" type="button" data-gen-code>자동생성</button>
+              </div>
+              <span class="field__hint">현장 보고 로그인에 함께 쓰는 코드입니다. 직접 입력하거나 자동생성(TL-0000)을 쓰세요.</span>
+            </div>
+            <div class="field">
+              <label for="sa-role">역할</label>
+              <select class="select" id="sa-role">
+                <option value="leader" ${values.staffRole === 'leader' ? 'selected' : ''}>관리팀장 — 담당 현장 관리 · 현장 보고</option>
+                <option value="manager" ${values.staffRole === 'manager' ? 'selected' : ''}>부관리자(본부장) — 현장 · 직원 체크 (금액 비노출)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>담당 현장 <span class="tiny muted">(${values.assignedSiteIds.length}곳 선택)</span></label>
+              <div class="survey-checks account-sites">${siteChips || '<span class="tiny muted">등록된 현장이 없습니다.</span>'}</div>
+            </div>
+            ${
+              editing
+                ? `<label class="check-item">
+                     <input type="checkbox" id="sa-active" ${values.active ? 'checked' : ''}>
+                     <span>계정 사용 (해제하면 로그인 중지)</span>
+                   </label>`
+                : ''
+            }
+            ${staffState.error ? `<p class="field__error">${esc(staffState.error)}</p>` : ''}
+            <button class="btn btn--primary btn--block" type="submit">${editing ? '직원 정보 저장' : '직원 등록 · 코드 발급'}</button>
+            ${editing ? '<button class="btn btn--quiet btn--sm" type="button" data-staff-account-cancel>수정 취소</button>' : ''}
+            <p class="hint">등록하면 이 기기와 서버(accounts)에 바로 저장되어, 직원이 전화번호 · 비밀번호 · 고유코드로 즉시 로그인할 수 있습니다. 실제 직원 계정은 공개 데모 목록에 표시되지 않습니다.</p>
+          </form>
+        </div>
+      </details>
+
+      <div class="staff-list account-list">
+        ${
+          leaders.length
+            ? leaders
+                .map(
+                  (account) => `
+          <div class="staff-row account-row" data-staff-account="${esc(account.id)}">
+            <div class="staff-row__who">
+              <span class="avatar" aria-hidden="true">${esc(String(account.name || '?').slice(0, 1))}</span>
+              <div>
+                <strong>
+                  ${esc(account.name)} ${esc(account.title || '팀장')}
+                  <span class="tag ${account.canManageStaff ? 'tag--sky' : 'tag--leaf'}">${esc(account.canManageStaff ? '부관리자' : '관리팀장')}</span>
+                  ${account.active === false ? '<span class="tag">중지</span>' : ''}
+                </strong>
+                <span>${esc(account.phonePretty || account.phone)} · 코드 <code>${esc(account.leaderCode || '-')}</code> · 담당 ${(account.assignedSiteIds || []).length}곳</span>
+              </div>
+            </div>
+            <div class="staff-row__actions">
+              <button class="link-btn" type="button" data-staff-account-edit="${esc(account.id)}">수정</button>
+              <button class="link-btn" type="button" data-staff-account-guide="${esc(account.id)}">로그인 안내</button>
+              <button class="link-btn" type="button" data-regen-leader="${esc(account.id)}">코드 재발급</button>
+              <button class="link-btn" type="button" data-toggle-account="${esc(account.id)}">${account.active === false ? '사용 재개' : '사용 중지'}</button>
+            </div>
+          </div>`,
+                )
+                .join('')
+            : '<p class="tiny muted">아직 등록된 직원 계정이 없습니다. 위에서 첫 직원을 등록하세요.</p>'
+        }
+      </div>
+      <p class="hint">부관리자(본부장)는 관리 탭에서 현장 · 직원 체크만 하고 금액은 보지 않습니다. 고유코드를 재발급하면 이전 코드는 즉시 사용할 수 없습니다.</p>
+    </section>`;
+}

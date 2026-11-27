@@ -472,6 +472,8 @@ export function createLeaderView(container) {
 
   function demoPanelTemplate() {
     const rows = demoAccounts().filter((row) => row.role !== 'customer');
+    // 실제 직원 계정은 공개 데모 목록에 올리지 않습니다 — 보여 줄 데모가 없으면 상자를 만들지 않습니다.
+    if (!rows.length) return '';
     return `
       <details class="demo-panel">
         <summary>데모 계정 보기 (테스트용)</summary>
@@ -506,7 +508,7 @@ export function createLeaderView(container) {
           <input class="pin-input pin-input--text" id="l-password" type="password" autocomplete="current-password"
                  placeholder="비밀번호" aria-label="비밀번호" maxlength="30">
           <input class="pin-input pin-input--text" id="l-code" type="text" autocomplete="off" spellcheck="false"
-                 placeholder="팀장 고유코드 (예: TL-4821)" aria-label="팀장 고유코드" maxlength="12">
+                 placeholder="팀장 고유코드 (예: TL-0000)" aria-label="팀장 고유코드" maxlength="12">
           ${state.loginError ? `<p class="pin-error">${esc(state.loginError)}</p>` : ''}
           <button class="btn btn--primary" type="submit">입장</button>
           <button class="btn btn--ghost" type="button" data-action="go-admin">대표(관리자) 로그인</button>

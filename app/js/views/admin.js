@@ -23,6 +23,7 @@ import {
   surveyPanelTemplate,
   quoteSettingsPanelTemplate,
   estimateBoxTemplate,
+  staffAccountPanelTemplate,
 } from './admin-docs.js';
 import { inviteUrl } from '../invite.js';
 
@@ -88,6 +89,12 @@ export function createAdminView(container) {  const state = {
       settingsOpen: false,
       form: null,
     },
+    staffAccount: {
+      open: false,
+      editId: '',
+      error: '',
+      form: null,
+    },
     supply: {
       open: false,
       catalogOpen: false,
@@ -136,7 +143,7 @@ export function createAdminView(container) {  const state = {
           </div>
           <div class="field">
             <label for="a-code">팀장 고유코드 <span class="tiny muted">(본부장만)</span></label>
-            <input class="input" id="a-code" type="text" autocomplete="off" spellcheck="false" placeholder="예: TL-1638" maxlength="12">
+            <input class="input" id="a-code" type="text" autocomplete="off" spellcheck="false" placeholder="예: TL-0000" maxlength="12">
           </div>
           ${state.loginError ? `<p class="field__error">${esc(state.loginError)}</p>` : ''}
           <button class="btn btn--primary btn--block" type="submit">관리자 로그인</button>
@@ -150,11 +157,7 @@ export function createAdminView(container) {  const state = {
                      <div><strong>대표 · ${esc(admin.name)}</strong><span>${esc(admin.phone)} / ${esc(admin.password)}</span></div>
                      <button class="link-btn" type="button" data-fill-admin="${esc(admin.phone)}|${esc(admin.password)}|">입력</button>
                    </div>
-                   <div class="demo-row">
-                     <div><strong>본부장 · 박희승</strong><span>010-4994-1638 / team1234 / TL-1638</span></div>
-                     <button class="link-btn" type="button" data-fill-admin="010-4994-1638|team1234|TL-1638">입력</button>
                    </div>
-                 </div>
                </details>`
             : ''
         }
@@ -973,6 +976,80 @@ export function createAdminView(container) {  const state = {
 
   /* ---------------- 2단계 동작 ---------------- */
 
+  /* ---------------- 직원 계정 등록 · 코드 설정 ---------------- */
+
+  function staffAccountValuesFromForm(form) {
+    const val = (selector) => {
+      const element = $(selector, form);
+      return element ? String(element.value || '').trim() : '';
+    };
+    const assignedSiteIds = Array.from(form.querySelectorAll('[data-account-site]'))
+      .filter((input) => input.checked)
+      .map((input) => input.value);
+    const activeInput = $('#sa-active', form);
+    return {
+      name: val('#sa-name'),
+      title: val('#sa-title'),
+      phone: val('#sa-phone'),
+      password: val('#sa-password'),
+      leaderCode: val('#sa-code'),
+      staffRole: ($('#sa-role', form) || {}).value || 'leader',
+      assignedSiteIds,
+      active: activeInput ? !!activeInput.checked : true,
+    };
+  }
+
+  function staffLoginGuide(account) {
+    return [
+      `[코리아 에코크린] ${account.name} ${account.title || '직원'} 계정 안내`,
+      '현장 보고 앱 → [현장 보고] 탭에서 아래 값으로 입장합니다.',
+      `전화번호: ${account.phonePretty || account.phone}`,
+      `비밀번호: ${account.password}`,
+      `팀장 고유코드: ${account.leaderCode}`,
+      '문의: 0507-1317-8369',
+    ].join('\n');
+  }
+
+  async function submitStaffAccount(form) {
+    const editId = form.dataset.staffAccountForm || state.staffAccount.editId || '';
+    const values = staffAccountValuesFromForm(form);
+    state.staffAccount.error = '';
+    state.staffAccount.open = true;
+    const actor = state.session;
+    try {
+      let account;
+      if (editId) {
+        account = await store.updateStaffAccount(
+          editId,
+          {
+            name: values.name,
+            title: values.title,
+            phone: values.phone,
+            password: values.password || undefined,
+            leaderCode: values.leaderCode || undefined,
+            staffRole: values.staffRole,
+            assignedSiteIds: values.assignedSiteIds,
+            active: values.active,
+            actor: actor ? actor.name : '',
+          },
+          { actor },
+        );
+      } else {
+        account = await store.addStaffAccount({ ...values, actor: actor ? actor.name : '' }, { actor });
+      }
+      state.staffAccount = { open: false, editId: '', error: '', form: null };
+      await render();
+      toast(`${account.name} ${account.title || '직원'} 계정을 ${editId ? '수정' : '등록'}했습니다 · 코드 ${account.leaderCode}`, {
+        actionLabel: '로그인 안내 복사',
+        onAction: () => copyText(staffLoginGuide(account)),
+        duration: 9000,
+      });
+    } catch (error) {
+      state.staffAccount.error = error.message || '직원 계정을 저장하지 못했습니다.';
+      await render();
+    }
+  }
+
   async function submitSurvey(form) {
     const editId = form.dataset.surveyForm || state.survey.editQuoteId || '';
     const values = readSurveyForm(form);
@@ -1235,6 +1312,8 @@ export function createAdminView(container) {  const state = {
       ${quoteSettingsPanelTemplate({ settings: quoteSettings, checklist: quoteChecklist, state })}
 
       ${staffPanelTemplate({ staffContracts, staffChecks, sites, state })}
+
+      ${staffAccountPanelTemplate({ accounts, sites, state })}
 
       ${supplyAdminPanel({ catalog: supplyCatalog, orders: supplyOrders, accounts, state })}
 
@@ -1675,6 +1754,15 @@ export function createAdminView(container) {  const state = {
   }
 
   async function onChange(event) {
+    if (event.target.id === 'sa-role') {
+      const title = $('#sa-title', container);
+      if (title) {
+        const manager = event.target.value === 'manager';
+        if (manager && (!title.value.trim() || title.value.trim() === '팀장')) title.value = '본부장';
+        if (!manager && title.value.trim() === '본부장') title.value = '팀장';
+      }
+      return;
+    }
     const photoFile = event.target.closest('[data-photo-file]');
     if (photoFile) {
       const files = Array.from(photoFile.files || []);
@@ -1803,6 +1891,11 @@ export function createAdminView(container) {  const state = {
   /* ---------------- events ---------------- */
 
   async function onSubmit(event) {
+    if (event.target.matches('[data-staff-account-form]')) {
+      event.preventDefault();
+      await submitStaffAccount(event.target);
+      return;
+    }
     if (event.target.matches('[data-survey-form]')) {
       event.preventDefault();
       await submitSurvey(event.target);
@@ -1908,6 +2001,62 @@ export function createAdminView(container) {  const state = {
   }
 
   async function onClick(event) {
+    /* ---------------- 직원 계정 등록 · 코드 설정 ---------------- */
+    const genCode = event.target.closest('[data-gen-code]');
+    if (genCode) {
+      try {
+        const code = await store.suggestLeaderCode();
+        const input = $('#sa-code', container);
+        if (input) input.value = code;
+        toast(`새 고유코드 ${code} — 저장을 눌러야 반영됩니다.`, { duration: 4000 });
+      } catch (error) {
+        toast(error.message || '고유코드를 만들지 못했습니다.', { tone: 'error' });
+      }
+      return;
+    }
+
+    const genPassword = event.target.closest('[data-gen-password]');
+    if (genPassword) {
+      const input = $('#sa-password', container);
+      const password = `clean${String(1000 + Math.floor(Math.random() * 9000))}`;
+      if (input) input.value = password;
+      toast(`임시 비밀번호 ${password} — 직원에게 전달하고 바꿀 수 있습니다.`, { duration: 7000 });
+      return;
+    }
+
+    const accountEdit = event.target.closest('[data-staff-account-edit]');
+    if (accountEdit) {
+      const account = await store.getAccount(accountEdit.dataset.staffAccountEdit);
+      if (!account) {
+        toast('계정을 찾을 수 없습니다.', { tone: 'error' });
+        return;
+      }
+      state.staffAccount = { open: true, editId: account.id, error: '', form: null };
+      await render();
+      const box = $('[data-staff-account-box]', container);
+      if (box) {
+        box.open = true;
+        box.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+      return;
+    }
+
+    const accountCancel = event.target.closest('[data-staff-account-cancel]');
+    if (accountCancel) {
+      state.staffAccount = { open: false, editId: '', error: '', form: null };
+      await render();
+      return;
+    }
+
+    const accountGuide = event.target.closest('[data-staff-account-guide]');
+    if (accountGuide) {
+      const account = await store.getAccount(accountGuide.dataset.staffAccountGuide);
+      if (!account) return;
+      const ok = await copyText(staffLoginGuide(account));
+      toast(ok ? `${account.name} 로그인 안내를 복사했습니다.` : '복사가 차단되었습니다.', { tone: ok ? 'default' : 'error' });
+      return;
+    }
+
     /* ---------------- 2단계 현장 방문 · 사진 · 금액 승인 ---------------- */
     const surveyLoad = event.target.closest('[data-survey-load]');
     if (surveyLoad) {

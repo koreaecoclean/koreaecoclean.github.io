@@ -3274,3 +3274,16 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
   .adjust-row { grid-template-columns: minmax(0, 1fr) 72px 84px; }
   .survey-picker { grid-template-columns: 1fr; }
 }
+
+/* 직원 등록 · 코드 설정 (v2.8.1) */
+.staff-account-panel .settings { margin-top: 10px; }
+.account-row { grid-template-columns: 1fr; align-items: start; }
+.account-row .staff-row__who { align-items: flex-start; }
+.account-row .staff-row__who > div { min-width: 0; }
+.account-row .staff-row__who strong { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; line-height: 1.35; }
+.account-row .staff-row__who span { display: block; line-height: 1.5; word-break: keep-all; }
+.account-row .staff-row__actions { justify-content: flex-start; margin-top: 3px; }
+.account-sites { max-height: 220px; overflow-y: auto; }
+.inline-field { display: flex; align-items: center; gap: 6px; }
+.inline-field .input { flex: 1; min-width: 0; }
+.inline-field .link-btn { flex: 0 0 auto; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); font-weight: 800; }

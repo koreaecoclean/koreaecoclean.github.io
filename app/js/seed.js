@@ -788,6 +788,8 @@ export const DEMO_ACCOUNTS = [
     phonePretty: '010-3300-1042',
     password: 'team1234',
     leaderCode: 'TL-4821',
+    // 실제 계정 — 공개 데모 계정 목록에는 올리지 않습니다.
+    demoHidden: true,
     assignedSiteIds: ['site_hangwoon_tower'],
     active: true,
   },
@@ -800,6 +802,8 @@ export const DEMO_ACCOUNTS = [
     phonePretty: '010-3300-2071',
     password: 'team1234',
     leaderCode: 'TL-7365',
+    // 실제 계정 — 공개 데모 계정 목록에는 올리지 않습니다.
+    demoHidden: true,
     assignedSiteIds: ['site_haneul_clinic'],
     active: true,
   },
@@ -812,6 +816,8 @@ export const DEMO_ACCOUNTS = [
     phonePretty: '010-4994-1638',
     password: 'team1234',
     leaderCode: 'TL-1638',
+    // 실제 계정 — 공개 데모 계정 목록에는 올리지 않습니다.
+    demoHidden: true,
     assignedSiteIds: ['site_hangwoon_tower', 'site_haneul_clinic', 'site_bodycamp', 'site_lighthouse'],
     canManageStaff: true,
     active: true,
@@ -859,6 +865,8 @@ export const DEMO_ACCOUNTS = [
     phonePretty: '010-9900-8369',
     password: 'ceo2016',
     leaderCode: 'TL-2016',
+    // 실제 계정 — 공개 데모 계정 목록에는 올리지 않습니다.
+    demoHidden: true,
     assignedSiteIds: ['site_hangwoon_tower', 'site_haneul_clinic', 'site_bodycamp', 'site_lighthouse'],
     active: true,
   },

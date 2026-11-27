@@ -1353,6 +1353,48 @@ function transactionDone(tx) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 직원 계정 (관리팀장 · 부관리자)                                       */
+/* ------------------------------------------------------------------ */
+
+/** 직원 역할 표기 — `leader` 는 관리팀장, `manager` 는 부관리자(본부장). */
+export const STAFF_ROLE_LABELS = { leader: '관리팀장', manager: '부관리자' };
+
+export function staffRoleKey(account) {
+  if (!account) return 'leader';
+  if (account.staffRole === 'manager' || account.canManageStaff) return 'manager';
+  return 'leader';
+}
+
+export function staffRoleLabel(account) {
+  return STAFF_ROLE_LABELS[staffRoleKey(account)] || STAFF_ROLE_LABELS.leader;
+}
+
+/** 'TL-1234' · 'tl1234' · '1234' → 'TL-1234'. 형식이 아니면 빈 값. */
+export function normalizeLeaderCodeInput(value) {
+  const text = String(value || '').toUpperCase().replace(/\s/g, '');
+  const match = text.match(/^(?:TL-?)?([0-9]{4})$/);
+  return match ? `TL-${match[1]}` : '';
+}
+
+/** 겹치지 않는 새 고유코드 — 기존 계정 코드와 비교합니다. */
+function makeLeaderCode(rows) {
+  const taken = new Set((rows || []).map((row) => normalizeCode(row && row.leaderCode)));
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const candidate = `TL-${String(1000 + Math.floor(Math.random() * 9000))}`;
+    if (!taken.has(normalizeCode(candidate))) return candidate;
+  }
+  throw new StoreError('code-collision', '고유코드를 만들지 못했습니다. 다시 시도해 주세요.');
+}
+
+/** 직원 계정 등록·수정은 대표(최고관리자)만 — 화면 밖 호출도 같은 기준으로 막습니다. */
+function requireAccountEditor(actor) {
+  if (!actor) return;
+  if (actor.role !== 'admin') {
+    throw new StoreError('account-denied', '직원 계정 등록·수정은 대표(최고관리자)만 할 수 있습니다.');
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* IndexedDB adapter                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -4363,6 +4405,163 @@ export class Store {
     const account = await this.getAccount(id);
     if (!account) throw new StoreError('no-account', '계정을 찾을 수 없습니다.');
     const next = { ...account, ...patch, updatedAt: new Date().toISOString() };
+    await this.adapter.put('accounts', next);
+    this._notify();
+    return next;
+  }
+
+  /* ---------------- 직원 계정 등록 · 코드 설정 (대표 전용) ---------------- */
+
+  /** 고유코드 후보 — 기존 계정과 겹치지 않는 TL-0000. */
+  async suggestLeaderCode() {
+    return makeLeaderCode(await this.adapter.getAll('accounts'));
+  }
+
+  /**
+   * 대표가 새 직원(관리팀장 · 부관리자) 계정을 직접 등록합니다.
+   * 등록 즉시 `accounts` 에 저장되어 동기화되고, 전화번호 · 비밀번호 · 고유코드로 바로 로그인합니다.
+   * 실직원 계정이므로 공개 데모 목록에는 올리지 않습니다(`demoHidden: true`).
+   */
+  async addStaffAccount(input = {}, { actor = null } = {}) {
+    requireAccountEditor(actor);
+    const name = toText(input.name);
+    const digits = normalizePhone(input.phone);
+    const password = String(input.password || '').trim();
+    const staffRole = input.staffRole === 'manager' ? 'manager' : 'leader';
+    if (!name) throw new StoreError('name-empty', '직원 이름을 입력해 주세요.');
+    if (digits.length < 9) throw new StoreError('phone-invalid', '전화번호를 정확히 입력해 주세요.');
+    if (password.length < 4) throw new StoreError('password-weak', '비밀번호는 4자 이상으로 정해 주세요.');
+
+    const rows = await this.adapter.getAll('accounts');
+    if (rows.some((row) => normalizePhone(row.phone) === digits)) {
+      throw new StoreError('phone-taken', '이미 등록된 전화번호입니다. 기존 직원 정보를 수정해 주세요.');
+    }
+    const code = toText(input.leaderCode) ? normalizeLeaderCodeInput(input.leaderCode) : makeLeaderCode(rows);
+    if (!code) throw new StoreError('code-format', '고유코드는 TL-0000 형식으로 입력해 주세요.');
+    if (rows.some((row) => normalizeCode(row.leaderCode) === normalizeCode(code))) {
+      throw new StoreError('code-taken', '이미 사용 중인 고유코드입니다. 다른 코드를 정해 주세요.');
+    }
+
+    const now = new Date().toISOString();
+    const who = toText(input.actor) || (actor ? actor.name : '') || '대표';
+    const title = toText(input.title) || (staffRole === 'manager' ? '본부장' : '팀장');
+    const account = {
+      id: uid('acc'),
+      role: 'leader',
+      staffRole,
+      canManageStaff: staffRole === 'manager',
+      name,
+      title,
+      phone: digits,
+      phonePretty: prettyPhone(digits),
+      password,
+      leaderCode: code,
+      leaderCodeUpdatedAt: now,
+      assignedSiteIds: [...new Set((input.assignedSiteIds || []).filter(Boolean).map(String))],
+      staffAccess: true,
+      employmentType: toText(input.employmentType) || 'contract',
+      // 실제 직원 계정 — 공개 데모 계정 목록에는 올리지 않습니다.
+      demoHidden: true,
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: who,
+      source: 'app',
+      history: [
+        makeHistoryEntry({
+          actor: who,
+          action: '직원 계정 등록',
+          note: `${name} ${title} · ${prettyPhone(digits)} · ${code}`,
+        }),
+      ],
+    };
+    await this.adapter.put('accounts', account);
+    this._notify();
+    return account;
+  }
+
+  /**
+   * 기존 직원 계정 수정 — 이름 · 직책 · 전화번호 · 비밀번호 · 고유코드 · 역할 · 담당 현장.
+   * 비밀번호를 비워 두면 기존 비밀번호를 그대로 씁니다.
+   */
+  async updateStaffAccount(id, patch = {}, { actor = null } = {}) {
+    requireAccountEditor(actor);
+    const account = await this.getAccount(id);
+    if (!account) throw new StoreError('no-account', '계정을 찾을 수 없습니다.');
+    if (account.role !== 'leader') {
+      throw new StoreError('wrong-role', '직원(관리팀장 · 부관리자) 계정만 수정할 수 있습니다.');
+    }
+    const rows = await this.adapter.getAll('accounts');
+    const now = new Date().toISOString();
+    const who = toText(actor && actor.name) || toText(patch.actor) || '대표';
+    const next = { ...account };
+    const changes = [];
+
+    if (patch.name !== undefined) {
+      const name = toText(patch.name);
+      if (!name) throw new StoreError('name-empty', '직원 이름을 입력해 주세요.');
+      if (name !== account.name) changes.push({ field: '이름', from: account.name || '', to: name });
+      next.name = name;
+    }
+    if (patch.title !== undefined && toText(patch.title)) {
+      if (toText(patch.title) !== account.title) changes.push({ field: '직책', from: account.title || '', to: toText(patch.title) });
+      next.title = toText(patch.title);
+    }
+    if (patch.phone !== undefined) {
+      const digits = normalizePhone(patch.phone);
+      if (digits.length < 9) throw new StoreError('phone-invalid', '전화번호를 정확히 입력해 주세요.');
+      if (rows.some((row) => row.id !== id && normalizePhone(row.phone) === digits)) {
+        throw new StoreError('phone-taken', '다른 계정이 쓰는 전화번호입니다.');
+      }
+      if (digits !== normalizePhone(account.phone)) {
+        changes.push({ field: '전화번호', from: prettyPhone(account.phone), to: prettyPhone(digits) });
+      }
+      next.phone = digits;
+      next.phonePretty = prettyPhone(digits);
+    }
+    if (patch.password !== undefined && String(patch.password).trim()) {
+      const password = String(patch.password).trim();
+      if (password.length < 4) throw new StoreError('password-weak', '비밀번호는 4자 이상으로 정해 주세요.');
+      if (password !== account.password) changes.push({ field: '비밀번호', from: '', to: '변경' });
+      next.password = password;
+    }
+    if (patch.leaderCode !== undefined && toText(patch.leaderCode)) {
+      const code = normalizeLeaderCodeInput(patch.leaderCode);
+      if (!code) throw new StoreError('code-format', '고유코드는 TL-0000 형식으로 입력해 주세요.');
+      if (rows.some((row) => row.id !== id && normalizeCode(row.leaderCode) === normalizeCode(code))) {
+        throw new StoreError('code-taken', '이미 사용 중인 고유코드입니다.');
+      }
+      if (normalizeCode(code) !== normalizeCode(account.leaderCode)) {
+        changes.push({ field: '고유코드', from: account.leaderCode || '', to: code });
+        next.leaderCode = code;
+        next.leaderCodeUpdatedAt = now;
+      }
+    }
+    if (patch.staffRole !== undefined) {
+      const staffRole = patch.staffRole === 'manager' ? 'manager' : 'leader';
+      const before = staffRoleKey(account);
+      if (staffRole !== before) changes.push({ field: '역할', from: STAFF_ROLE_LABELS[before], to: STAFF_ROLE_LABELS[staffRole] });
+      next.staffRole = staffRole;
+      next.canManageStaff = staffRole === 'manager';
+    }
+    if (Array.isArray(patch.assignedSiteIds)) {
+      const sites = [...new Set(patch.assignedSiteIds.filter(Boolean).map(String))];
+      const before = (account.assignedSiteIds || []).slice().sort().join(',');
+      if (sites.slice().sort().join(',') !== before) {
+        changes.push({ field: '담당 현장', from: String((account.assignedSiteIds || []).length), to: String(sites.length) });
+      }
+      next.assignedSiteIds = sites;
+    }
+    if (patch.active !== undefined) {
+      const active = patch.active !== false;
+      if (active !== (account.active !== false)) changes.push({ field: '사용 상태', from: account.active === false ? '중지' : '사용', to: active ? '사용' : '중지' });
+      next.active = active;
+    }
+    next.updatedAt = now;
+    next.history = [
+      makeHistoryEntry({ actor: who, action: '직원 계정 수정', changes }),
+      ...(Array.isArray(account.history) ? account.history : []),
+    ].slice(0, 50);
     await this.adapter.put('accounts', next);
     this._notify();
     return next;
