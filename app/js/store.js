@@ -855,6 +855,7 @@ export function estimateQuote(input = {}, settingsInput = null) {
   return {
     pyeong: safePyeong(pyeong),
     area: toText(input.area),
+    hoursText: toText(input.hours),
     base,
     baseSource: source,
     baseNote: note,

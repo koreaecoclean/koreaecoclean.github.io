@@ -833,6 +833,7 @@ export function estimateBoxTemplate(estimate, { amount = '' } = {}) {
       ${line('최소 견적', est.minQuote)}
       ${line('권장 견적', est.recQuote, `<span class="tag tag--leaf">${esc(est.pickLabel || '권장')}</span>`)}
       ${line('추가 공정', est.extraTotal || 0, est.extraLines && est.extraLines.some((row) => row.status === 'unset') ? '<span class="tag tag--sky">일부 미설정</span>' : '')}
+      ${est.hoursText ? `<div class="estimate-line"><span>예상 작업시간</span><strong>${esc(est.hoursText)}</strong></div>` : ''}
       <div class="estimate-line">
         <span>인원 조정</span>
         <strong>${est.teamAdjust ? esc(fmtWon(est.teamAdjust)) : '—'}</strong>
