@@ -533,7 +533,7 @@ export function createLeaderView(container) {
       { key: 'contracts', label: '계약서' },
     ];
     // 4단계 — 내게 온 팀장 배정 요청 (대표 요청 → 수락/거절 → 도급계약서 서명)
-    if (session && session.role === 'leader') {
+    if (canReceiveAssignments(session)) {
       const pending = (state.assignments || []).filter((row) => row.status === 'pending').length;
       tabs.push({ key: 'assign', label: pending ? `내 배정 ${pending}` : '내 배정' });
     }
@@ -638,6 +638,13 @@ export function createLeaderView(container) {
   function assignmentBadge(status) {
     const meta = ASSIGN_STATUS[status] || ASSIGN_STATUS.pending;
     return `<span class="badge ${meta.badge}">${esc(meta.label)}</span>`;
+  }
+
+  /** 배정 요청을 받는 사람 = 관리팀장. 본부장(부관리자)은 받지 않습니다. */
+  function canReceiveAssignments(session) {
+    if (!session || session.role !== 'leader') return false;
+    if (session.account && session.account.canManageStaff) return false;
+    return !/본부장/.test(session.title || '');
   }
 
   /** 수락 전 — 대표가 보낸 인수인계 · 도급금액만 보고 수락/거절합니다. */
@@ -981,7 +988,7 @@ export function createLeaderView(container) {
                   session,
                   state: { supply: { open: state.supplyRequestOpen } },
                 })
-              : tab === 'assign' && session.role === 'leader'
+              : tab === 'assign' && canReceiveAssignments(session)
                 ? assignmentPanelTemplate(session)
               : state.managerMode
                 ? await managerSitesTemplate(session, sites)
@@ -1713,7 +1720,7 @@ export function createLeaderView(container) {
       { actor: state.session },
     );
     // 4단계 — 내게 온 팀장 배정 요청 (본인 계정 것만 · 고객 금액 없음).
-    state.assignments = state.session.role === 'leader' ? await store.listAssignmentRequests(state.session) : [];
+    state.assignments = canReceiveAssignments(state.session) ? await store.listAssignmentRequests(state.session) : [];
 
     // 청소장비 · 봉투: 구입 당사자 직원(부관리자·대표 제외)에게만 열립니다.
     const supplyAllowed = state.session.role === 'leader' && canUseSupply(state.session);
