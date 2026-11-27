@@ -886,7 +886,7 @@ export function createLeaderView(container) {
     `;
   }
 
-  function opsCardTemplate(site) {
+  function opsCardTemplate(site, { withProcess = true } = {}) {
     const ops = site.ops || {};
     const value = (text) => (text ? esc(text) : '<span class="ops-empty">미등록 · 관리자에게 확인</span>');
 
@@ -897,11 +897,11 @@ export function createLeaderView(container) {
           <p>현장 필수 정보</p>
         </div>
         <p class="tiny muted" style="margin:-6px 0 10px">
-          이 현장에서 바로 확인하는 정보입니다. 청소 공정·출입·쓰레기·주차를 확인하세요.
+          이 현장에서 바로 확인하는 정보입니다. ${withProcess ? '청소 공정·출입·쓰레기·주차를 확인하세요.' : '출입·쓰레기·주차를 확인하세요.'}
         </p>
         <dl class="kv kv--left ops-list">
-          <dt>청소 공정</dt>
-          <dd data-ops-field="process">${value(ops.process)}</dd>
+          ${withProcess ? `<dt>청소 공정</dt>
+          <dd data-ops-field="process">${value(ops.process)}</dd>` : ''}
           <dt>출입방법</dt>
           <dd data-ops-field="accessMethod">${value(ops.accessMethod)}</dd>
           <dt>쓰레기 배출위치</dt>
@@ -1050,7 +1050,13 @@ export function createLeaderView(container) {
 
       ${staffPayTemplate(site, session)}
 
-      ${hasManual ? '' : opsCardTemplate(site)}
+      ${
+        hasManual
+          ? [site.ops && site.ops.accessMethod, site.ops && site.ops.trashLocation, site.ops && site.ops.parkingMethod].some(Boolean)
+            ? opsCardTemplate(site, { withProcess: false })
+            : ''
+          : opsCardTemplate(site)
+      }
 
       ${state.siteStaff.length ? siteStaffTemplate(site, state.siteStaff) : ''}
 
