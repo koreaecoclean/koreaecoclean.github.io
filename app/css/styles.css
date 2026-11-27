@@ -3281,7 +3281,8 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .account-row .staff-row__who { align-items: flex-start; }
 .account-row .staff-row__who > div { min-width: 0; }
 .account-row .staff-row__who strong { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; line-height: 1.35; }
-.account-row .staff-row__who span { display: block; line-height: 1.5; word-break: keep-all; }
+.account-row .staff-row__who > div > span { display: block; line-height: 1.5; word-break: keep-all; }
+.account-row .staff-row__who .avatar { display: grid; place-items: center; font-size: 13px; color: #fff; }
 .account-row .staff-row__actions { justify-content: flex-start; margin-top: 3px; }
 .account-sites { max-height: 220px; overflow-y: auto; }
 .inline-field { display: flex; align-items: center; gap: 6px; }
