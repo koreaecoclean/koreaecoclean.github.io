@@ -3196,3 +3196,81 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 @media (max-width: 360px) {
   .site-links__grid { grid-template-columns: 1fr; }
 }
+
+/* ============================================================
+   현장 방문 · 구역 체크 · 자동 견적 (v2.8.0 2단계)
+   관리 → 「현장 방문 · 자동 견적」 · 「견적 기준표 설정」
+   ============================================================ */
+.survey-panel .settings { margin-top: 10px; }
+.survey-picker { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.survey-picker .btn { margin-bottom: 1px; }
+
+.survey-zone { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); padding: 9px 10px; display: flex; flex-direction: column; gap: 7px; }
+.survey-zone__head { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 800; color: var(--brand-800); }
+.survey-checks { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.survey-checks .check-item { padding: 8px 9px; }
+.survey-checks .check-item span { font-size: 12px; }
+
+.estimate-box { border: 1px solid var(--brand-300); border-radius: var(--radius-md); background: linear-gradient(180deg, var(--brand-50), #fff 70%); padding: 11px 12px; display: flex; flex-direction: column; gap: 5px; }
+.estimate-box__head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px; border-bottom: 1px dashed var(--brand-300); padding-bottom: 7px; margin-bottom: 3px; }
+.estimate-box__head strong { font-size: 13px; font-weight: 900; color: var(--brand-800); }
+.estimate-box__head span { font-size: 10.5px; color: var(--muted); }
+.estimate-line { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 6px; font-size: 12px; }
+.estimate-line > span { color: var(--body); }
+.estimate-line strong { font-size: 13px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+.estimate-warn { margin: 6px 0 0; padding: 7px 9px 7px 20px; border-radius: var(--radius-sm); background: #fff8ec; border: 1px solid #f0d9ac; color: #7a5a12; font-size: 11px; line-height: 1.5; display: flex; flex-direction: column; gap: 3px; }
+.estimate-lines { margin: 2px 0 0; font-size: 10.5px; color: var(--muted); line-height: 1.5; }
+
+.price-table { display: flex; flex-direction: column; gap: 4px; max-height: 340px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px; background: var(--surface); }
+.price-row { display: grid; grid-template-columns: 56px 1fr 1fr; gap: 6px; align-items: center; }
+.price-row > span { font-size: 11.5px; font-weight: 700; color: var(--ink-soft); }
+.price-row--head > span { font-size: 10.5px; color: var(--muted); }
+.input--sm, .select--sm { min-height: 36px; padding: 6px 8px; font-size: 12px; border-radius: 9px; }
+
+.adjust-list { display: flex; flex-direction: column; gap: 5px; }
+.adjust-row { display: grid; grid-template-columns: minmax(0, 1fr) 82px 96px; gap: 6px; align-items: center; }
+.adjust-row > span { font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+
+.checklist-editor-list { display: flex; flex-direction: column; gap: 8px; }
+.checklist-editor { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.checklist-editor__head { display: flex; align-items: center; gap: 6px; }
+.checklist-editor__head .input { flex: 1; }
+.checklist-editor .textarea { min-height: 66px; font-size: 12px; }
+
+.survey-areas { gap: 5px; }
+.survey-photo { display: flex; flex-direction: column; gap: 10px; }
+.survey-photo-group { display: flex; flex-direction: column; gap: 6px; }
+.survey-photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 7px; }
+.survey-photo-card { margin: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; background: var(--surface); }
+.survey-photo-card img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; }
+.survey-photo-card figcaption { display: flex; flex-direction: column; gap: 2px; padding: 5px 6px 6px; }
+.survey-photo-card strong { font-size: 10px; font-weight: 800; color: var(--ink-soft); }
+.survey-photo-card span { font-size: 10px; color: var(--muted); line-height: 1.4; }
+.survey-photo-card .tag { font-size: 9.5px; padding: 2px 6px; align-self: flex-start; }
+.btn.is-disabled { opacity: .5; pointer-events: none; }
+
+.approval-queue { display: flex; flex-direction: column; gap: 7px; }
+.approval-queue__row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); }
+.approval-queue__row > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.approval-queue__row strong { font-size: 12.5px; font-weight: 800; color: var(--ink); }
+.approval-queue__row span { font-size: 10.5px; color: var(--muted); }
+
+.site-survey { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line-strong); display: flex; flex-direction: column; gap: 7px; }
+.site-survey__photos { display: flex; flex-direction: column; gap: 8px; }
+.site-survey__area { display: flex; flex-direction: column; gap: 4px; }
+.site-survey__area > span { font-size: 11px; font-weight: 800; color: var(--brand-700); }
+.site-survey__thumbs { display: flex; gap: 5px; overflow-x: auto; }
+.site-survey__thumbs figure { margin: 0; flex: 0 0 auto; width: 70px; }
+.site-survey__thumbs img { width: 70px; height: 70px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); display: block; }
+.site-survey__thumbs figcaption { font-size: 9px; color: var(--muted); text-align: center; margin-top: 2px; word-break: keep-all; line-height: 1.35; }
+
+.quote-card__estimate { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0 4px; font-size: 10.5px; color: var(--muted); }
+.quote-card__estimate span { padding: 3px 7px; border-radius: 7px; background: var(--surface-3); font-variant-numeric: tabular-nums; }
+
+.settings-history { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+
+@media (max-width: 380px) {
+  .survey-checks { grid-template-columns: 1fr; }
+  .adjust-row { grid-template-columns: minmax(0, 1fr) 72px 84px; }
+  .survey-picker { grid-template-columns: 1fr; }
+}

@@ -277,6 +277,616 @@ export function normalizeBaseline(baseline) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 2단계 — 현장 방문 · 구역별 사진 · 맞춤 견적 (기획서 4·6·7장)          */
+/* ------------------------------------------------------------------ */
+
+/** 견적 방문 사진 구역 (기획서 4장). 사진마다 구역을 붙여 이력으로 보관합니다. */
+export const SURVEY_PHOTO_AREAS = [
+  { key: 'office', label: '사무실' },
+  { key: 'restroom', label: '화장실' },
+  { key: 'pantry', label: '탕비실' },
+  { key: 'hallway', label: '복도' },
+  { key: 'entrance', label: '출입구' },
+  { key: 'glass', label: '유리' },
+  { key: 'smoking', label: '흡연실' },
+  { key: 'carpet', label: '카펫' },
+  { key: 'etc', label: '기타' },
+];
+
+/** 방문 견적 체크리스트 기본값 (기획서 6장). 관리자가 설정에서 항목을 더하고 고칩니다. */
+export const DEFAULT_QUOTE_CHECKLIST = {
+  zones: [
+    { key: 'office', label: '사무실', items: ['책상 주변', '바닥', '쓰레기', '먼지', '공용 테이블', '기타'] },
+    { key: 'restroom', label: '화장실', items: ['변기', '세면대', '거울', '바닥', '배수구', '비품'] },
+    { key: 'pantry', label: '탕비실', items: ['싱크대', '상판', '바닥', '쓰레기'] },
+    { key: 'glass', label: '유리', items: ['내부 유리', '출입문', '유리벽', '기타'] },
+    { key: 'hallway', label: '복도 및 공용공간', items: ['바닥', '쓰레기', '먼지', '출입구'] },
+    { key: 'smoking', label: '흡연실', items: ['재떨이', '바닥', '벽면', '기타'] },
+    { key: 'extra', label: '기타 공정', kind: 'extra', items: ['카펫', '왁스', '기계세척', '에어컨', '고압세척', '기타 추가공정'] },
+  ],
+};
+
+/**
+ * 기획서 7장 「주 1회 청소 기준 월 견적 금액」 표를 **1원도 바꾸지 않고** 그대로 옮겼습니다.
+ * 표에 없는 평수는 관리자가 설정한 산출 규칙이 있을 때만 계산합니다(임의 확정 금지).
+ */
+export const PRICE_TABLE = [
+  { pyeong: 5, min: 90000, max: 100000 },
+  { pyeong: 10, min: 150000, max: 180000 },
+  { pyeong: 15, min: 165000, max: 180000 },
+  { pyeong: 20, min: 180000, max: 200000 },
+  { pyeong: 25, min: 200000, max: 225000 },
+  { pyeong: 30, min: 210000, max: 240000 },
+  { pyeong: 35, min: 241500, max: 276500 },
+  { pyeong: 40, min: 272000, max: 312000 },
+  { pyeong: 45, min: 301500, max: 346500 },
+  { pyeong: 50, min: 330000, max: 380000 },
+  { pyeong: 55, min: 357500, max: 412500 },
+  { pyeong: 60, min: 384000, max: 444000 },
+  { pyeong: 65, min: 409500, max: 474000 },
+  { pyeong: 70, min: 434000, max: 504000 },
+  { pyeong: 75, min: 457500, max: 532500 },
+  { pyeong: 80, min: 480000, max: 560000 },
+  { pyeong: 85, min: 501500, max: 586500 },
+  { pyeong: 90, min: 522000, max: 612000 },
+  { pyeong: 95, min: 541500, max: 636500 },
+  { pyeong: 100, min: 560000, max: 660000 },
+  { pyeong: 280, min: 1540000, max: 1820000 },
+];
+
+export const QUOTE_DIFFICULTIES = [
+  { key: 'easy', label: '쉬움' },
+  { key: 'normal', label: '보통' },
+  { key: 'hard', label: '어려움' },
+  { key: 'veryHard', label: '매우 어려움' },
+];
+
+export const QUOTE_TEAM_SIZES = [
+  { key: '1', label: '1인팀' },
+  { key: '2', label: '2인팀' },
+  { key: '3', label: '3인팀' },
+  { key: '4', label: '4인 이상' },
+];
+
+export const QUOTE_FREQUENCIES = [
+  { key: 'week1', label: '주 1회', perWeek: 1 },
+  { key: 'week2', label: '주 2회', perWeek: 2 },
+  { key: 'week3', label: '주 3회', perWeek: 3 },
+  { key: 'week5', label: '주 5회', perWeek: 5 },
+  { key: 'daily', label: '매일', perWeek: 7 },
+];
+
+export const QUOTE_EXTRA_PROCESSES = [
+  { key: 'carpet', label: '카펫' },
+  { key: 'wax', label: '왁스' },
+  { key: 'machine', label: '기계세척' },
+  { key: 'aircon', label: '에어컨' },
+  { key: 'pressure', label: '고압세척' },
+  { key: 'extraOther', label: '기타 추가공정' },
+];
+
+/** 조정 항목 한 칸 — 비어 있으면 '미설정'이고 계산에서 빠집니다(임의 기본값 없음). */
+function normalizeAdjustment(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const mode = source.mode === 'rate' || source.mode === 'amount' ? source.mode : '';
+  const raw = source.value;
+  let value = '';
+  if (raw !== '' && raw !== null && raw !== undefined) {
+    const number = Number(raw);
+    if (Number.isFinite(number) && number >= 0) value = number;
+  }
+  return { mode: value === '' ? '' : mode, value, note: toText(source.note) };
+}
+
+/** 관리자가 고칠 수 있는 기준 가격표 — 값이 없거나 깨진 줄은 기본 표로 돌아갑니다. */
+export function normalizePriceTable(rows) {
+  const source = Array.isArray(rows) && rows.length ? rows : PRICE_TABLE;
+  const map = new Map();
+  for (const row of source) {
+    const pyeong = Math.round(Number(row && row.pyeong));
+    if (!Number.isFinite(pyeong) || pyeong <= 0) continue;
+    const min = toAmount(row && row.min);
+    const max = toAmount(row && row.max);
+    if (!min && !max) continue;
+    map.set(pyeong, { pyeong, min, max: max || min });
+  }
+  if (!map.size) PRICE_TABLE.forEach((row) => map.set(row.pyeong, { ...row }));
+  return [...map.values()].sort((a, b) => a.pyeong - b.pyeong);
+}
+
+/** 견적 설정 기본값 — 정책이 정해지지 않은 조정률·금액은 **비워 둡니다**. */
+export function defaultQuoteSettings() {
+  return {
+    version: 1,
+    priceTable: PRICE_TABLE.map((row) => ({ ...row })),
+    areaRule: { mode: '', perPyeongMin: '', perPyeongMax: '', note: '' },
+    recommend: 'mid',
+    team: QUOTE_TEAM_SIZES.map((row) => ({ key: row.key, label: row.label, ...normalizeAdjustment(null) })),
+    frequency: QUOTE_FREQUENCIES.map((row) => ({ key: row.key, label: row.label, perWeek: row.perWeek, ...normalizeAdjustment(null) })),
+    difficulty: QUOTE_DIFFICULTIES.map((row) => ({ key: row.key, label: row.label, ...normalizeAdjustment(null) })),
+    extras: QUOTE_EXTRA_PROCESSES.map((row) => ({ key: row.key, label: row.label, ...normalizeAdjustment(null) })),
+    workHours: { label: '작업시간', ...normalizeAdjustment(null) },
+    other: { label: '기타 조건', ...normalizeAdjustment(null) },
+    updatedAt: '',
+    by: '',
+    history: [],
+  };
+}
+
+function normalizeAdjustmentList(rows, defaults) {
+  const list = Array.isArray(rows) ? rows : [];
+  return defaults.map((row) => {
+    const found = list.find((item) => item && item.key === row.key);
+    const adjustment = normalizeAdjustment(found);
+    return { key: row.key, label: toText(found && found.label) || row.label, ...adjustment };
+  });
+}
+
+export function normalizeQuoteSettings(input) {
+  const base = defaultQuoteSettings();
+  const source = input && typeof input === 'object' ? input : {};
+  const areaRule = source.areaRule && typeof source.areaRule === 'object' ? source.areaRule : {};
+  const mode = ['perPyeong', 'interpolate'].includes(areaRule.mode) ? areaRule.mode : '';
+  const numberOrBlank = (value) => {
+    if (value === '' || value === null || value === undefined) return '';
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? number : '';
+  };
+  return {
+    version: 1,
+    priceTable: normalizePriceTable(source.priceTable),
+    areaRule: {
+      mode,
+      perPyeongMin: numberOrBlank(areaRule.perPyeongMin),
+      perPyeongMax: numberOrBlank(areaRule.perPyeongMax),
+      note: toText(areaRule.note),
+    },
+    recommend: ['min', 'mid', 'max'].includes(source.recommend) ? source.recommend : base.recommend,
+    team: normalizeAdjustmentList(source.team, base.team),
+    frequency: normalizeAdjustmentList(source.frequency, base.frequency),
+    difficulty: normalizeAdjustmentList(source.difficulty, base.difficulty),
+    extras: normalizeAdjustmentList(source.extras, base.extras),
+    workHours: { label: toText(source.workHours && source.workHours.label) || '작업시간', ...normalizeAdjustment(source.workHours) },
+    other: { label: toText(source.other && source.other.label) || '기타 조건', ...normalizeAdjustment(source.other) },
+    updatedAt: toText(source.updatedAt),
+    by: toText(source.by),
+    history: normalizeHistory(source.history),
+  };
+}
+
+/** 체크리스트 설정 — 구역과 항목을 관리자가 더하고 고칩니다. */
+export function normalizeQuoteChecklist(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const zones = (Array.isArray(source.zones) && source.zones.length ? source.zones : DEFAULT_QUOTE_CHECKLIST.zones)
+    .map((zone, index) => {
+      const key = toText(zone && zone.key) || `zone${index + 1}`;
+      const items = (Array.isArray(zone && zone.items) ? zone.items : []).map((item) => toText(item)).filter(Boolean);
+      return {
+        key,
+        label: toText(zone && zone.label) || key,
+        kind: zone && zone.kind === 'extra' ? 'extra' : 'normal',
+        items,
+      };
+    })
+    .filter((zone) => zone.items.length || zone.kind === 'extra');
+  return {
+    zones: zones.length ? zones : DEFAULT_QUOTE_CHECKLIST.zones.map((zone) => ({ ...zone, items: zone.items.slice() })),
+    updatedAt: toText(source.updatedAt),
+    by: toText(source.by),
+    history: normalizeHistory(source.history),
+  };
+}
+
+/** 현장 방문 기록 — 업장(site.survey)과 견적(quote.survey)이 같은 모양을 씁니다. */
+export function normalizeSurvey(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const zoneChecks = {};
+  if (source.zoneChecks && typeof source.zoneChecks === 'object') {
+    for (const [key, value] of Object.entries(source.zoneChecks)) {
+      if (Array.isArray(value)) zoneChecks[key] = value.map((item) => toText(item)).filter(Boolean);
+    }
+  }
+  const pyeong = source.pyeong === '' || source.pyeong === null || source.pyeong === undefined ? '' : Number(source.pyeong);
+  return {
+    visitDate: toText(source.visitDate),
+    surveyor: toText(source.surveyor),
+    clientName: toText(source.clientName),
+    siteName: toText(source.siteName),
+    address: toText(source.address),
+    contactName: toText(source.contactName),
+    contactPhone: toText(source.contactPhone),
+    location: toText(source.location),
+    area: toText(source.area),
+    pyeong: Number.isFinite(pyeong) && pyeong > 0 ? pyeong : '',
+    frequency: toText(source.frequency),
+    hours: toText(source.hours),
+    difficulty: QUOTE_DIFFICULTIES.some((row) => row.key === source.difficulty) ? source.difficulty : '',
+    teamSize: QUOTE_TEAM_SIZES.some((row) => row.key === String(source.teamSize)) ? String(source.teamSize) : '',
+    zones: Array.isArray(source.zones) ? source.zones.map((item) => toText(item)).filter(Boolean) : [],
+    zoneChecks,
+    extras: Array.isArray(source.extras) ? source.extras.map((item) => toText(item)).filter(Boolean) : [],
+    note: toText(source.note),
+    photoIds: Array.isArray(source.photoIds) ? source.photoIds.map((item) => toText(item)).filter(Boolean) : [],
+    updatedAt: toText(source.updatedAt),
+    by: toText(source.by),
+  };
+}
+
+/** 방문 기록에서 이력에 남길 칸의 사람이 읽는 이름. */
+const SURVEY_FIELD_LABELS = {
+  visitDate: '방문일',
+  surveyor: '견적 담당자',
+  clientName: '고객사명',
+  siteName: '사업장명',
+  address: '주소',
+  contactName: '담당자',
+  contactPhone: '연락처',
+  location: '현장 위치',
+  area: '면적',
+  pyeong: '평수',
+  frequency: '청소 주기',
+  hours: '예상 작업시간',
+  difficulty: '현장 난이도',
+  teamSize: '작업 인원',
+  zones: '청소 구역',
+  extras: '추가 공정',
+  note: '현장 특이사항',
+};
+
+/** 이력 비교용 — 시간·작성자 칸은 빼고 사람이 읽는 값만 비교합니다. */
+function surveyDisplay(survey) {
+  const row = normalizeSurvey(survey);
+  const out = {};
+  for (const key of Object.keys(SURVEY_FIELD_LABELS)) out[key] = row[key];
+  return out;
+}
+
+/** 견적 설정 이력 비교용 스냅샷. */
+function quoteSettingsSnapshot(settings) {
+  const out = {
+    areaRuleMode: settings.areaRule.mode,
+    areaPerMin: settings.areaRule.perPyeongMin,
+    areaPerMax: settings.areaRule.perPyeongMax,
+    recommend: settings.recommend,
+    workHours: settings.workHours.mode ? `${settings.workHours.mode}:${settings.workHours.value}` : '',
+    other: settings.other.mode ? `${settings.other.mode}:${settings.other.value}` : '',
+  };
+  for (const row of settings.priceTable) {
+    out[`price_${row.pyeong}_min`] = row.min;
+    out[`price_${row.pyeong}_max`] = row.max;
+  }
+  for (const group of ['team', 'frequency', 'difficulty', 'extras']) {
+    for (const row of settings[group]) out[`${group}_${row.key}`] = row.mode ? `${row.mode}:${row.value}` : '';
+  }
+  return out;
+}
+
+const QUOTE_SETTINGS_LABELS = {
+  areaRuleMode: '표 밖 평수 규칙',
+  areaPerMin: '1평당 최소',
+  areaPerMax: '1평당 최대',
+  recommend: '권장 견적 기준',
+  workHours: '작업시간 조정',
+  other: '기타 조건 조정',
+  team_1: '1인팀 조정',
+  team_2: '2인팀 조정',
+  team_3: '3인팀 조정',
+  team_4: '4인 이상 조정',
+  frequency_week1: '주 1회 조정',
+  frequency_week2: '주 2회 조정',
+  frequency_week3: '주 3회 조정',
+  frequency_week5: '주 5회 조정',
+  frequency_daily: '매일 조정',
+  difficulty_easy: '난이도 쉬움 조정',
+  difficulty_normal: '난이도 보통 조정',
+  difficulty_hard: '난이도 어려움 조정',
+  difficulty_veryHard: '난이도 매우 어려움 조정',
+  extras_carpet: '카펫 단가',
+  extras_wax: '왁스 단가',
+  extras_machine: '기계세척 단가',
+  extras_aircon: '에어컨 단가',
+  extras_pressure: '고압세척 단가',
+  extras_extraOther: '기타 추가공정 단가',
+};
+
+/** 현장 사진 한 장의 메타정보 (기획서 4장). 사진 자체는 ref(기기 사진 · Storage 주소)로 보관합니다. */
+export function normalizeSitePhoto(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    id: toText(source.id),
+    area: SURVEY_PHOTO_AREAS.some((row) => row.key === source.area) ? source.area : 'etc',
+    date: toText(source.date),
+    by: toText(source.by),
+    memo: toText(source.memo),
+    firstQuote: source.firstQuote !== false,
+    quoteId: toText(source.quoteId),
+    ref: source.ref && typeof source.ref === 'object' ? { ...source.ref } : null,
+    createdAt: toText(source.createdAt),
+  };
+}
+
+export function normalizeSitePhotos(list) {
+  return (Array.isArray(list) ? list : []).map(normalizeSitePhoto).filter((row) => row.ref);
+}
+
+/** 견적 산출 결과 — 값은 그대로 보관하고, 없는 칸만 기본값으로 채웁니다. */
+export function normalizeQuoteEstimate(input) {
+  if (!input || typeof input !== 'object') return null;
+  const source = input;
+  const num = (value) => (value === '' || value === null || value === undefined || !Number.isFinite(Number(value)) ? '' : Math.round(Number(value)));
+  return {
+    ...source,
+    pyeong: source.pyeong === '' || source.pyeong === undefined ? '' : Number(source.pyeong),
+    base: source.base && typeof source.base === 'object' ? { min: toAmount(source.base.min), max: toAmount(source.base.max) } : null,
+    tableRecommended: num(source.tableRecommended),
+    extraTotal: num(source.extraTotal) || 0,
+    adjustmentTotal: num(source.adjustmentTotal) || 0,
+    minQuote: num(source.minQuote),
+    recQuote: num(source.recQuote),
+    final: num(source.final),
+    warnings: Array.isArray(source.warnings) ? source.warnings.map((row) => toText(row)).filter(Boolean) : [],
+    lines: Array.isArray(source.lines) ? source.lines : [],
+    computedAt: toText(source.computedAt),
+  };
+}
+
+/** 견적 금액 승인 — 대표가 최종 금액을 확인한 기록. */
+export function normalizeQuoteApproval(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    status: source.status === 'approved' ? 'approved' : '',
+    by: toText(source.by),
+    at: toText(source.at),
+    amount: toAmount(source.amount),
+    note: toText(source.note),
+  };
+}
+
+/** "약 110㎡ (33평)" · "33평" · "33" 어느 쪽이든 평수를 읽습니다. */
+export function parsePyeong(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const pyeong = text.match(/([0-9]+(?:\.[0-9]+)?)\s*평/);
+  if (pyeong) return Math.round(Number(pyeong[1]) * 10) / 10;
+  const sqm = text.match(/([0-9]+(?:\.[0-9]+)?)\s*(?:㎡|m2|m²|제곱미터)/i);
+  if (sqm) return Math.round((Number(sqm[1]) / 3.305785) * 10) / 10;
+  const plain = text.match(/^([0-9]+(?:\.[0-9]+)?)$/);
+  if (plain) return Number(plain[1]);
+  return null;
+}
+
+function frequencyKeyOf(text) {
+  const value = String(text || '');
+  if (/매일|주\s*7\s*회/.test(value)) return 'daily';
+  const match = value.match(/주\s*([1-7])\s*회/);
+  if (!match) return '';
+  const count = Number(match[1]);
+  if (count === 1) return 'week1';
+  if (count === 2) return 'week2';
+  if (count === 3) return 'week3';
+  if (count === 5) return 'week5';
+  return '';
+}
+
+function priceBaseFor(pyeong, settings) {
+  if (!Number.isFinite(pyeong) || pyeong <= 0) {
+    return { base: null, source: 'none', note: '면적(평수)을 입력하면 기준 견적이 계산됩니다.' };
+  }
+  const exact = settings.priceTable.find((row) => row.pyeong === pyeong);
+  if (exact) return { base: { min: exact.min, max: exact.max }, source: 'table', note: `기준표 ${exact.pyeong}평` };
+  const below = settings.priceTable.filter((row) => row.pyeong < pyeong).slice(-1)[0] || null;
+  const above = settings.priceTable.filter((row) => row.pyeong > pyeong)[0] || null;
+  const rule = settings.areaRule;
+  if (rule.mode === 'perPyeong' && rule.perPyeongMin !== '' && rule.perPyeongMax !== '') {
+    return {
+      base: { min: Math.round(pyeong * rule.perPyeongMin), max: Math.round(pyeong * rule.perPyeongMax) },
+      source: 'perPyeong',
+      note: `관리자 규칙 · 1평당 ${rule.perPyeongMin.toLocaleString('ko-KR')}~${rule.perPyeongMax.toLocaleString('ko-KR')}원`,
+    };
+  }
+  if (rule.mode === 'interpolate' && below && above) {
+    const ratio = (pyeong - below.pyeong) / (above.pyeong - below.pyeong);
+    const mix = (from, to) => Math.round(from + (to - from) * ratio);
+    return {
+      base: { min: mix(below.min, above.min), max: mix(below.max, above.max) },
+      source: 'interpolate',
+      note: `기준표 ${below.pyeong}평~${above.pyeong}평 사이 비율 계산`,
+    };
+  }
+  return {
+    base: null,
+    source: 'none',
+    note: `${pyeong}평은 기준표에 없는 평수입니다. 관리자 설정의 ‘표에 없는 평수 산출 규칙’을 먼저 정해 주세요.`,
+  };
+}
+
+function adjustmentAmount(item, baseAmount) {
+  if (!item || !item.mode || item.value === '') return null;
+  if (item.mode === 'rate') return Math.round((baseAmount * Number(item.value)) / 100);
+  return Math.round(Number(item.value));
+}
+
+/**
+ * 기준표 + 관리자 설정으로 견적을 계산합니다.
+ * - 설정이 비어 있는 조정 항목은 계산에서 빼고 `미설정`으로 알려 줍니다(임의 값 강제 없음).
+ * - 기준표에 없는 평수는 관리자 규칙이 있을 때만 계산하고, 없으면 금액을 만들지 않습니다.
+ */
+export function estimateQuote(input = {}, settingsInput = null) {
+  const settings = normalizeQuoteSettings(settingsInput || input.settings || null);
+  const rawPyeong = input.pyeong === '' || input.pyeong === null || input.pyeong === undefined ? null : Number(input.pyeong);
+  const pyeong = Number.isFinite(rawPyeong) && rawPyeong > 0 ? Math.round(rawPyeong * 10) / 10 : parsePyeong(input.area);
+  const { base, source, note } = priceBaseFor(pyeong, settings);
+  const pick = settings.recommend;
+  const pickLabel = pick === 'min' ? '최소' : pick === 'max' ? '최대' : '권장(중간)';
+  const tableRecommended = base
+    ? pick === 'min'
+      ? base.min
+      : pick === 'max'
+        ? base.max
+        : Math.round((base.min + base.max) / 2)
+    : null;
+  const warnings = [];
+  if (!base) warnings.push(note);
+  const lines = [];
+  let adjustmentTotal = 0;
+
+  // ① 추가 공정 — 체크한 공정마다 관리자 단가가 있으면 더합니다.
+  const extraLabels = Array.isArray(input.extras) ? input.extras.map((row) => toText(row)).filter(Boolean) : [];
+  const extraLines = [];
+  let extraTotal = 0;
+  for (const label of extraLabels) {
+    const item = settings.extras.find((row) => row.label === label || row.key === label);
+    const amount = item ? adjustmentAmount(item, tableRecommended || 0) : null;
+    if (amount === null) {
+      extraLines.push({ label: item ? item.label : label, amount: null, status: 'unset', note: '단가 미설정' });
+      warnings.push(`추가 공정 ‘${label}’ 단가가 설정되지 않았습니다.`);
+      continue;
+    }
+    extraTotal += amount;
+    extraLines.push({ label: item.label, amount, status: 'applied', mode: item.mode, value: item.value });
+  }
+  const directExtra = input.extraAmount === '' || input.extraAmount === null || input.extraAmount === undefined ? null : toAmount(input.extraAmount);
+  if (directExtra !== null) {
+    extraTotal = directExtra;
+    extraLines.push({ label: '추가 공정 직접 입력', amount: directExtra, status: 'applied', direct: true });
+  }
+  if (extraTotal) {
+    lines.push({ key: 'extra', label: '추가 공정', amount: extraTotal, status: 'applied' });
+    adjustmentTotal += extraTotal;
+  }
+
+  // ② 인원 조정
+  const teamKey = QUOTE_TEAM_SIZES.some((row) => row.key === String(input.teamSize)) ? String(input.teamSize) : '';
+  const teamItem = teamKey ? settings.team.find((row) => row.key === teamKey) : null;
+  let teamAdjust = 0;
+  let teamStatus = 'none';
+  if (teamItem) {
+    const amount = adjustmentAmount(teamItem, tableRecommended || 0);
+    if (amount === null) {
+      teamStatus = 'unset';
+      if (teamKey !== '1') warnings.push(`${teamItem.label} 조정률이 설정되지 않았습니다.`);
+    } else {
+      teamAdjust = amount;
+      teamStatus = 'applied';
+      lines.push({ key: 'team', label: teamItem.label, amount, status: 'applied', mode: teamItem.mode, value: teamItem.value });
+      adjustmentTotal += amount;
+    }
+  }
+
+  // ③ 청소 주기 — 기준표는 주 1회 기준입니다.
+  const freqKey = frequencyKeyOf(input.frequency || '');
+  const freqItem = freqKey ? settings.frequency.find((row) => row.key === freqKey) : null;
+  let freqAdjust = 0;
+  let freqStatus = 'none';
+  if (freqKey === 'week1') {
+    freqStatus = 'base';
+  } else if (freqItem) {
+    const amount = adjustmentAmount(freqItem, tableRecommended || 0);
+    if (amount === null) {
+      freqStatus = 'unset';
+      warnings.push(`${freqItem.label} 조정률이 설정되지 않아 주 1회 기준 금액으로 계산했습니다.`);
+    } else {
+      freqAdjust = amount;
+      freqStatus = 'applied';
+      lines.push({ key: 'frequency', label: freqItem.label, amount, status: 'applied', mode: freqItem.mode, value: freqItem.value });
+      adjustmentTotal += amount;
+    }
+  } else if (input.frequency) {
+    freqStatus = 'unset';
+    warnings.push(`청소 주기 ‘${input.frequency}’의 조정률이 설정되지 않았습니다.`);
+  }
+
+  // ④ 난이도
+  const difficultyKey = QUOTE_DIFFICULTIES.some((row) => row.key === input.difficulty) ? input.difficulty : '';
+  const diffItem = difficultyKey ? settings.difficulty.find((row) => row.key === difficultyKey) : null;
+  let diffAdjust = 0;
+  let diffStatus = 'none';
+  if (difficultyKey === 'normal') {
+    diffStatus = 'base';
+  } else if (diffItem) {
+    const amount = adjustmentAmount(diffItem, tableRecommended || 0);
+    if (amount === null) {
+      diffStatus = 'unset';
+      warnings.push(`난이도(${diffItem.label}) 조정이 설정되지 않았습니다.`);
+    } else {
+      diffAdjust = amount;
+      diffStatus = 'applied';
+      lines.push({ key: 'difficulty', label: `난이도 ${diffItem.label}`, amount, status: 'applied', mode: diffItem.mode, value: diffItem.value });
+      adjustmentTotal += amount;
+    }
+  }
+
+  // ⑤ 작업시간 — 신청자가 조정을 적용할 때만 더합니다.
+  let hoursAdjust = 0;
+  let hoursStatus = 'none';
+  if (input.applyHours) {
+    const direct = input.hoursAmount === '' || input.hoursAmount === null || input.hoursAmount === undefined ? null : toAmount(input.hoursAmount);
+    const amount = direct !== null ? direct : adjustmentAmount(settings.workHours, tableRecommended || 0);
+    if (amount === null) {
+      hoursStatus = 'unset';
+      warnings.push('작업시간 조정 금액이 설정되지 않았습니다.');
+    } else {
+      hoursAdjust = amount;
+      hoursStatus = 'applied';
+      lines.push({ key: 'hours', label: `작업시간${input.hours ? ` (${input.hours})` : ''}`, amount, status: 'applied', direct: direct !== null });
+      adjustmentTotal += amount;
+    }
+  }
+
+  // ⑥ 기타 조건
+  let otherAdjust = 0;
+  let otherStatus = 'none';
+  if (input.applyOther) {
+    const direct = input.otherAmount === '' || input.otherAmount === null || input.otherAmount === undefined ? null : toAmount(input.otherAmount);
+    const amount = direct !== null ? direct : adjustmentAmount(settings.other, tableRecommended || 0);
+    if (amount === null) {
+      otherStatus = 'unset';
+      warnings.push('기타 조건 조정 금액이 설정되지 않았습니다.');
+    } else {
+      otherAdjust = amount;
+      otherStatus = 'applied';
+      lines.push({ key: 'other', label: settings.other.label || '기타 조건', amount, status: 'applied', direct: direct !== null });
+      adjustmentTotal += amount;
+    }
+  }
+
+  const minQuote = base ? base.min + adjustmentTotal : '';
+  const recQuote = base ? tableRecommended + adjustmentTotal : '';
+  return {
+    pyeong: safePyeong(pyeong),
+    area: toText(input.area),
+    base,
+    baseSource: source,
+    baseNote: note,
+    pick,
+    pickLabel,
+    tableRecommended: tableRecommended === null ? '' : tableRecommended,
+    extraTotal,
+    extraLines,
+    teamAdjust,
+    teamStatus,
+    frequency: { key: freqKey, label: freqItem ? freqItem.label : '', status: freqStatus, amount: freqAdjust },
+    difficulty: { key: difficultyKey, label: diffItem ? diffItem.label : '', status: diffStatus, amount: diffAdjust },
+    hoursAdjust,
+    hoursStatus,
+    otherAdjust,
+    otherStatus,
+    lines,
+    adjustmentTotal,
+    minQuote,
+    recQuote,
+    final: recQuote,
+    warnings,
+    settingsUpdatedAt: settings.updatedAt,
+    computedAt: new Date().toISOString(),
+  };
+}
+
+function safePyeong(value) {
+  return Number.isFinite(value) && value > 0 ? Math.round(value * 10) / 10 : '';
+}
+
+/* ------------------------------------------------------------------ */
 /* contract + field operations info                                     */
 /* ------------------------------------------------------------------ */
 
@@ -462,6 +1072,10 @@ export function normalizeQuote(input) {
     source: toText(source.source) || 'app',
     // 견적 → 계약 연결 (계약서를 만들면 그 계약서 id 가 들어갑니다).
     contractId: toText(source.contractId),
+    // 2단계 — 현장 방문 기록 · 기준표 자동 산출 · 대표 금액 승인.
+    survey: normalizeSurvey(source.survey),
+    estimate: normalizeQuoteEstimate(source.estimate),
+    approval: normalizeQuoteApproval(source.approval),
     history: normalizeHistory(source.history),
   };
 }
@@ -598,6 +1212,9 @@ function normalizeSite(site) {
     ops: normalizeOps(site.ops),
     bizLicense: site.bizLicense && typeof site.bizLicense === 'object' ? site.bizLicense : null,
     contractMemo: toText(site.contractMemo),
+    // 2단계 — 현장 방문 기록 · 구역별 사진 이력(덮어쓰지 않고 쌓입니다).
+    survey: normalizeSurvey(site.survey),
+    surveyPhotos: normalizeSitePhotos(site.surveyPhotos),
     // 업장(siteId) 중심 연결 고리 — 이 업장이 어느 견적/계약/팀장 계약에서 왔는지.
     quoteId: toText(site.quoteId),
     contractId: toText(site.contractId),
@@ -2013,6 +2630,166 @@ export class Store {
     return next;
   }
 
+  /* ---------------- 견적 기준표 · 체크리스트 설정 (기획서 6·7장) ---------------- */
+
+  /** 기준 가격표 · 조정 항목 · 표 밖 평수 규칙 — 저장된 값이 없으면 기본값(미설정)입니다. */
+  async getQuoteSettings() {
+    return normalizeQuoteSettings(await this.getSetting('quoteSettings', null));
+  }
+
+  /** 관리자가 기준표 · 조정 금액/률 · 산출 규칙을 바꿉니다. 바뀐 칸은 전/후 값과 함께 이력에 남습니다. */
+  async saveQuoteSettings(patch = {}, { actor = '대표' } = {}) {
+    const before = await this.getQuoteSettings();
+    const source = patch && typeof patch === 'object' ? patch : {};
+    const merged = normalizeQuoteSettings({
+      ...before,
+      ...source,
+      areaRule: { ...before.areaRule, ...(source.areaRule || {}) },
+      workHours: { ...before.workHours, ...(source.workHours || {}) },
+      other: { ...before.other, ...(source.other || {}) },
+    });
+    const labels = { ...QUOTE_SETTINGS_LABELS };
+    for (const row of merged.priceTable) {
+      labels[`price_${row.pyeong}_min`] = `${row.pyeong}평 최소`;
+      labels[`price_${row.pyeong}_max`] = `${row.pyeong}평 최대`;
+    }
+    const changes = diffFields(quoteSettingsSnapshot(before), quoteSettingsSnapshot(merged), labels);
+    const who = toText(actor) || '대표';
+    const next = {
+      ...merged,
+      updatedAt: new Date().toISOString(),
+      by: who,
+      history: withHistory(
+        before.history,
+        makeHistoryEntry({
+          actor: who,
+          action: changes.length ? '견적 기준표 · 설정 수정' : '견적 설정 저장',
+          changes,
+        }),
+      ),
+    };
+    await this.setSetting('quoteSettings', next);
+    this._notify();
+    return normalizeQuoteSettings(next);
+  }
+
+  /** 견적 체크리스트(구역·항목) — 기본값은 기획서 6장입니다. */
+  async getQuoteChecklist() {
+    return normalizeQuoteChecklist(await this.getSetting('quoteChecklist', null));
+  }
+
+  async saveQuoteChecklist(input, { actor = '대표' } = {}) {
+    const before = await this.getQuoteChecklist();
+    const next = normalizeQuoteChecklist({ ...input, updatedAt: new Date().toISOString(), by: toText(actor) || '대표' });
+    const labels = {};
+    const snapshot = (checklist) => {
+      const out = {};
+      for (const zone of checklist.zones) {
+        labels[`zone_${zone.key}`] = zone.label;
+        out[`zone_${zone.key}`] = `${zone.label}: ${zone.items.join(' | ')}`;
+      }
+      return out;
+    };
+    const changes = diffFields(snapshot(before), snapshot(next), labels);
+    const who = toText(actor) || '대표';
+    const saved = {
+      ...next,
+      history: withHistory(
+        before.history,
+        makeHistoryEntry({
+          actor: who,
+          action: '견적 체크리스트 수정',
+          note: `${next.zones.length}개 구역 · 항목 ${next.zones.reduce((sum, zone) => sum + zone.items.length, 0)}개`,
+          changes,
+        }),
+      ),
+    };
+    await this.setSetting('quoteChecklist', saved);
+    this._notify();
+    return normalizeQuoteChecklist(saved);
+  }
+
+  /* ---------------- 현장 방문 · 구역별 사진 (기획서 4장) ---------------- */
+
+  /** 방문 기록 저장 — 비어 있는 칸만 바꾸고, 바뀐 칸은 업장 이력에 남깁니다. */
+  async updateSiteSurvey(siteId, patch = {}, { actor = '앱' } = {}) {
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const before = normalizeSurvey(site.survey);
+    const now = new Date().toISOString();
+    const survey = normalizeSurvey({
+      ...before,
+      ...(patch || {}),
+      updatedAt: now,
+      by: toText(actor) || before.by || '앱',
+    });
+    const changes = diffFields(surveyDisplay(before), surveyDisplay(survey), SURVEY_FIELD_LABELS);
+    const next = {
+      ...site,
+      survey,
+      updatedAt: now,
+      history: withHistory(
+        site.history,
+        makeHistoryEntry({
+          actor: toText(actor) || '앱',
+          action: changes.length ? '현장 방문 정보 수정' : '현장 방문 정보 저장',
+          note: `${survey.visitDate || '방문일 미기록'} · ${survey.siteName || survey.clientName || site.name}`,
+          changes,
+        }),
+      ),
+    };
+    await this.adapter.put('sites', next);
+    this._notify();
+    return normalizeSite(await this.getSite(siteId));
+  }
+
+  /**
+   * 현장 사진 한 장 등록 — 같은 구역·같은 날짜라도 **덮어쓰지 않고** 뒤에 쌓습니다.
+   * 계약 전에 찍은 사진은 `firstQuote: true` 로 남아 첫 견적 사진으로 쓰입니다.
+   */
+  async addSitePhoto(siteId, input = {}) {
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    if (!input.ref || typeof input.ref !== 'object' || !input.ref.id) {
+      throw new StoreError('photo-empty', '사진을 먼저 촬영하거나 선택해 주세요.');
+    }
+    const now = new Date().toISOString();
+    const entry = normalizeSitePhoto({
+      id: uid('sitephoto'),
+      area: input.area,
+      date: toText(input.date) || todayISO(),
+      by: toText(input.by),
+      memo: toText(input.memo),
+      firstQuote: input.firstQuote !== false,
+      quoteId: toText(input.quoteId),
+      ref: input.ref,
+      createdAt: now,
+    });
+    const photos = [...normalizeSitePhotos(site.surveyPhotos), entry];
+    const areaLabel = (SURVEY_PHOTO_AREAS.find((row) => row.key === entry.area) || {}).label || '기타';
+    const next = {
+      ...site,
+      surveyPhotos: photos,
+      updatedAt: now,
+      history: withHistory(
+        site.history,
+        makeHistoryEntry({
+          actor: entry.by || '앱',
+          action: '현장 사진 등록',
+          note: `${areaLabel}${entry.memo ? ` · ${entry.memo}` : ''} · 누적 ${photos.length}장${entry.firstQuote ? ' · 첫 견적 사진' : ''}`,
+        }),
+      ),
+    };
+    await this.adapter.put('sites', next);
+    this._notify();
+    return entry;
+  }
+
+  async listSitePhotos(siteId) {
+    const site = await this.getSite(siteId);
+    return site ? normalizeSitePhotos(site.surveyPhotos) : [];
+  }
+
   async findSiteByCode(code) {
     const needle = normalizeCode(code);
     if (!needle) return null;
@@ -2169,6 +2946,12 @@ export class Store {
     if (quote.amount !== next.amount) changes.push({ field: '월 견적금액', from: String(quote.amount), to: String(next.amount) });
     if (quote.clientCompany !== next.clientCompany) changes.push({ field: '고객사', from: quote.clientCompany, to: next.clientCompany });
     if (quote.frequency !== next.frequency) changes.push({ field: '청소 주기', from: quote.frequency, to: next.frequency });
+    if (quote.area !== next.area) changes.push({ field: '면적', from: quote.area, to: next.area });
+    // 승인된 뒤 금액을 바꾸면 그 승인은 더 이상 그 금액의 승인이 아닙니다 — 승인을 풀고 다시 받습니다.
+    if (quote.approval && quote.approval.status === 'approved' && quote.amount !== next.amount) {
+      next.approval = normalizeQuoteApproval({});
+      changes.push({ field: '금액 승인', from: '승인 완료', to: '금액 변경으로 승인 해제' });
+    }
     if (changes.length) {
       next.history = withHistory(quote.history, makeHistoryEntry({
         actor: toText(patch.actor) || '앱',
@@ -2179,6 +2962,165 @@ export class Store {
     await this.adapter.put('quotes', next);
     this._notify();
     return next;
+  }
+
+  /**
+   * 현장 방문 기록 · 자동 산출 결과를 견적에 붙입니다.
+   * 무엇이 바뀌었는지(방문 정보 · 최종 금액)를 견적 이력에 남깁니다.
+   */
+  async saveQuoteSurvey(quoteId, { survey, estimate, actor = '앱', note = '' } = {}) {
+    const quote = await this.getQuote(quoteId);
+    if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
+    const nextSurvey = normalizeSurvey({ ...normalizeSurvey(quote.survey), ...(survey || {}) });
+    const nextEstimate = estimate === null ? null : normalizeQuoteEstimate(estimate || quote.estimate);
+    const changes = diffFields(surveyDisplay(quote.survey), surveyDisplay(nextSurvey), SURVEY_FIELD_LABELS);
+    const beforeFinal = quote.estimate ? quote.estimate.final : '';
+    const afterFinal = nextEstimate ? nextEstimate.final : '';
+    if (String(beforeFinal) !== String(afterFinal)) {
+      changes.push({ field: '자동 견적 최종', from: String(beforeFinal), to: String(afterFinal) });
+    }
+    const next = normalizeQuote({
+      ...quote,
+      survey: nextSurvey,
+      estimate: nextEstimate,
+      updatedAt: new Date().toISOString(),
+      history: withHistory(
+        quote.history,
+        makeHistoryEntry({ actor: toText(actor) || '앱', action: '현장 방문 · 견적 산출', note, changes }),
+      ),
+    });
+    await this.adapter.put('quotes', next);
+    this._notify();
+    return next;
+  }
+
+  /**
+   * 현장 방문 등록 → 업장(방문 기록 · 사진 자리) → 견적(기준표 자동 산출).
+   * 기존 업장(siteId)을 주면 그 업장을 그대로 쓰고, 새 업장이면 하나만 만듭니다(중복 업장 방지).
+   */
+  async createSurveyQuote(input = {}) {
+    const actor = toText(input.actor) || '앱';
+    const settings = await this.getQuoteSettings();
+    const checklist = await this.getQuoteChecklist();
+    const zoneChecks = input.zoneChecks && typeof input.zoneChecks === 'object' ? input.zoneChecks : {};
+    const zones = Array.isArray(input.zones) && input.zones.length
+      ? input.zones
+      : checklist.zones
+          .filter((zone) => zone.kind !== 'extra' && Array.isArray(zoneChecks[zone.key]) && zoneChecks[zone.key].length)
+          .map((zone) => zone.key);
+    const extras = Array.isArray(input.extras) && input.extras.length
+      ? input.extras
+      : ((zoneChecks.extra || []).slice());
+    let survey = normalizeSurvey({ ...input, zones, extras });
+    const estimate = estimateQuote(
+      {
+        ...input,
+        pyeong: survey.pyeong,
+        area: survey.area,
+        frequency: survey.frequency,
+        teamSize: survey.teamSize,
+        difficulty: survey.difficulty,
+        extras: survey.extras,
+        hours: survey.hours,
+        extraAmount: input.extraAmount,
+        hoursAmount: input.hoursAmount,
+        otherAmount: input.otherAmount,
+        applyHours: input.applyHours,
+        applyOther: input.applyOther,
+      },
+      settings,
+    );
+    if (!survey.pyeong && estimate.pyeong) survey = normalizeSurvey({ ...survey, pyeong: estimate.pyeong });
+    const amount = toAmount(input.amount) || toAmount(estimate.final);
+    if (!amount) {
+      throw new StoreError('amount-empty', '기준표에 없는 평수입니다. 최종 견적 금액을 직접 입력해 주세요.');
+    }
+
+    let site = input.siteId ? await this.getSite(input.siteId) : null;
+    const clientName = toText(survey.clientName) || toText(survey.siteName) || (site ? site.clientName || site.name : '');
+    if (!clientName) throw new StoreError('company-empty', '고객사명을 입력해 주세요.');
+
+    if (!site) {
+      site = await this.addSite({
+        name: toText(survey.siteName) || clientName,
+        clientName,
+        category: input.category || 'office',
+        address: survey.address,
+        area: survey.area || (survey.pyeong ? `${survey.pyeong}평` : ''),
+        frequency: survey.frequency || '주 1회 (일정 협의)',
+        contactName: survey.contactName,
+        actor,
+      });
+    }
+    await this.updateSiteSurvey(site.id, survey, { actor });
+    const quote = await this.createQuoteForSite(site.id, {
+      clientCompany: clientName,
+      clientContact: survey.contactName,
+      clientPhone: survey.contactPhone,
+      clientAddress: survey.address,
+      clientCategory: input.category || site.category,
+      area: survey.area || (survey.pyeong ? `${survey.pyeong}평` : ''),
+      frequency: survey.frequency,
+      amount,
+      memo: survey.note,
+      survey,
+      estimate,
+      actor,
+    });
+    const savedQuote = await this.saveQuoteSurvey(quote.id, {
+      survey,
+      estimate,
+      actor,
+      note: `${clientName} · 방문 ${survey.visitDate || '날짜 미기록'} · 최종 ${amount.toLocaleString('ko-KR')}원`,
+    });
+    return { quote: savedQuote, site: await this.getSite(site.id), estimate };
+  }
+
+  /**
+   * 대표(최고관리자) 최종 금액 승인 → 계약서 자동 연동.
+   * 업장이 연결된 견적은 그 업장을 그대로 씁니다(중복 업장 금지).
+   */
+  async approveQuoteAmount(quoteId, { by = '대표', note = '', role = 'admin' } = {}) {
+    if (role !== 'admin') {
+      throw new StoreError('approve-denied', '견적 금액 승인은 대표(최고관리자)만 할 수 있습니다.');
+    }
+    const quote = await this.getQuote(quoteId);
+    if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
+    if (!quote.amount) throw new StoreError('amount-empty', '견적 금액이 없습니다. 금액을 먼저 정해 주세요.');
+    const now = new Date().toISOString();
+    const who = toText(by) || '대표';
+    const approval = normalizeQuoteApproval({ status: 'approved', by: who, at: now, amount: quote.amount, note });
+    const next = normalizeQuote({
+      ...quote,
+      approval,
+      status: quote.status === 'contracted' ? 'contracted' : 'accepted',
+      updatedAt: now,
+      history: withHistory(
+        quote.history,
+        makeHistoryEntry({
+          actor: who,
+          action: '견적 금액 승인',
+          note: `최종 ${quote.amount.toLocaleString('ko-KR')}원${note ? ` · ${note}` : ''}`,
+        }),
+      ),
+    });
+    await this.adapter.put('quotes', next);
+    // 승인 후 계약서 자동 연동 — createAgreementFromQuote 는 같은 견적의 계약서를 두 번 만들지 않습니다.
+    const agreement = await this.createAgreementFromQuote(quote.id);
+    const site = quote.siteId ? await this.getSite(quote.siteId) : null;
+    if (site) {
+      await this.recordHistory('sites', site.id, {
+        actor: who,
+        action: '견적 금액 승인',
+        note: `${next.no} · 최종 ${quote.amount.toLocaleString('ko-KR')}원 · 계약서 ${agreement.no}`,
+      });
+    }
+    this._notify();
+    return {
+      quote: await this.getQuote(quote.id),
+      agreement: await this.getAgreement(agreement.id),
+      site,
+    };
   }
 
   /** 견적서 발송 — 고객 방에서 열람할 수 있는 상태로 바꿉니다. */
@@ -2519,6 +3461,14 @@ export class Store {
         },
         ops: site.ops && site.ops.process ? site.ops : { process },
       });
+    }
+
+    // 견적에 남긴 현장 방문 기록을 업장으로 옮깁니다 — 계약 뒤에도 업장 관리에서 그대로 봅니다.
+    if (quote && quote.survey && quote.survey.visitDate) {
+      const current = await this.getSite(site.id);
+      if (!current.survey || !current.survey.visitDate) {
+        site = await this.updateSiteSurvey(site.id, quote.survey, { actor: '고객 계약' });
+      }
     }
 
     // 서명 이미지는 Storage 에 올려 여러 기기에서 같은 서명을 보게 합니다(실패 시 dataURL).

@@ -7,7 +7,7 @@
  */
 
 import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate, fmtDateLong, fmtTime, openLightbox, modeSwitchTemplate } from '../ui.js';
-import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, countReportPhotos, QUOTE_STATUS, AGREEMENT_STATUS } from '../store.js';
+import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, countReportPhotos, QUOTE_STATUS, AGREEMENT_STATUS, SURVEY_PHOTO_AREAS, QUOTE_TEAM_SIZES, QUOTE_DIFFICULTIES, parsePyeong, estimateQuote } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import { preparePhoto } from '../photos.js';
 import { getSession, loginAdmin, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
@@ -20,6 +20,9 @@ import {
   defaultScope,
   managerDashboardTemplate,
   staffRoomTemplate,
+  surveyPanelTemplate,
+  quoteSettingsPanelTemplate,
+  estimateBoxTemplate,
 } from './admin-docs.js';
 import { inviteUrl } from '../invite.js';
 
@@ -70,6 +73,21 @@ export function createAdminView(container) {  const state = {
     newStaffError: '',
     staffDetail: '',
     openDetails: '',
+    survey: {
+      open: false,
+      photoOpen: false,
+      error: '',
+      editQuoteId: '',
+      siteId: '',
+      photoSiteId: '',
+      photoArea: 'office',
+      photoMemo: '',
+      photoBy: '',
+      photoDate: '',
+      photoFirst: true,
+      settingsOpen: false,
+      form: null,
+    },
     supply: {
       open: false,
       catalogOpen: false,
@@ -498,6 +516,7 @@ export function createAdminView(container) {  const state = {
             <p class="hint">도급금액은 팀장(현장) 화면에 표시됩니다. 계약금 · 수수료 · 순수 매출은 관리자만 볼 수 있습니다.</p>
           </form>
           ${siteLinksBlockTemplate(link)}
+          ${siteSurveyBlockTemplate(site)}
         </div>
       </details>`;
   }
@@ -720,6 +739,432 @@ export function createAdminView(container) {  const state = {
     }
   }
 
+  /* ---------------- 2단계 현장 방문 · 자동 견적 ---------------- */
+
+  function todayStamp() {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  }
+
+  function surveyFormDefault() {
+    return {
+      siteId: '',
+      clientName: '',
+      siteName: '',
+      address: '',
+      contactName: '',
+      contactPhone: '',
+      visitDate: todayStamp(),
+      surveyor: state.session ? state.session.name : '',
+      location: '',
+      area: '',
+      frequency: '주 1회 (일정 협의)',
+      hours: '',
+      difficulty: 'normal',
+      teamSize: '1',
+      note: '',
+      zoneChecks: {},
+      extras: [],
+      extraAmount: '',
+      hoursAmount: '',
+      otherAmount: '',
+      applyHours: false,
+      applyOther: false,
+      amount: '',
+    };
+  }
+
+  function surveyFormFromSite(site) {
+    const survey = site.survey || {};
+    return {
+      ...surveyFormDefault(),
+      siteId: site.id,
+      clientName: survey.clientName || site.clientName || site.name,
+      siteName: survey.siteName || site.name,
+      address: survey.address || site.address || '',
+      contactName: survey.contactName || site.contactName || '',
+      contactPhone: survey.contactPhone || '',
+      visitDate: survey.visitDate || todayStamp(),
+      surveyor: survey.surveyor || (state.session ? state.session.name : ''),
+      location: survey.location || '',
+      area: survey.area || site.area || '',
+      frequency: survey.frequency || site.frequency || '주 1회 (일정 협의)',
+      hours: survey.hours || '',
+      difficulty: survey.difficulty || 'normal',
+      teamSize: String(survey.teamSize || '1'),
+      note: survey.note || '',
+      zoneChecks: survey.zoneChecks || {},
+      extras: survey.extras || [],
+    };
+  }
+
+  function surveyFormFromQuote(quote) {
+    const survey = quote.survey || {};
+    return {
+      ...surveyFormDefault(),
+      siteId: quote.siteId || '',
+      clientName: survey.clientName || quote.clientCompany || '',
+      siteName: survey.siteName || '',
+      address: survey.address || quote.clientAddress || '',
+      contactName: survey.contactName || quote.clientContact || '',
+      contactPhone: survey.contactPhone || quote.clientPhone || '',
+      visitDate: survey.visitDate || todayStamp(),
+      surveyor: survey.surveyor || '',
+      location: survey.location || '',
+      area: survey.area || quote.area || '',
+      frequency: survey.frequency || quote.frequency || '주 1회 (일정 협의)',
+      hours: survey.hours || '',
+      difficulty: survey.difficulty || 'normal',
+      teamSize: String(survey.teamSize || '1'),
+      note: survey.note || '',
+      zoneChecks: survey.zoneChecks || {},
+      extras: survey.extras || [],
+      // 자동 산출로 만든 견적은 금액을 비워 두어 지금 조건으로 다시 계산합니다.
+      amount: quote.estimate ? '' : String(quote.amount || ''),
+      currentAmount: quote.amount || '',
+    };
+  }
+
+  function estimateInputOf(values) {
+    const pyeong = Number(values.pyeong) > 0 ? Number(values.pyeong) : parsePyeong(values.area);
+    return {
+      pyeong: pyeong || '',
+      area: values.area || '',
+      frequency: values.frequency || '',
+      teamSize: values.teamSize || '',
+      difficulty: values.difficulty || '',
+      extras: values.extras || [],
+      hours: values.hours || '',
+      extraAmount: values.extraAmount,
+      hoursAmount: values.hoursAmount,
+      otherAmount: values.otherAmount,
+      applyHours: !!values.applyHours,
+      applyOther: !!values.applyOther,
+    };
+  }
+
+  function surveyValues() {
+    return state.survey.form || surveyFormDefault();
+  }
+
+  /** 폼에 지금 적힌 값을 그대로 읽습니다(리렌더 전에 잃지 않도록). */
+  function readSurveyForm(form) {
+    const val = (selector) => {
+      const element = $(selector, form);
+      return element ? String(element.value || '').trim() : '';
+    };
+    const zoneChecks = {};
+    form.querySelectorAll('[data-zone-check]').forEach((input) => {
+      if (!input.checked) return;
+      const key = input.dataset.zoneCheck;
+      (zoneChecks[key] = zoneChecks[key] || []).push(input.value);
+    });
+    const pick = $('#sv-site-pick', form);
+    return {
+      ...surveyFormDefault(),
+      siteId: pick ? pick.value : state.survey.siteId,
+      clientName: val('#sv-client'),
+      siteName: val('#sv-name'),
+      address: val('#sv-address'),
+      contactName: val('#sv-contact'),
+      contactPhone: val('#sv-phone'),
+      visitDate: val('#sv-date'),
+      surveyor: val('#sv-surveyor'),
+      location: val('#sv-location'),
+      area: val('#sv-area'),
+      frequency: val('#sv-frequency'),
+      hours: val('#sv-hours'),
+      difficulty: ($('#sv-difficulty', form) || {}).value || 'normal',
+      teamSize: String(($('#sv-team', form) || {}).value || '1'),
+      note: val('#sv-note'),
+      zoneChecks,
+      extras: (zoneChecks.extra || []).slice(),
+      extraAmount: val('#sv-extra-amount'),
+      hoursAmount: val('#sv-hours-amount'),
+      otherAmount: val('#sv-other-amount'),
+      applyHours: !!($('#sv-apply-hours', form) || {}).checked,
+      applyOther: !!($('#sv-apply-other', form) || {}).checked,
+      amount: val('#sv-amount'),
+    };
+  }
+
+  function captureSurveyForm() {
+    const form = $('[data-survey-form]', container);
+    if (!form) return;
+    state.survey.form = readSurveyForm(form);
+    state.survey.siteId = state.survey.form.siteId || '';
+  }
+
+  /** 입력하는 동안 자동 산출 결과를 바로 갱신합니다(저장 전 미리보기). */
+  function refreshEstimatePreview() {
+    const form = $('[data-survey-form]', container);
+    if (!form) return;
+    const values = readSurveyForm(form);
+    const estimate = estimateQuote(estimateInputOf(values), state.quoteSettings || null);
+    const box = $('[data-estimate-box]', form);
+    if (box && typeof box.replaceWith === 'function') {
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = estimateBoxTemplate(estimate, { amount: values.amount });
+      const nextBox = wrapper.querySelector ? wrapper.querySelector('[data-estimate-box]') : null;
+      if (nextBox) box.replaceWith(nextBox);
+    }
+    const amountInput = $('#sv-amount', form);
+    if (amountInput) {
+      amountInput.placeholder = estimate.final
+        ? `${Number(estimate.final).toLocaleString('ko-KR')} (자동 산출)`
+        : '기준표 없음 · 직접 입력';
+    }
+  }
+
+  function siteSurveyBlockTemplate(site) {
+    const survey = site.survey || {};
+    const photos = site.surveyPhotos || [];
+    if (!survey.visitDate && !survey.location && !photos.length) return '';
+    const difficulty = (QUOTE_DIFFICULTIES.find((row) => row.key === survey.difficulty) || {}).label || '-';
+    const team = (QUOTE_TEAM_SIZES.find((row) => row.key === String(survey.teamSize)) || {}).label || '-';
+    const zones = state.quoteChecklist && state.quoteChecklist.zones ? state.quoteChecklist.zones : [];
+    const zoneText = Object.entries(survey.zoneChecks || {})
+      .filter(([, items]) => items && items.length)
+      .map(([key, items]) => {
+        const zone = zones.find((row) => row.key === key);
+        return `${zone ? zone.label : key} ${items.length}개`;
+      })
+      .join(' · ');
+    return `
+      <div class="site-survey" data-site-survey="${esc(site.id)}">
+        <p class="details-head">현장 방문 기록</p>
+        <div class="site-links__grid">
+          <span><em>방문일</em><strong>${esc(survey.visitDate || '미등록')}</strong></span>
+          <span><em>견적 담당</em><strong>${esc(survey.surveyor || '-')}</strong></span>
+          <span><em>면적</em><strong>${esc(survey.area || '-')}</strong></span>
+          <span><em>청소 주기</em><strong>${esc(survey.frequency || '-')}</strong></span>
+          <span><em>난이도</em><strong>${esc(difficulty)}</strong></span>
+          <span><em>작업 인원</em><strong>${esc(team)}</strong></span>
+        </div>
+        ${survey.location ? `<p class="tiny muted">현장 위치: ${esc(survey.location)}</p>` : ''}
+        ${zoneText ? `<p class="tiny muted">구역 체크: ${esc(zoneText)}</p>` : ''}
+        ${survey.note ? `<p class="tiny muted">특이사항: ${esc(survey.note)}</p>` : ''}
+        ${
+          photos.length
+            ? `<p class="details-head">현장 사진 이력 (${photos.length}장)</p>
+               <div class="site-survey__photos">
+                 ${SURVEY_PHOTO_AREAS.filter((area) => photos.some((photo) => photo.area === area.key))
+                   .map(
+                     (area) => `
+                   <div class="site-survey__area">
+                     <span>${esc(area.label)} ${photos.filter((photo) => photo.area === area.key).length}장</span>
+                     <div class="site-survey__thumbs">
+                       ${photos
+                         .filter((photo) => photo.area === area.key)
+                         .slice(-6)
+                         .map(
+                           (photo) => `<figure><img src="${esc(store.photoThumbUrl(photo.ref))}" alt="${esc(area.label)}" loading="lazy" decoding="async"><figcaption>${photo.firstQuote ? '최초 · ' : ''}${esc(String(photo.date || '').slice(5))}</figcaption></figure>`,
+                         )
+                         .join('')}
+                     </div>
+                   </div>`,
+                   )
+                   .join('')}
+               </div>`
+            : '<p class="tiny muted">아직 현장 사진이 없습니다.</p>'
+        }
+      </div>`;
+  }
+
+  /* ---------------- 2단계 동작 ---------------- */
+
+  async function submitSurvey(form) {
+    const editId = form.dataset.surveyForm || state.survey.editQuoteId || '';
+    const values = readSurveyForm(form);
+    state.survey.form = values;
+    state.survey.error = '';
+    state.survey.open = true;
+    const actor = state.session ? state.session.name : '';
+    try {
+      if (editId) {
+        const settings = state.quoteSettings || (await store.getQuoteSettings());
+        const estimate = estimateQuote(estimateInputOf(values), settings);
+        const amount = Number(values.amount) > 0 ? Number(values.amount) : estimate.final;
+        if (!amount) throw new Error('기준표에 없는 평수입니다. 최종 견적 금액을 직접 입력해 주세요.');
+        await store.updateQuote(editId, {
+          amount,
+          area: values.area,
+          frequency: values.frequency,
+          clientCompany: values.clientName,
+          clientContact: values.contactName,
+          clientPhone: values.contactPhone,
+          clientAddress: values.address,
+        });
+        await store.saveQuoteSurvey(editId, {
+          survey: { ...values, pyeong: Number(values.pyeong) || parsePyeong(values.area) || '' },
+          estimate,
+          actor,
+        });
+        // 이 업장의 대표 견적이면 업장의 방문 기록도 같은 내용으로 맞춥니다(업장 카드 ↔ 견적이 어긋나지 않게).
+        const quote = await store.getQuote(editId);
+        if (quote && quote.siteId) {
+          const site = await store.getSite(quote.siteId);
+          if (site && site.quoteId === editId) {
+            await store.updateSiteSurvey(
+              site.id,
+              { ...values, pyeong: Number(values.pyeong) || parsePyeong(values.area) || '' },
+              { actor },
+            );
+          }
+        }
+        state.survey.editQuoteId = '';
+        state.survey.open = false;
+        state.survey.form = null;
+        await render();
+        toast('견적 수정을 저장했습니다. 금액이 바뀌면 대표 승인을 다시 받아야 합니다.');
+      } else {
+        const result = await store.createSurveyQuote({ ...values, actor });
+        state.survey.siteId = result.site.id;
+        state.survey.photoSiteId = result.site.id;
+        state.survey.open = false;
+        state.survey.form = null;
+        await render();
+        toast(`${result.quote.clientCompany} 방문 기록 · 견적 ${result.quote.no} · 최종 ${fmtWon(result.quote.amount)}`, {
+          duration: 8000,
+        });
+      }
+    } catch (error) {
+      state.survey.error = error.message || '방문 기록을 저장하지 못했습니다.';
+      await render();
+    }
+  }
+
+  async function submitQuoteSettings(form) {
+    const priceTable = [];
+    form.querySelectorAll('[data-price-min]').forEach((input) => {
+      const pyeong = Number(input.dataset.priceMin);
+      const max = form.querySelector(`[data-price-max="${pyeong}"]`);
+      priceTable.push({ pyeong, min: input.value, max: max ? max.value : input.value });
+    });
+    const readAdjust = (group, key) => {
+      const modeElement = form.querySelector(`[data-adjust-mode="${group}:${key}"]`);
+      const valueElement = form.querySelector(`[data-adjust-value="${group}:${key}"]`);
+      const labelElement = modeElement ? modeElement.closest('.adjust-row') : null;
+      return {
+        key,
+        label: labelElement ? String(labelElement.querySelector('span')?.textContent || '').trim() : key,
+        mode: modeElement ? modeElement.value : '',
+        value: valueElement ? valueElement.value : '',
+      };
+    };
+    const list = (group) => {
+      const rows = [];
+      form.querySelectorAll(`[data-adjust-mode^="${group}:"]`).forEach((element) => {
+        const key = element.dataset.adjustMode.split(':')[1];
+        rows.push(readAdjust(group, key));
+      });
+      return rows;
+    };
+    const patch = {
+      priceTable,
+      areaRule: {
+        mode: (form.querySelector('[data-area-mode]') || {}).value || '',
+        perPyeongMin: (form.querySelector('[data-area-per-min]') || {}).value || '',
+        perPyeongMax: (form.querySelector('[data-area-per-max]') || {}).value || '',
+        note: (form.querySelector('[data-area-note]') || {}).value || '',
+      },
+      recommend: (form.querySelector('[data-recommend]') || {}).value || 'mid',
+      team: list('team'),
+      frequency: list('frequency'),
+      difficulty: list('difficulty'),
+      extras: list('extras'),
+      workHours: { ...readAdjust('workHours', 'workHours'), label: '작업시간' },
+      other: { ...readAdjust('other', 'other'), label: '기타 조건' },
+    };
+    try {
+      state.quoteSettings = await store.saveQuoteSettings(patch, { actor: state.session ? state.session.name : '대표' });
+      state.survey.settingsOpen = true;
+      await render();
+      toast('견적 기준표 · 설정을 저장했습니다. 다음 산출부터 적용됩니다.');
+    } catch (error) {
+      toast(error.message || '설정을 저장하지 못했습니다.', { tone: 'error' });
+    }
+  }
+
+  async function submitQuoteChecklist(form) {
+    const boxes = Array.from(form.querySelectorAll('[data-checklist-zone]'));
+    const zones = [];
+    boxes.forEach((box, index) => {
+      const labelEl = $('[data-zone-label]', box);
+      const itemsEl = $('[data-zone-items]', box);
+      const kindEl = $('[data-zone-kind]', box);
+      const items = String((itemsEl && itemsEl.value) || '')
+        .split('\n')
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (!items.length) return;
+      zones.push({
+        key: box.dataset.checklistZone || `zone${index + 1}`,
+        label: String((labelEl && labelEl.value) || '').trim() || `구역 ${index + 1}`,
+        kind: kindEl && kindEl.value === 'extra' ? 'extra' : 'normal',
+        items,
+      });
+    });
+    try {
+      state.quoteChecklist = await store.saveQuoteChecklist({ zones }, { actor: state.session ? state.session.name : '대표' });
+      state.survey.settingsOpen = true;
+      await render();
+      toast(`체크리스트 ${state.quoteChecklist.zones.length}개 구역을 저장했습니다.`);
+    } catch (error) {
+      toast(error.message || '체크리스트를 저장하지 못했습니다.', { tone: 'error' });
+    }
+  }
+
+  async function addSurveyPhotos(files) {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    const siteId = state.survey.photoSiteId;
+    if (!siteId) {
+      toast('사진을 남길 업장을 먼저 고르세요.', { tone: 'error' });
+      return;
+    }
+    const area = state.survey.photoArea || 'office';
+    const areaLabel = (SURVEY_PHOTO_AREAS.find((row) => row.key === area) || {}).label || '기타';
+    // 사진을 고르는 순간 화면에 적힌 값을 그대로 읽습니다(입력 중이어도 잃지 않음).
+    const dateInput = $('[data-photo-date]', container);
+    const byInput = $('[data-photo-by]', container);
+    const memoInput = $('[data-photo-memo]', container);
+    const firstInput = $('[data-photo-first]', container);
+    const date = (dateInput && dateInput.value) || state.survey.photoDate || todayStamp();
+    const by = (byInput && byInput.value.trim()) || state.survey.photoBy || (state.session ? state.session.name : '');
+    const memo = (memoInput && memoInput.value.trim()) || state.survey.photoMemo || '';
+    const firstQuote = firstInput ? !!firstInput.checked : state.survey.photoFirst !== false;
+    state.survey.photoDate = date;
+    state.survey.photoBy = by;
+    state.survey.photoMemo = memo;
+    state.survey.photoFirst = firstQuote;
+    let added = 0;
+    for (const file of list) {
+      try {
+        toast('사진 처리 중…', { duration: 1000 });
+        const prepared = await preparePhoto(file);
+        const ref = await store.savePhoto({
+          dataUrl: prepared.dataUrl,
+          thumb: prepared.thumb,
+          width: prepared.width,
+          height: prepared.height,
+          caption: `${areaLabel} 현장 사진`,
+        });
+        await store.addSitePhoto(siteId, { area, date, by, memo, firstQuote, ref });
+        added += 1;
+      } catch (error) {
+        console.warn('[admin] survey photo failed', error);
+      }
+    }
+    if (!added) {
+      toast('사진을 등록하지 못했습니다. 다른 사진으로 시도해 주세요.', { tone: 'error' });
+      return;
+    }
+    state.survey.photoOpen = true;
+    await render();
+    toast(`현장 사진 ${added}장을 ${areaLabel} 구역에 등록했습니다. 기존 사진은 그대로 남습니다.`);
+  }
+
   async function dashboardTemplate(session) {
     const sites = await store.listSites();
     const codes = await store.listRoomCodes();
@@ -738,6 +1183,13 @@ export function createAdminView(container) {  const state = {
     const recentSubmitted = await store.listReports({ status: 'submitted', limit: 3 });
     // 업장(siteId) 중심 연결 요약 — 견적 · 계약 · 팀장 계약 · 보고 · 이력을 한 번에 읽습니다.
     const links = await store.listSiteLinks().catch(() => ({}));
+    // 2단계 — 기준표 · 체크리스트 설정과 방문 폼 미리보기
+    const quoteSettings = await store.getQuoteSettings();
+    const quoteChecklist = await store.getQuoteChecklist();
+    state.quoteSettings = quoteSettings;
+    state.quoteChecklist = quoteChecklist;
+    const surveyFormValues = surveyValues();
+    const surveyPreview = estimateQuote(estimateInputOf(surveyFormValues), quoteSettings);
 
     const unusedTotal = codes.filter((code) => !code.usedAt).length;
     const usedTotal = codes.filter((code) => code.usedAt).length;
@@ -768,7 +1220,19 @@ export function createAdminView(container) {  const state = {
 
       ${revenueSummaryTemplate(revenue)}
 
+      ${surveyPanelTemplate({
+        sites,
+        checklist: quoteChecklist,
+        settings: quoteSettings,
+        quotes,
+        state,
+        values: surveyFormValues,
+        estimate: surveyPreview,
+      })}
+
       ${quotePanelTemplate({ quotes, agreements, state })}
+
+      ${quoteSettingsPanelTemplate({ settings: quoteSettings, checklist: quoteChecklist, state })}
 
       ${staffPanelTemplate({ staffContracts, staffChecks, sites, state })}
 
@@ -1211,6 +1675,36 @@ export function createAdminView(container) {  const state = {
   }
 
   async function onChange(event) {
+    const photoFile = event.target.closest('[data-photo-file]');
+    if (photoFile) {
+      const files = Array.from(photoFile.files || []);
+      photoFile.value = '';
+      await addSurveyPhotos(files);
+      return;
+    }
+    if (event.target.matches('[data-photo-site]')) {
+      captureSurveyForm();
+      state.survey.photoSiteId = event.target.value;
+      state.survey.photoOpen = true;
+      await render();
+      return;
+    }
+    if (event.target.matches('[data-photo-date]')) {
+      state.survey.photoDate = event.target.value;
+      return;
+    }
+    if (event.target.matches('[data-photo-by]')) {
+      state.survey.photoBy = event.target.value;
+      return;
+    }
+    if (event.target.matches('[data-photo-memo]')) {
+      state.survey.photoMemo = event.target.value;
+      return;
+    }
+    if (event.target.matches('[data-photo-first]')) {
+      state.survey.photoFirst = !!event.target.checked;
+      return;
+    }
     if (event.target.id === 'sup-to') {
       const nameInput = $('#sup-to-name', container);
       const option = event.target.selectedOptions && event.target.selectedOptions[0];
@@ -1275,6 +1769,22 @@ export function createAdminView(container) {  const state = {
   }
 
   function onInput(event) {
+    if (event.target.matches('[data-photo-memo]')) {
+      state.survey.photoMemo = event.target.value;
+      return;
+    }
+    if (event.target.matches('[data-photo-by]')) {
+      state.survey.photoBy = event.target.value;
+      return;
+    }
+    if (event.target.matches('[data-photo-date]')) {
+      state.survey.photoDate = event.target.value;
+      return;
+    }
+    if (event.target.closest('[data-survey-form]')) {
+      refreshEstimatePreview();
+      return;
+    }
     const supplyQty = event.target.closest('[data-supply-qty]');
     if (supplyQty) {
       refreshSupplyTotal(supplyQty.closest('form') || container);
@@ -1293,6 +1803,21 @@ export function createAdminView(container) {  const state = {
   /* ---------------- events ---------------- */
 
   async function onSubmit(event) {
+    if (event.target.matches('[data-survey-form]')) {
+      event.preventDefault();
+      await submitSurvey(event.target);
+      return;
+    }
+    if (event.target.matches('[data-quote-settings-form]')) {
+      event.preventDefault();
+      await submitQuoteSettings(event.target);
+      return;
+    }
+    if (event.target.matches('[data-quote-checklist-form]')) {
+      event.preventDefault();
+      await submitQuoteChecklist(event.target);
+      return;
+    }
     if (event.target.id === 'supply-issue-form') {
       event.preventDefault();
       const order = await submitSupplyIssue(state.session, container, {
@@ -1383,6 +1908,112 @@ export function createAdminView(container) {  const state = {
   }
 
   async function onClick(event) {
+    /* ---------------- 2단계 현장 방문 · 사진 · 금액 승인 ---------------- */
+    const surveyLoad = event.target.closest('[data-survey-load]');
+    if (surveyLoad) {
+      captureSurveyForm();
+      const pick = $('#sv-site-pick', container);
+      const siteId = pick ? pick.value : '';
+      if (!siteId) {
+        toast('불러올 업장을 먼저 고르세요.', { tone: 'error' });
+        return;
+      }
+      const site = await store.getSite(siteId);
+      if (!site) {
+        toast('업장을 찾을 수 없습니다.', { tone: 'error' });
+        return;
+      }
+      state.survey.form = surveyFormFromSite(site);
+      state.survey.siteId = site.id;
+      state.survey.photoSiteId = site.id;
+      state.survey.open = true;
+      await render();
+      toast(`${site.name} 업장 정보를 채웠습니다. 사진·구역만 확인하고 저장하세요.`);
+      return;
+    }
+
+    const editQuote = event.target.closest('[data-edit-quote]');
+    if (editQuote) {
+      const quote = await store.getQuote(editQuote.dataset.editQuote);
+      if (!quote) return;
+      state.survey.editQuoteId = quote.id;
+      state.survey.form = surveyFormFromQuote(quote);
+      state.survey.open = true;
+      state.survey.error = '';
+      await render();
+      const box = $('[data-survey-form-box]', container);
+      if (box) {
+        box.open = true;
+        box.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+      return;
+    }
+
+    const cancelEdit = event.target.closest('[data-survey-cancel]');
+    if (cancelEdit) {
+      state.survey.editQuoteId = '';
+      state.survey.form = null;
+      state.survey.error = '';
+      state.survey.open = false;
+      await render();
+      return;
+    }
+
+    const approveQuote = event.target.closest('[data-approve-quote]');
+    if (approveQuote) {
+      captureSurveyForm();
+      const quote = await store.getQuote(approveQuote.dataset.approveQuote);
+      if (!quote) return;
+      const ok = await confirmDialog({
+        title: '최종 금액을 승인할까요?',
+        message: `${quote.clientCompany} · ${quote.no} · 최종 ${fmtWon(quote.amount)}. 승인하면 같은 업장으로 계약서가 자동으로 만들어집니다.`,
+        confirmLabel: '승인',
+      });
+      if (!ok) return;
+      try {
+        const result = await store.approveQuoteAmount(quote.id, {
+          by: state.session ? state.session.name : '대표',
+          role: 'admin',
+        });
+        await render();
+        toast(`금액 승인 완료 · 계약서 ${result.agreement.no}가 만들어졌습니다.`, { duration: 8000 });
+      } catch (error) {
+        toast(error.message || '금액을 승인하지 못했습니다.', { tone: 'error' });
+      }
+      return;
+    }
+
+    const photoArea = event.target.closest('[data-photo-area]');
+    if (photoArea) {
+      captureSurveyForm();
+      state.survey.photoArea = photoArea.dataset.photoArea;
+      state.survey.photoOpen = true;
+      await render();
+      return;
+    }
+
+    const zoneAdd = event.target.closest('[data-zone-add]');
+    if (zoneAdd) {
+      const list = $('.checklist-editor-list', container);
+      if (!list) return;
+      const key = `zone${Date.now().toString(36)}`;
+      const wrap = document.createElement('div');
+      wrap.className = 'checklist-editor';
+      wrap.dataset.checklistZone = key;
+      wrap.innerHTML = '<div class="checklist-editor__head"><input class="input input--sm" data-zone-label placeholder="새 구역 이름" maxlength="30" aria-label="구역 이름"><span class="tag tag--sky">새 구역</span><button class="link-btn" type="button" data-zone-remove>구역 삭제</button></div><textarea class="textarea" rows="3" data-zone-items aria-label="새 구역 항목" placeholder="한 줄에 항목 하나씩"></textarea><input type="hidden" data-zone-kind value="normal">';
+      list.appendChild(wrap);
+      const first = wrap.querySelector ? wrap.querySelector('[data-zone-label]') : null;
+      if (first && first.focus) first.focus();
+      return;
+    }
+
+    const zoneRemove = event.target.closest('[data-zone-remove]');
+    if (zoneRemove) {
+      const box = zoneRemove.closest('.checklist-editor');
+      if (box && box.remove) box.remove();
+      return;
+    }
+
     /* ---------------- 최고관리자 화면 모드 전환 ---------------- */
     const workMode = event.target.closest('[data-work-mode]');
     if (workMode) {

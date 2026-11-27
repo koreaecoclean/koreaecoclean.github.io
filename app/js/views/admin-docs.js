@@ -5,7 +5,14 @@
  */
 
 import { esc, fmtWon } from '../ui.js';
-import { QUOTE_STATUS, AGREEMENT_STATUS, STAFF_STATUS } from '../store.js';
+import {
+  QUOTE_STATUS,
+  AGREEMENT_STATUS,
+  STAFF_STATUS,
+  SURVEY_PHOTO_AREAS,
+  QUOTE_DIFFICULTIES,
+  QUOTE_TEAM_SIZES,
+} from '../store.js';
 import { CATEGORY_META, STAFF_TYPES, SUPPLIER, PAYMENT_ACCOUNT, APP_URL, DEFAULT_CHECKLISTS } from '../seed.js';
 import { inviteUrl } from '../invite.js';
 
@@ -202,6 +209,19 @@ function quoteCardTemplate(quote, agreement) {
         <span class="badge ${status.badge}">${esc(status.label)}</span>
       </header>
       <p class="quote-card__amount">월 ${money(quote.amount)} <em>${quote.vatIncluded ? '부가세 포함' : '부가세 별도'}</em></p>
+      ${quote.estimate
+        ? `<p class="quote-card__estimate">
+             <span>기준 ${quote.estimate.base ? `${esc(fmtWon(quote.estimate.base.min))}~${esc(fmtWon(quote.estimate.base.max))}` : '미설정'}</span>
+             <span>권장 ${quote.estimate.recQuote === '' ? '—' : esc(fmtWon(quote.estimate.recQuote))}</span>
+             <span>조정 ${esc(fmtWon(quote.estimate.adjustmentTotal || 0))}</span>
+             <span>최종 ${esc(fmtWon(quote.amount))}</span>
+           </p>`
+        : ''}
+      ${quote.estimate
+        ? quote.approval && quote.approval.status === 'approved'
+          ? `<p class="tiny muted">금액 승인 완료 · ${esc(quote.approval.by || '대표')} · ${esc(String(quote.approval.at || '').slice(0, 10))} · ${esc(fmtWon(quote.approval.amount))}</p>`
+          : `<p class="tiny muted">금액 승인 대기 — 대표가 승인하면 계약서가 자동으로 만들어집니다.</p>`
+        : ''}
       <div class="quote-card__invite">
         <code>${esc(quote.inviteCode)}</code>
         <span>${esc(inviteState)}</span>
@@ -212,6 +232,10 @@ function quoteCardTemplate(quote, agreement) {
       </div>
       <div class="quote-card__actions">
         <button class="btn btn--primary btn--sm" type="button" data-open-quote="${esc(quote.id)}">견적서 열기</button>
+        <button class="btn btn--ghost btn--sm" type="button" data-edit-quote="${esc(quote.id)}">견적 수정</button>
+        ${quote.estimate && (!quote.approval || quote.approval.status !== 'approved')
+          ? `<button class="btn btn--primary btn--sm" type="button" data-approve-quote="${esc(quote.id)}">금액 승인</button>`
+          : ''}
         ${quote.status === 'draft' ? `<button class="btn btn--ghost btn--sm" type="button" data-send-quote="${esc(quote.id)}">견적서 발송</button>` : ''}
         ${
           agreement
@@ -769,4 +793,516 @@ export function staffRoomTemplate({ contract, checks, sites, canSeeMoney, report
         }
       </section>
     </div>`;
+}
+
+/* ------------------------------------------------------------------ */
+/* 2단계 — 현장 방문 · 구역 체크리스트 · 자동 견적 (기획서 4·6·7장)     */
+/* ------------------------------------------------------------------ */
+
+const dash = (value) => (value === '' || value === null || value === undefined ? '—' : value);
+
+function statusChip(status, label) {
+  if (status === 'applied') return `<span class="tag">반영</span>`;
+  if (status === 'unset') return `<span class="tag tag--sky">미설정</span>`;
+  if (status === 'base') return `<span class="tag tag--leaf">기준</span>`;
+  return `<span class="tag tag--leaf">${esc(label || '조정 없음')}</span>`;
+}
+
+/** 자동 산출 결과 상자 — 기준/최소/권장/추가공정/인원/작업시간/최종 (기획서 7장). */
+export function estimateBoxTemplate(estimate, { amount = '' } = {}) {
+  const est = estimate && typeof estimate === 'object' ? estimate : {};
+  const base = est.base;
+  const finalValue = amount !== '' && amount !== null && amount !== undefined ? Number(amount) : est.final;
+  const line = (label, value, extra = '') => {
+    const display = typeof value === 'string' ? value || '—' : value === '' || value === null || value === undefined ? '—' : fmtWon(value);
+    return `
+    <div class="estimate-line">
+      <span>${esc(label)}</span>
+      <strong>${esc(display)}</strong>
+      ${extra}
+    </div>`;
+  };
+  const warnings = Array.isArray(est.warnings) ? est.warnings.filter(Boolean) : [];
+  return `
+    <div class="estimate-box" data-estimate-box>
+      <div class="estimate-box__head">
+        <strong>자동 견적 산출</strong>
+        <span>${est.pyeong ? `${esc(est.pyeong)}평` : '평수 미입력'} · ${esc(est.baseNote || '기준표')}</span>
+      </div>
+      ${line('기준 견적', base ? `${fmtWon(base.min)} ~ ${fmtWon(base.max)}` : '—', base ? '' : '<span class="tag tag--sky">기준표 없음</span>')}
+      ${line('최소 견적', est.minQuote)}
+      ${line('권장 견적', est.recQuote, `<span class="tag tag--leaf">${esc(est.pickLabel || '권장')}</span>`)}
+      ${line('추가 공정', est.extraTotal || 0, est.extraLines && est.extraLines.some((row) => row.status === 'unset') ? '<span class="tag tag--sky">일부 미설정</span>' : '')}
+      <div class="estimate-line">
+        <span>인원 조정</span>
+        <strong>${est.teamAdjust ? esc(fmtWon(est.teamAdjust)) : '—'}</strong>
+        ${statusChip(est.teamStatus)}
+      </div>
+      <div class="estimate-line">
+        <span>청소 주기 조정</span>
+        <strong>${est.frequency && est.frequency.amount ? esc(fmtWon(est.frequency.amount)) : '—'}</strong>
+        ${statusChip(est.frequency && est.frequency.status, est.frequency && est.frequency.label)}
+      </div>
+      <div class="estimate-line">
+        <span>난이도 조정</span>
+        <strong>${est.difficulty && est.difficulty.amount ? esc(fmtWon(est.difficulty.amount)) : '—'}</strong>
+        ${statusChip(est.difficulty && est.difficulty.status, est.difficulty && est.difficulty.label)}
+      </div>
+      ${est.hoursStatus && est.hoursStatus !== 'none' ? line('작업시간 조정', est.hoursAdjust) : ''}
+      ${est.otherStatus && est.otherStatus !== 'none' ? line('기타 조건', est.otherAdjust) : ''}
+      ${line('조정 합계', est.adjustmentTotal || 0)}
+      ${line('최종 견적', finalValue, amount !== '' && amount !== null && amount !== undefined ? '<span class="tag">직접 입력</span>' : '<span class="tag tag--leaf">권장 + 조정</span>')}
+      ${warnings.length ? `<ul class="estimate-warn">${warnings.map((row) => `<li>${esc(row)}</li>`).join('')}</ul>` : ''}
+      ${est.lines && est.lines.length ? `<p class="estimate-lines">${est.lines.map((row) => `${esc(row.label)} ${row.amount === null ? '미설정' : esc(fmtWon(row.amount))}`).join(' · ')}</p>` : ''}
+    </div>`;
+}
+
+function zoneChecklistTemplate(checklist, values = {}) {
+  const zoneChecks = values.zoneChecks || {};
+  return (checklist.zones || [])
+    .map((zone) => {
+      const checked = Array.isArray(zoneChecks[zone.key]) ? zoneChecks[zone.key] : [];
+      return `
+      <div class="survey-zone" data-survey-zone="${esc(zone.key)}">
+        <p class="survey-zone__head">
+          ${esc(zone.label)}
+          ${zone.kind === 'extra' ? '<span class="tag tag--sky">추가 공정 · 단가 설정 시 자동 반영</span>' : ''}
+        </p>
+        <div class="survey-checks">
+          ${zone.items
+            .map(
+              (item) => `
+            <label class="check-item">
+              <input type="checkbox" data-zone-check="${esc(zone.key)}" value="${esc(item)}" ${checked.includes(item) ? 'checked' : ''}>
+              <span>${esc(item)}</span>
+            </label>`,
+            )
+            .join('')}
+        </div>
+      </div>`;
+    })
+    .join('');
+}
+
+/** 현장 방문 등록 · 견적 수정 폼 (기획서 4·6장). */
+export function surveyFormTemplate({ sites, checklist, settings, values, estimate, state }) {
+  const form = values || {};
+  const editing = !!(state && state.survey && state.survey.editQuoteId);
+  const siteOptions = (sites || [])
+    .map((site) => `<option value="${esc(site.id)}" ${form.siteId === site.id ? 'selected' : ''}>${esc(site.name)} · ${esc(site.code)}${site.clientName && site.clientName !== site.name ? ` (${esc(site.clientName)})` : ''}</option>`)
+    .join('');
+  const difficultyOptions = QUOTE_DIFFICULTIES.map(
+    (row) => `<option value="${esc(row.key)}" ${form.difficulty === row.key ? 'selected' : ''}>${esc(row.label)}</option>`,
+  ).join('');
+  const teamOptions = QUOTE_TEAM_SIZES.map(
+    (row) => `<option value="${esc(row.key)}" ${String(form.teamSize) === row.key ? 'selected' : ''}>${esc(row.label)}</option>`,
+  ).join('');
+
+  return `
+    <form class="form" data-survey-form="${esc(state && state.survey && state.survey.editQuoteId ? state.survey.editQuoteId : '')}" novalidate>
+      <div class="survey-picker">
+        <div class="field">
+          <label for="sv-site-pick">기존 업장 불러오기</label>
+          <select class="select" id="sv-site-pick">
+            <option value="">— 새 업장으로 등록 —</option>
+            ${siteOptions}
+          </select>
+        </div>
+        <button class="btn btn--ghost btn--sm" type="button" data-survey-load>업장 정보 채우기</button>
+      </div>
+      <p class="field__hint">기존 업장을 고르면 고객사·주소·담당자·면적·주기를 다시 적지 않습니다. 저장하면 그 업장에 견적이 붙습니다.</p>
+
+      <p class="details-head">고객사 · 현장</p>
+      <div class="field-row">
+        <div class="field">
+          <label for="sv-client">고객사명 <span class="req">*</span></label>
+          <input class="input" id="sv-client" type="text" maxlength="60" value="${esc(form.clientName || '')}" placeholder="예: 한빛테크">
+        </div>
+        <div class="field">
+          <label for="sv-name">사업장명</label>
+          <input class="input" id="sv-name" type="text" maxlength="60" value="${esc(form.siteName || '')}" placeholder="예: 한빛테크 목동사옥">
+        </div>
+      </div>
+      <div class="field">
+        <label for="sv-address">주소</label>
+        <input class="input" id="sv-address" type="text" maxlength="120" value="${esc(form.address || '')}" placeholder="예: 서울 양천구 목동서로 100, 6층">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="sv-contact">담당자</label>
+          <input class="input" id="sv-contact" type="text" maxlength="30" value="${esc(form.contactName || '')}" placeholder="예: 김도윤 과장">
+        </div>
+        <div class="field">
+          <label for="sv-phone">연락처</label>
+          <input class="input" id="sv-phone" type="tel" inputmode="tel" maxlength="20" value="${esc(form.contactPhone || '')}" placeholder="010-0000-0000">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="sv-date">방문일</label>
+          <input class="input" id="sv-date" type="date" value="${esc(form.visitDate || '')}">
+        </div>
+        <div class="field">
+          <label for="sv-surveyor">견적 담당자</label>
+          <input class="input" id="sv-surveyor" type="text" maxlength="30" value="${esc(form.surveyor || '')}" placeholder="예: 채종병">
+        </div>
+      </div>
+      <div class="field">
+        <label for="sv-location">현장 위치</label>
+        <input class="input" id="sv-location" type="text" maxlength="120" value="${esc(form.location || '')}" placeholder="예: 6층 로비 옆 사무실 전체 (엘리베이터 우측)">
+      </div>
+
+      <p class="details-head">청소 조건</p>
+      <div class="field-row">
+        <div class="field">
+          <label for="sv-area">면적 · 평수</label>
+          <input class="input" id="sv-area" type="text" maxlength="40" value="${esc(form.area || '')}" placeholder="예: 약 110㎡ (33평)">
+          <span class="field__hint">‘33평’ 또는 ‘110㎡’ 어느 쪽으로 적어도 평수를 읽습니다.</span>
+        </div>
+        <div class="field">
+          <label for="sv-frequency">청소 주기</label>
+          <input class="input" id="sv-frequency" type="text" maxlength="40" value="${esc(form.frequency || '')}" placeholder="예: 주 2회 (화 · 금)">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="sv-hours">예상 작업시간</label>
+          <input class="input" id="sv-hours" type="text" maxlength="30" value="${esc(form.hours || '')}" placeholder="예: 2시간 30분">
+        </div>
+        <div class="field">
+          <label for="sv-team">작업 인원 예상</label>
+          <select class="select" id="sv-team">${teamOptions}</select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="sv-difficulty">현장 난이도</label>
+        <select class="select" id="sv-difficulty">${difficultyOptions}</select>
+      </div>
+      <div class="field">
+        <label for="sv-note">현장 특이사항</label>
+        <textarea class="textarea" id="sv-note" rows="2" maxlength="400" placeholder="예: 계단 먼지 많음, 창고 출입 주의">${esc(form.note || '')}</textarea>
+      </div>
+
+      <p class="details-head">청소 구역 체크 (터치)</p>
+      ${zoneChecklistTemplate(checklist, form)}
+
+      <p class="details-head">조정 · 직접 입력</p>
+      <div class="field-row">
+        <div class="field">
+          <label for="sv-extra-amount">추가 공정 금액 직접 입력 <span class="tiny muted">(선택)</span></label>
+          <input class="input" id="sv-extra-amount" type="number" inputmode="numeric" min="0" step="1000" value="${esc(form.extraAmount ?? '')}" placeholder="관리자 단가 대신 직접 입력">
+        </div>
+        <div class="field">
+          <label for="sv-amount">최종 견적 직접 입력 <span class="tiny muted">(선택)</span></label>
+          <input class="input" id="sv-amount" type="number" inputmode="numeric" min="0" step="1000" value="${esc(form.amount ?? '')}" placeholder="비우면 자동 산출값">
+          ${form.currentAmount ? `<span class="field__hint">현재 ${esc(fmtWon(form.currentAmount))} · 비우면 다시 계산</span>` : ''}
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label class="check-item" for="sv-apply-hours">
+            <input type="checkbox" id="sv-apply-hours" ${form.applyHours ? 'checked' : ''}>
+            <span>작업시간 조정</span>
+          </label>
+          <input class="input" id="sv-hours-amount" type="number" inputmode="numeric" min="0" step="1000" value="${esc(form.hoursAmount ?? '')}" placeholder="금액(원)">
+        </div>
+        <div class="field">
+          <label class="check-item" for="sv-apply-other">
+            <input type="checkbox" id="sv-apply-other" ${form.applyOther ? 'checked' : ''}>
+            <span>기타 조건 조정</span>
+          </label>
+          <input class="input" id="sv-other-amount" type="number" inputmode="numeric" min="0" step="1000" value="${esc(form.otherAmount ?? '')}" placeholder="금액(원)">
+        </div>
+      </div>
+
+      ${estimateBoxTemplate(estimate, { amount: form.amount })}
+
+      ${state && state.survey && state.survey.error ? `<p class="field__error">${esc(state.survey.error)}</p>` : ''}
+      <button class="btn btn--primary btn--block" type="submit">${editing ? '견적 수정 저장' : '방문 기록 저장 · 견적 만들기'}</button>
+      ${editing ? `<button class="btn btn--quiet btn--sm" type="button" data-survey-cancel>수정 취소</button>` : ''}
+      <p class="hint">저장하면 기준표와 설정으로 금액을 계산해 견적을 만들고, 방문 기록·사진은 업장에 남깁니다. 금액은 대표 승인 뒤 확정됩니다.</p>
+    </form>`;
+}
+
+/** 구역별 현장 사진 등록 · 이력 (기획서 4장). */
+export function surveyPhotoTemplate({ sites, state, photos }) {
+  const survey = (state && state.survey) || {};
+  const siteId = survey.photoSiteId || '';
+  const site = (sites || []).find((row) => row.id === siteId) || null;
+  const siteOptions = (sites || [])
+    .map((row) => `<option value="${esc(row.id)}" ${row.id === siteId ? 'selected' : ''}>${esc(row.name)} · ${esc(row.code)}</option>`)
+    .join('');
+  const area = survey.photoArea || 'office';
+  const now = new Date();
+  const todayValue = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const grouped = SURVEY_PHOTO_AREAS.map((row) => ({
+    ...row,
+    photos: (photos || []).filter((photo) => photo.area === row.key),
+  })).filter((row) => row.photos.length);
+
+  return `
+    <div class="survey-photo">
+      <div class="field">
+        <label for="sv-photo-site">사진을 남길 업장</label>
+        <select class="select" id="sv-photo-site" data-photo-site>
+          <option value="">— 업장을 고르세요 —</option>
+          ${siteOptions}
+        </select>
+      </div>
+      ${site ? '' : '<p class="field__hint">방문 기록을 먼저 저장하면 그 업장이 자동으로 선택됩니다.</p>'}
+      <div class="field">
+        <label>구역</label>
+        <div class="chips survey-areas">
+          ${SURVEY_PHOTO_AREAS.map(
+            (row) => `<button class="chip" type="button" data-photo-area="${esc(row.key)}" aria-pressed="${row.key === area ? 'true' : 'false'}">${esc(row.label)}</button>`,
+          ).join('')}
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="sv-photo-date">촬영 날짜</label>
+          <input class="input" id="sv-photo-date" type="date" value="${esc(survey.photoDate || todayValue)}" data-photo-date>
+        </div>
+        <div class="field">
+          <label for="sv-photo-by">촬영 담당자</label>
+          <input class="input" id="sv-photo-by" type="text" maxlength="30" value="${esc(survey.photoBy || '')}" data-photo-by placeholder="예: 채종병">
+        </div>
+      </div>
+      <div class="field">
+        <label for="sv-photo-memo">메모</label>
+        <input class="input" id="sv-photo-memo" type="text" maxlength="80" value="${esc(survey.photoMemo || '')}" data-photo-memo placeholder="예: 책상 아래 먼지, 바닥 얼룩">
+      </div>
+      <label class="check-item">
+        <input type="checkbox" data-photo-first ${survey.photoFirst === false ? '' : 'checked'}>
+        <span>최초 견적 사진으로 표시</span>
+      </label>
+      <label class="btn btn--primary btn--block ${siteId ? '' : 'is-disabled'}">
+        사진 촬영 · 선택 (여러 장 가능)
+        <input type="file" accept="image/*" multiple hidden data-photo-file ${siteId ? '' : 'disabled'}>
+      </label>
+      <p class="hint">사진은 1600px JPEG로 압축해 저장합니다. 같은 구역·같은 날짜라도 덮어쓰지 않고 이력으로 쌓입니다.</p>
+
+      ${
+        grouped.length
+          ? grouped
+              .map(
+                (group) => `
+        <div class="survey-photo-group">
+          <p class="survey-zone__head">${esc(group.label)} · ${group.photos.length}장</p>
+          <div class="survey-photo-grid">
+            ${group.photos
+              .map(
+                (photo) => `
+              <figure class="survey-photo-card">
+                <img src="${esc(photoThumb(photo))}" alt="${esc(group.label)} 사진" loading="lazy" decoding="async">
+                <figcaption>
+                  <strong>${esc(photo.date || '날짜 미기록')} · ${esc(photo.by || '담당자 미기록')}</strong>
+                  ${photo.memo ? `<span>${esc(photo.memo)}</span>` : ''}
+                  ${photo.firstQuote ? '<em class="tag tag--leaf">최초 견적</em>' : ''}
+                </figcaption>
+              </figure>`,
+              )
+              .join('')}
+          </div>
+        </div>`,
+              )
+              .join('')
+          : `<p class="tiny muted">${siteId ? '아직 등록된 현장 사진이 없습니다.' : '업장을 고르면 그 업장의 사진 이력이 보입니다.'}</p>`
+      }
+    </div>`;
+}
+
+function photoThumb(photo) {
+  if (!photo || !photo.ref) return '';
+  return photo.ref.thumbAsset || photo.ref.thumb || photo.ref.asset || '';
+}
+
+/** 금액 승인 대기 목록 (대표). */
+export function quoteApprovalListTemplate(quotes) {
+  const pending = (quotes || []).filter((quote) => quote.estimate && quote.amount && (!quote.approval || quote.approval.status !== 'approved'));
+  if (!pending.length) return '<p class="tiny muted">승인을 기다리는 견적이 없습니다.</p>';
+  return `
+    <div class="approval-queue">
+      ${pending
+        .map(
+          (quote) => `
+        <div class="approval-queue__row">
+          <div>
+            <strong>${esc(quote.clientCompany)}</strong>
+            <span>${esc(quote.no)} · ${esc(quote.frequency || '')} · 최종 ${esc(fmtWon(quote.amount))}</span>
+          </div>
+          <button class="btn btn--primary btn--sm" type="button" data-approve-quote="${esc(quote.id)}">금액 승인</button>
+        </div>`,
+        )
+        .join('')}
+    </div>`;
+}
+
+/** 현장 방문 · 사진 · 자동 견적 패널 (대표 화면). */
+export function surveyPanelTemplate({ sites, checklist, settings, quotes, state, values, estimate }) {
+  const survey = (state && state.survey) || {};
+  const editing = !!survey.editQuoteId;
+  const withEstimate = (quotes || []).filter((quote) => quote.estimate);
+  const approved = withEstimate.filter((quote) => quote.approval && quote.approval.status === 'approved').length;
+  const pending = withEstimate.length - approved;
+  const selectedSite = (sites || []).find((row) => row.id === (survey.photoSiteId || ''));
+  const photos = selectedSite ? selectedSite.surveyPhotos || [] : [];
+
+  return `
+    <section class="panel survey-panel" data-survey-panel>
+      <div class="section-head">
+        <div>
+          <h2>현장 방문 · 자동 견적</h2>
+          <p>방문 기록 → 구역 체크 → 기준표 산출 → 대표 승인 → 계약서</p>
+        </div>
+      </div>
+      <div class="admin-stats">
+        <div><strong>${withEstimate.length}</strong><span>산출 견적</span></div>
+        <div><strong>${pending}</strong><span>승인 대기</span></div>
+        <div><strong>${approved}</strong><span>승인 완료</span></div>
+        <div><strong>${(sites || []).filter((site) => site.survey && site.survey.visitDate).length}</strong><span>방문 기록 업장</span></div>
+      </div>
+
+      <details class="settings" data-survey-form-box ${survey.open || editing ? 'open' : ''}>
+        <summary>${editing ? '현장 방문 · 견적 수정' : '+ 현장 방문 등록 · 견적 만들기'}</summary>
+        <div class="settings__body">
+          ${surveyFormTemplate({ sites, checklist, settings, values, estimate, state })}
+        </div>
+      </details>
+
+      <details class="settings" data-survey-photo-box ${survey.photoOpen ? 'open' : ''}>
+        <summary>② 구역별 현장 사진 (이력 보존)</summary>
+        <div class="settings__body">
+          ${surveyPhotoTemplate({ sites, state, photos })}
+        </div>
+      </details>
+
+      <details class="settings" data-approval-box ${pending ? 'open' : ''}>
+        <summary>③ 금액 승인 대기 ${pending ? `(${pending})` : ''}</summary>
+        <div class="settings__body">
+          <p class="hint">견적 산출 뒤 대표가 최종 금액을 승인하면 같은 업장으로 계약서가 자동으로 만들어집니다.</p>
+          ${quoteApprovalListTemplate(quotes)}
+        </div>
+      </details>
+    </section>`;
+}
+
+/** 견적 기준표 · 조정 항목 · 체크리스트 설정 (대표, 기획서 6·7장). */
+export function quoteSettingsPanelTemplate({ settings, checklist, state }) {
+  const survey = (state && state.survey) || {};
+  const adjustmentRow = (group, row) => `
+    <div class="adjust-row">
+      <span>${esc(row.label)}</span>
+      <select class="select select--sm" data-adjust-mode="${esc(group)}:${esc(row.key || group)}">
+        <option value="" ${row.mode === '' ? 'selected' : ''}>미설정</option>
+        <option value="rate" ${row.mode === 'rate' ? 'selected' : ''}>%</option>
+        <option value="amount" ${row.mode === 'amount' ? 'selected' : ''}>원</option>
+      </select>
+      <input class="input input--sm" type="number" inputmode="numeric" min="0" step="1"
+             data-adjust-value="${esc(group)}:${esc(row.key || group)}" value="${esc(row.value)}" placeholder="미설정">
+    </div>`;
+
+  const history = (settings.history || []).slice(0, 3);
+  const checklistZones = (checklist.zones || [])
+    .map(
+      (zone, index) => `
+      <div class="checklist-editor" data-checklist-zone="${esc(zone.key)}">
+        <div class="checklist-editor__head">
+          <input class="input input--sm" data-zone-label value="${esc(zone.label)}" maxlength="30" aria-label="구역 이름">
+          ${zone.kind === 'extra' ? '<span class="tag tag--sky">추가 공정</span>' : ''}
+          <button class="link-btn" type="button" data-zone-remove>구역 삭제</button>
+        </div>
+        <textarea class="textarea" rows="3" data-zone-items aria-label="${esc(zone.label)} 항목">${esc(zone.items.join('\n'))}</textarea>
+        <input type="hidden" data-zone-kind value="${esc(zone.kind || 'normal')}">
+      </div>`,
+    )
+    .join('');
+
+  return `
+    <details class="settings" data-price-settings ${survey.settingsOpen ? 'open' : ''}>
+      <summary>④ 견적 기준표 · 체크리스트 설정 (대표)</summary>
+      <div class="settings__body">
+        <p class="hint">
+          기획서 7장 기준표를 그대로 등록했습니다. 값을 바꾸면 바뀐 칸만 전/후 값과 함께 이력에 남습니다.
+          인원·주기·난이도·추가 공정 조정은 정해진 정책이 없어 <strong>비어 있으면 계산에서 빠지고 ‘미설정’으로 표시</strong>됩니다.
+        </p>
+        <form class="form" data-quote-settings-form novalidate>
+          <p class="details-head">기준 가격표 (주 1회 청소 기준 · 월 견적)</p>
+          <div class="price-table">
+            <div class="price-row price-row--head"><span>평수</span><span>최소 금액</span><span>최대 금액</span></div>
+            ${settings.priceTable
+              .map(
+                (row) => `
+              <div class="price-row">
+                <span>${esc(row.pyeong)}평</span>
+                <input class="input input--sm" type="number" inputmode="numeric" min="0" step="1000" data-price-min="${esc(row.pyeong)}" value="${esc(row.min)}" aria-label="${esc(row.pyeong)}평 최소">
+                <input class="input input--sm" type="number" inputmode="numeric" min="0" step="1000" data-price-max="${esc(row.pyeong)}" value="${esc(row.max)}" aria-label="${esc(row.pyeong)}평 최대">
+              </div>`,
+              )
+              .join('')}
+          </div>
+
+          <p class="details-head">표에 없는 평수 · 권장 견적</p>
+          <div class="field-row">
+            <div class="field">
+              <label for="qs-area-mode">산출 규칙</label>
+              <select class="select" id="qs-area-mode" data-area-mode>
+                <option value="" ${settings.areaRule.mode === '' ? 'selected' : ''}>미설정 (금액 만들지 않음)</option>
+                <option value="perPyeong" ${settings.areaRule.mode === 'perPyeong' ? 'selected' : ''}>1평당 금액으로 계산</option>
+                <option value="interpolate" ${settings.areaRule.mode === 'interpolate' ? 'selected' : ''}>양옆 기준표 사이 비율로 계산</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="qs-recommend">권장 견적 기준</label>
+              <select class="select" id="qs-recommend" data-recommend>
+                <option value="min" ${settings.recommend === 'min' ? 'selected' : ''}>표의 최소</option>
+                <option value="mid" ${settings.recommend === 'mid' ? 'selected' : ''}>표의 중간(권장)</option>
+                <option value="max" ${settings.recommend === 'max' ? 'selected' : ''}>표의 최대</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="qs-per-min">1평당 최소(원)</label>
+              <input class="input" id="qs-per-min" type="number" inputmode="numeric" min="0" step="100" data-area-per-min value="${esc(settings.areaRule.perPyeongMin)}" placeholder="미설정">
+            </div>
+            <div class="field">
+              <label for="qs-per-max">1평당 최대(원)</label>
+              <input class="input" id="qs-per-max" type="number" inputmode="numeric" min="0" step="100" data-area-per-max value="${esc(settings.areaRule.perPyeongMax)}" placeholder="미설정">
+            </div>
+          </div>
+          <div class="field">
+            <label for="qs-area-note">규칙 메모</label>
+            <input class="input" id="qs-area-note" type="text" maxlength="120" data-area-note value="${esc(settings.areaRule.note)}" placeholder="예: 2026년 상반기 견적 협의 기준">
+          </div>
+
+          <p class="details-head">인원 조정 (미확정 정책 — 비우면 계산에서 빠짐)</p>
+          <div class="adjust-list">${settings.team.map((row) => adjustmentRow('team', row)).join('')}</div>
+
+          <p class="details-head">청소 주기 조정</p>
+          <div class="adjust-list">${settings.frequency.map((row) => adjustmentRow('frequency', row)).join('')}</div>
+
+          <p class="details-head">난이도 조정</p>
+          <div class="adjust-list">${settings.difficulty.map((row) => adjustmentRow('difficulty', row)).join('')}</div>
+
+          <p class="details-head">추가 공정 단가</p>
+          <div class="adjust-list">${settings.extras.map((row) => adjustmentRow('extras', row)).join('')}</div>
+
+          <p class="details-head">작업시간 · 기타 조건</p>
+          <div class="adjust-list">${adjustmentRow('workHours', settings.workHours)}${adjustmentRow('other', settings.other)}</div>
+
+          ${settings.error ? `<p class="field__error">${esc(settings.error)}</p>` : ''}
+          <button class="btn btn--primary btn--block" type="submit">기준표 · 설정 저장</button>
+          ${history.length ? `<div class="settings-history"><p class="details-head">최근 설정 변경</p>${history.map((row) => `<p class="tiny muted">${esc(String(row.at).slice(0, 10))} · ${esc(row.actor || '')} · ${esc(row.action)}${row.changes && row.changes.length ? ` (${esc(row.changes.map((c) => c.field).join(', '))})` : ''}</p>`).join('')}</div>` : ''}
+        </form>
+
+        <form class="form" data-quote-checklist-form novalidate style="margin-top:16px">
+          <p class="details-head">청소 구역 체크리스트 (관리자 수정)</p>
+          <p class="field__hint">구역 이름과 항목을 고치고, 항목은 한 줄에 하나씩 적습니다. ‘기타 공정’ 구역 항목은 설정한 단가가 있으면 견적에 더해집니다.</p>
+          <div class="checklist-editor-list">${checklistZones}</div>
+          <button class="btn btn--ghost btn--sm" type="button" data-zone-add>+ 구역 추가</button>
+          <button class="btn btn--primary btn--block" type="submit">체크리스트 저장</button>
+        </form>
+      </div>
+    </details>`;
 }
