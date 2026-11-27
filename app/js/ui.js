@@ -358,6 +358,8 @@ export const icons = {
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12.5 9.6 17.6 19.5 6.8"/></svg>',
   camera:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5h3l1.4-2.2h8.2L17.5 8.5h3v10.2h-17z"/><circle cx="12" cy="13.4" r="3.4"/></svg>',
+  image:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.6" width="17" height="14.8" rx="2.6"/><circle cx="9" cy="9.9" r="1.5"/><path d="M4.6 17.4 10 12.2l3.1 3 2.7-2.4 4.1 4.2"/></svg>',
   clipboard:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4.5" width="14" height="16" rx="2.4"/><path d="M9 4.5V3.4h6v1.1"/><path d="M8.7 11h6.6M8.7 15h4.4"/></svg>',
   office:

@@ -169,7 +169,7 @@ export function quoteFormTemplate(state) {
                 .join('')}
               <label class="new-site-photos__add">
                 <span>+</span>
-                <input type="file" accept="image/*" capture="environment" multiple hidden data-new-quote-photo>
+                <input type="file" accept="image/*" multiple hidden data-new-quote-photo>
               </label>
             </div>
             <span class="field__hint">사진은 기기에서 1600px JPEG로 압축해 저장됩니다.</span>

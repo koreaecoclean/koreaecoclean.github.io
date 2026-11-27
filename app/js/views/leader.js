@@ -219,11 +219,16 @@ async function paintBaselineSheet() {
             .join('')}
           ${
             full
-              ? '<span class="bs-add bs-add--full"><span class="bs-add__label">20장 모두 등록</span></span>'
+              ? `<span class="bs-add bs-add--full"><span class="bs-add__label">${MAX_BASELINE_PHOTOS}장 모두 등록</span></span>`
               : `<label class="bs-add">
-                   <span class="bs-add__plus">+</span>
-                   <span class="bs-add__label">사진 추가</span>
-                   <input type="file" accept="image/*" capture="environment" multiple hidden data-bs-input="${meta.key}">
+                   ${icons.camera}
+                   <span class="bs-add__label">카메라</span>
+                   <input type="file" accept="image/*" capture="environment" hidden data-bs-input="${meta.key}">
+                 </label>
+                 <label class="bs-add bs-add--album">
+                   ${icons.image}
+                   <span class="bs-add__label">앨범</span>
+                   <input type="file" accept="image/*" multiple hidden data-bs-input="${meta.key}">
                  </label>`
           }
         </div>
@@ -802,21 +807,38 @@ export function createLeaderView(container) {
       ? `${CATEGORY_META[site.category]?.cleaningLabel || group.label} 사진`
       : `${group.label} 사진`;
     const required = group.required;
+    const max = Number(group.max) || 0;
+    const full = max > 0 && photos.length >= max;
+    const caption = group.key === 'issue' ? '특이사항 사진 추가' : '사진 촬영 · 선택';
 
     return `
       <section class="panel photo-panel photo-panel--${group.key}">
         <div class="section-head">
           <h2><span class="step-badge">${index + 1}</span>${esc(label)} ${required ? '<span class="req">*</span>' : '<span class="opt">선택</span>'}</h2>
-          <p><span data-photo-count="${group.key}">${photos.length}</span>장</p>
+          <p><span data-photo-count="${group.key}">${photos.length}</span>${max ? `/${max}` : ''}장</p>
         </div>
-        <p class="tiny muted" style="margin:-6px 0 10px">${esc(group.hint)}</p>
-        <label class="upload-zone" for="photo-${group.key}">
-          ${icons.camera}
-          <strong>${group.key === 'issue' ? '특이사항 사진 추가' : '사진 촬영 · 선택'}</strong>
-          <span>여러 장을 한 번에 올릴 수 있습니다 · 자동 압축 저장</span>
-        </label>
-        <input id="photo-${group.key}" data-photo-input="${group.key}" type="file"
-               accept="image/*" capture="environment" multiple hidden>
+        <p class="tiny muted" style="margin:-6px 0 10px">${esc(group.hint)}${max ? ` · 최대 ${max}장` : ''}</p>
+        ${
+          full
+            ? `<p class="upload-full">${max}장을 모두 채웠습니다. 더 넣으려면 아래에서 사진을 삭제해 주세요.</p>`
+            : ''
+        }
+        <div class="upload-pick${full ? ' is-full' : ''}">
+          <label class="upload-pick__btn upload-pick__btn--camera" for="photo-${group.key}-camera">
+            ${icons.camera}
+            <strong>카메라 촬영</strong>
+            <span>바로 찍기</span>
+          </label>
+          <label class="upload-pick__btn" for="photo-${group.key}-album">
+            ${icons.image}
+            <strong>${esc(caption)}</strong>
+            <span>앨범에서 여러 장</span>
+          </label>
+        </div>
+        <input id="photo-${group.key}-camera" data-photo-input="${group.key}" type="file"
+               accept="image/*" capture="environment" hidden${full ? ' disabled' : ''}>
+        <input id="photo-${group.key}-album" data-photo-input="${group.key}" type="file"
+               accept="image/*" multiple hidden${full ? ' disabled' : ''}>
         <div class="thumbs" id="thumbs-${group.key}" style="margin-top:10px">
           ${thumbsTemplate(group.key, photos)}
         </div>
@@ -1277,6 +1299,17 @@ export function createLeaderView(container) {
     if (box) box.innerHTML = thumbsTemplate(groupKey, photos);
     const count = $(`[data-photo-count="${groupKey}"]`, container);
     if (count) count.textContent = String(photos.length);
+    const group = PHOTO_GROUPS.find((row) => row.key === groupKey);
+    const max = group ? Number(group.max) || 0 : 0;
+    if (!max) return;
+    const full = photos.length >= max;
+    const panel = $('.photo-panel--' + groupKey, container);
+    if (!panel) return;
+    const pick = $('.upload-pick', panel);
+    if (pick) pick.classList.toggle('is-full', full);
+    $$(`[data-photo-input="${groupKey}"]`, panel).forEach((input) => {
+      input.disabled = full;
+    });
   }
 
   function refreshChecks() {
@@ -1500,7 +1533,20 @@ export function createLeaderView(container) {
   async function addFiles(groupKey, files) {
     const draft = state.draft;
     if (!draft || !files || !files.length) return;
-    const list = Array.from(files);
+    const group = PHOTO_GROUPS.find((row) => row.key === groupKey) || { label: '사진' };
+    const max = Number(group.max) || 0;
+    let list = Array.from(files);
+    if (max) {
+      const remaining = Math.max(0, max - draft.photos[groupKey].length);
+      if (!remaining) {
+        toast(`${group.label} 사진은 최대 ${max}장까지 올릴 수 있습니다.`, { tone: 'error' });
+        return;
+      }
+      if (list.length > remaining) {
+        toast(`최대 ${max}장이라 ${remaining}장만 추가합니다.`, { tone: 'error' });
+        list = list.slice(0, remaining);
+      }
+    }
     let failed = 0;
 
     for (let index = 0; index < list.length; index += 1) {
@@ -1522,6 +1568,12 @@ export function createLeaderView(container) {
   async function addSamplePhoto(groupKey) {
     const draft = state.draft;
     if (!draft) return;
+    const group = PHOTO_GROUPS.find((row) => row.key === groupKey) || {};
+    const max = Number(group.max) || 0;
+    if (max && draft.photos[groupKey].length >= max) {
+      toast(`${group.label} 사진은 최대 ${max}장까지 올릴 수 있습니다.`, { tone: 'error' });
+      return;
+    }
     const site = await store.getSite(state.siteId);
     const category = site ? site.category : 'office';
     const pool =

@@ -1119,6 +1119,40 @@ body {
 .upload-zone strong { font-size: 13.5px; font-weight: 800; }
 .upload-zone span { font-size: 11.5px; color: var(--muted); }
 
+/* 카메라 촬영 · 앨범 선택을 나란히 (capture 속성 때문에 한쪽만 열리는 문제 해결) */
+.upload-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.upload-pick--single { grid-template-columns: 1fr; }
+.upload-pick__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 16px 10px;
+  text-align: center;
+  background: var(--surface-2);
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius);
+  transition: border-color .2s var(--ease), background .2s var(--ease);
+  cursor: pointer;
+}
+.upload-pick__btn:hover { border-color: var(--brand-500); background: var(--brand-50); }
+.upload-pick__btn svg { width: 24px; height: 24px; color: var(--brand-600); }
+.upload-pick__btn strong { font-size: 13px; font-weight: 800; letter-spacing: -.01em; }
+.upload-pick__btn span { font-size: 11px; color: var(--muted); }
+.upload-pick__btn--camera svg { color: var(--brand-700); }
+.upload-pick.is-full { opacity: .45; pointer-events: none; }
+.upload-full {
+  margin: 0 0 8px;
+  padding: 9px 11px;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: var(--brand-800);
+  background: var(--brand-50);
+  border: 1px solid var(--brand-100);
+  border-radius: 11px;
+}
+
 .thumbs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
 .thumb {
   position: relative;
@@ -1896,6 +1930,8 @@ body.baseline-sheet-open { overflow: hidden; }
   cursor: pointer;
 }
 .bs-add__plus { font-size: 18px; font-weight: 700; line-height: 1; }
+.bs-add svg { width: 20px; height: 20px; }
+.bs-add--album { color: var(--ink-soft); background: var(--surface-3); border-color: var(--line-strong); }
 .bs-add__label { font-size: 9.5px; font-weight: 800; text-align: center; }
 .bs-add--full {
   color: var(--muted);

@@ -99,6 +99,8 @@ export const PHOTO_GROUPS = [
     short: '맞춤 청소',
     hint: '업종에 맞춘 청소 결과',
     required: true,
+    /** 업장별 맞춤 청소 결과는 한 번 보고에 최대 50장까지. */
+    max: 50,
   },
   {
     key: 'issue',

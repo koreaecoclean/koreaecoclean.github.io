@@ -164,7 +164,7 @@ export function createAdminView(container) {  const state = {
             .join('')}
           <label class="new-site-photos__add">
             <span>+</span>
-            <input type="file" accept="image/*" capture="environment" multiple hidden data-new-baseline="${key}">
+            <input type="file" accept="image/*" multiple hidden data-new-baseline="${key}">
           </label>
         </div>
         <span class="field__hint">${hint}</span>

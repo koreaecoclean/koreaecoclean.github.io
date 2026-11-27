@@ -598,7 +598,7 @@ export function createCustomerView(container) {
           agreement
             ? `<label class="btn btn--quiet btn--sm biz-license__btn">
                  ${ref ? '사진 다시 올리기' : '사업자등록증 올리기'}
-                 <input type="file" accept="image/*" capture="environment" hidden data-biz-license-input="${esc(agreement.id)}">
+                 <input type="file" accept="image/*" hidden data-biz-license-input="${esc(agreement.id)}">
                </label>`
             : ''
         }
