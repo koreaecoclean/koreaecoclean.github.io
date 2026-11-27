@@ -24,6 +24,35 @@ export class AuthError extends Error {
   }
 }
 
+/**
+ * 화면 모드 — 최고관리자(대표)만 씁니다.
+ *  · 'admin' : 관리자 모드 (관리 화면 · 팀장별 관리업장)
+ *  · 'staff' : 직원 모드 (팀장처럼 현장을 골라 보고서를 씀)
+ * 이 기기에만 저장하고 서버로는 올리지 않습니다.
+ */
+export const WORK_MODE_KEY = 'kec.workMode';
+
+export function getWorkMode() {
+  try {
+    return window.localStorage.getItem(WORK_MODE_KEY) === 'staff' ? 'staff' : 'admin';
+  } catch (error) {
+    return 'admin';
+  }
+}
+
+export function setWorkMode(mode) {
+  const value = mode === 'staff' ? 'staff' : 'admin';
+  try {
+    window.localStorage.setItem(WORK_MODE_KEY, value);
+  } catch (error) {
+    /* 저장할 수 없으면 이번 화면에서만 바뀝니다. */
+  }
+  if (typeof document !== 'undefined' && document.dispatchEvent) {
+    document.dispatchEvent(new CustomEvent('kec:work-mode-changed', { detail: { mode: value } }));
+  }
+  return value;
+}
+
 function emitSessionChanged() {
   if (typeof document !== 'undefined' && document.dispatchEvent) {
     document.dispatchEvent(new CustomEvent('kec:session-changed'));
@@ -92,6 +121,7 @@ async function startSession(account) {
 
 export async function logout() {
   await store.removeSetting(SESSION_KEY);
+  setWorkMode('admin');
   emitSessionChanged();
 }
 

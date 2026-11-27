@@ -6,11 +6,11 @@
  * - 고객 계정과 방 입장 상태 확인
  */
 
-import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate, fmtDateLong, fmtTime, openLightbox } from '../ui.js';
+import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate, fmtDateLong, fmtTime, openLightbox, modeSwitchTemplate } from '../ui.js';
 import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, countReportPhotos } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import { preparePhoto } from '../photos.js';
-import { getSession, loginAdmin, logout, demoAccounts } from '../auth.js';
+import { getSession, loginAdmin, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
 import {
   quotePanelTemplate,
   staffPanelTemplate,
@@ -695,6 +695,7 @@ export function createAdminView(container) {  const state = {
         </div>
         <button class="btn btn--sm btn--quiet" type="button" data-action="logout">로그아웃</button>
       </div>
+      ${modeSwitchTemplate(getWorkMode())}
 
       <section class="panel">
         <div class="admin-stats">
@@ -808,6 +809,8 @@ export function createAdminView(container) {  const state = {
 
     state.session = session;
     state.isCeo = session.role === 'admin';
+    // 관리 화면은 관리자 모드입니다 — 직원 모드로 있다가 들어오면 관리자 모드로 돌아옵니다.
+    if (state.isCeo && getWorkMode() !== 'admin') setWorkMode('admin');
 
     if (state.staffDetail) {
       const sites = await store.listSites();
@@ -1318,6 +1321,22 @@ export function createAdminView(container) {  const state = {
   }
 
   async function onClick(event) {
+    /* ---------------- 최고관리자 화면 모드 전환 ---------------- */
+    const workMode = event.target.closest('[data-work-mode]');
+    if (workMode) {
+      const mode = workMode.dataset.workMode === 'staff' ? 'staff' : 'admin';
+      if (mode === getWorkMode()) return;
+      setWorkMode(mode);
+      if (mode === 'staff') {
+        toast('직원 모드로 전환했습니다. 팀장처럼 현장을 골라 보고서를 쓸 수 있습니다.');
+        document.dispatchEvent(new CustomEvent('kec:navigate', { detail: { tab: 'leader' } }));
+      } else {
+        toast('관리자 모드로 전환했습니다.');
+        await render();
+      }
+      return;
+    }
+
     /* ---------------- 보고 확인 · 고객사 제출 ---------------- */
     const approvalPhoto = event.target.closest('[data-approval-photo]');
     if (approvalPhoto) {

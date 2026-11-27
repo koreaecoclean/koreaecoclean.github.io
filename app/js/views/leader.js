@@ -22,6 +22,7 @@ import {
   nowHHMM,
   daysBetween,
   openLightbox,
+  modeSwitchTemplate,
 } from '../ui.js';
 import {
   store,
@@ -33,7 +34,7 @@ import {
   MAX_BASELINE_PHOTOS,
 } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
-import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, demoStaffCodes } from '../auth.js';
+import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, demoStaffCodes, getWorkMode, setWorkMode } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
 import { openStaffContractSheet } from './quote-contract.js';
 import { peekPendingInvite, clearPendingInvite, inviteKind, inviteLabel } from '../invite.js';
@@ -422,6 +423,7 @@ export function createLeaderView(container) {
     leaderTab: 'sites',
     // 관리자(대표·부관리자) 화면 — 팀장 목록 → 그 팀장의 관리업장
     managerMode: false,
+    renderedMode: '',
     teamLeads: [],
     teamContracts: [],
     teamLeadId: '',
@@ -828,6 +830,7 @@ export function createLeaderView(container) {
         </div>
         <button class="btn btn--sm btn--quiet" type="button" data-action="logout">로그아웃</button>
       </div>
+      ${isAdmin ? modeSwitchTemplate(getWorkMode()) : ''}
     `;
   }
 
@@ -1459,6 +1462,7 @@ export function createLeaderView(container) {
       state.supplyCatalog = [];
       state.supplyOrders = [];
       state.managerMode = false;
+      state.renderedMode = '';
       state.teamLeads = [];
       state.teamContracts = [];
       state.teamLeadId = '';
@@ -1469,13 +1473,31 @@ export function createLeaderView(container) {
     }
 
     const sites = await store.listSites();
-    // 대표 · 부관리자 — 관리자 화면: 팀장을 골라 그 팀장의 관리업장을 봅니 다.
-    state.managerMode =
+    // 대표 · 부관리자 — 관리자 화면: 팀장을 골라 그 팀장의 관리업장을 봅니다.
+    const managerRole =
       state.session.role === 'admin' ||
       !!(state.session.account && state.session.account.canManageStaff) ||
       /본부장/.test(state.session.title || '');
+    // 최고관리자(대표)는 직원 모드로 바꿔 팀장처럼 보고서를 쓸 수 있습니다.
+    const staffMode = managerRole && state.session.role === 'admin' && getWorkMode() === 'staff';
+    const modeKey = managerRole ? (staffMode ? 'staff' : 'admin') : '';
+    if (state.renderedMode !== modeKey) {
+      if (state.renderedMode) {
+        state.siteId = null;
+        state.draft = null;
+        state.teamLeadId = '';
+      }
+      state.renderedMode = modeKey;
+    }
+    state.managerMode = managerRole && !staffMode;
     const assigned = state.session.assignedSiteIds || [];
-    const allowed = state.managerMode ? sites : assigned.length ? sites.filter((site) => assigned.includes(site.id)) : [];
+    const allowed = state.managerMode
+      ? sites
+      : assigned.length
+        ? sites.filter((site) => assigned.includes(site.id))
+        : staffMode
+          ? sites
+          : [];
     if (state.managerMode) {
       const accounts = await store.listAccounts({ role: 'leader' });
       state.teamLeads = accounts
@@ -1955,6 +1977,25 @@ export function createLeaderView(container) {
     const remove = event.target.closest('[data-remove-photo]');
     if (remove) {
       removePhoto(remove.dataset.group, remove.dataset.removePhoto);
+      return;
+    }
+
+    const workMode = event.target.closest('[data-work-mode]');
+    if (workMode) {
+      const mode = workMode.dataset.workMode === 'staff' ? 'staff' : 'admin';
+      if (mode === getWorkMode()) return;
+      setWorkMode(mode);
+      state.siteId = null;
+      state.draft = null;
+      state.teamLeadId = '';
+      if (mode === 'admin') {
+        document.dispatchEvent(new CustomEvent('kec:navigate', { detail: { tab: 'admin' } }));
+        toast('관리자 모드로 전환했습니다.');
+      } else {
+        toast('직원 모드로 전환했습니다. 팀장처럼 현장을 골라 보고서를 쓸 수 있습니다.');
+        await render();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
       return;
     }
 

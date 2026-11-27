@@ -353,6 +353,21 @@ export function copyText(text) {
 }
 
 /** Inline icon set (kept here so templates stay readable). */
+/**
+ * 최고관리자(대표)용 화면 모드 전환 — 관리자 모드 / 직원 모드.
+ * 팀장·고객 화면에는 쓰지 않습니다(대표 계정에서만 렌더).
+ */
+export function modeSwitchTemplate(mode = 'admin') {
+  const staff = mode === 'staff';
+  return `
+    <div class="mode-switch" role="group" aria-label="화면 모드 전환">
+      <span class="mode-switch__label">화면 모드</span>
+      <button class="mode-switch__btn" type="button" data-work-mode="admin" aria-pressed="${!staff}">관리자 모드</button>
+      <button class="mode-switch__btn" type="button" data-work-mode="staff" aria-pressed="${staff}">직원 모드</button>
+    </div>
+  `;
+}
+
 export const icons = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 10.5 12 3.8l8.5 6.7"/><path d="M5.6 9.6V20h12.8V9.6"/><path d="M9.7 20v-5.3h4.6V20"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12.5 9.6 17.6 19.5 6.8"/></svg>',
