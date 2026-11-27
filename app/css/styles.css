@@ -3289,3 +3289,52 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .inline-actions .link-btn { padding: 7px 11px; }
 .link-btn--dark { color: var(--brand-800); background: var(--surface); border-color: var(--line-strong); }
 .link-btn--dark:hover { background: var(--brand-50); }
+
+/* ---------- 33. 3단계 — 고객사 초대 · 계약 자동 연동 · 업장 관리방 ---------- */
+.invite-row {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.invite-row__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.invite-row__head strong { display: block; font-size: 14px; line-height: 1.35; letter-spacing: -.02em; }
+.invite-row__head span { display: block; margin-top: 2px; font-size: 11.5px; color: var(--muted); }
+.invite-row__who { margin: 6px 0 0; font-size: 12px; color: var(--muted); word-break: keep-all; }
+.invite-row__who strong { color: var(--ink); }
+.invite-row__code { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 11.5px; color: var(--muted); }
+.invite-row__code code { padding: 3px 7px; font-size: 12px; font-weight: 800; color: var(--brand-800); background: var(--brand-50); border-radius: 7px; }
+.invite-row__code span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.invite-row__actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.invite-row__actions .btn { flex: 0 0 auto; }
+.quote-card__contact { margin: 2px 0 0; font-size: 12px; color: var(--muted); word-break: keep-all; }
+.quote-card__contact strong { color: var(--ink); }
+.site-invite { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; padding: 8px 10px; font-size: 12px; border: 1px dashed var(--line-strong); border-radius: 10px; background: var(--surface-2); }
+.site-invite code { font-weight: 800; color: var(--brand-800); }
+.site-invite .link-btn { margin-left: auto; }
+
+.customer-profile .section-head p { margin: 0; }
+.sign-evidence { margin-top: 12px; padding: 12px; border: 1px solid var(--brand-200, var(--line)); border-radius: 12px; background: var(--brand-50); }
+.sign-evidence > strong { display: block; margin-bottom: 6px; font-size: 12.5px; color: var(--brand-800); }
+.sign-evidence .kv { margin: 0; }
+.sign-evidence code { font-weight: 800; }
+.sign-audit { display: grid; grid-template-columns: 84px 1fr; gap: 4px 8px; margin: 8px 0 0; font-size: 11.5px; }
+.sign-audit dt { color: var(--muted); font-weight: 700; }
+.sign-audit dd { margin: 0; word-break: break-all; }
+
+.doc-table--auto th { width: 32%; }
+.doc__manage {
+  margin: 16px 0 4px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+.doc__manage-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.doc__manage-head h3 { margin: 0; font-size: 14px; }
+.doc__manage .settings { margin-top: 8px; }
+.doc__manage .btn-row { margin-top: 8px; }
+
+@media print {
+  .doc__manage, .sign-evidence { display: none !important; }
+}

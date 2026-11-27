@@ -16,11 +16,11 @@ import {
   copyText,
   confirmDialog,
 } from '../ui.js';
-import { store, QUOTE_STATUS, AGREEMENT_STATUS } from '../store.js';
+import { store, QUOTE_STATUS, AGREEMENT_STATUS, isAgreementClosed, verifyAgreementHash } from '../store.js';
 import { getSession } from '../auth.js';
 import { CATEGORY_META, STAFF_TYPES, SUPPLIER, PAYMENT_ACCOUNT } from '../seed.js';
 import { companySealImg } from '../seal.js';
-import { inviteUrl } from '../invite.js';
+import { inviteUrl, quoteInviteMessage } from '../invite.js';
 import {
   CONTRACT_TITLE,
   CONTRACT_SUBTITLE,
@@ -417,6 +417,7 @@ export function quoteSheetHtml(quote, photos = []) {
             <dt>업종</dt><dd>${esc(meta.label || '')}</dd>
             <dt>담당자</dt><dd>${esc(quote.clientContact || '-')}</dd>
             <dt>연락처</dt><dd>${esc(quote.clientPhone || '-')}</dd>
+            <dt>대표자</dt><dd>${esc(quote.clientCeo || '-')}</dd>
             <dt>소재지</dt><dd>${esc(quote.clientAddress || '-')}</dd>
             <dt>사업자등록번호</dt><dd>${esc(quote.clientBizNumber || '-')}</dd>
           </dl>
@@ -477,7 +478,8 @@ export async function openQuoteSheet(quoteId, options = {}) {
     toast('견적서는 대표(최고관리자)만 볼 수 있습니다.', { tone: 'error' });
     return;
   }
-  const quote = await store.getQuote(quoteId);
+  const quoteActor = viewer && viewer.role === 'customer' ? viewer : null;
+  const quote = await store.getQuote(quoteId, { actor: quoteActor }).catch(() => null);
   if (!quote) {
     toast('견적을 찾을 수 없습니다.', { tone: 'error' });
     return;
@@ -522,7 +524,7 @@ export async function openQuoteSheet(quoteId, options = {}) {
         return;
       }
       if (action === 'start-contract') {
-        const agreement = await store.createAgreementFromQuote(quote.id);
+        const agreement = await store.createAgreementFromQuote(quote.id, { actor: viewer });
         await reload();
         closeSheet();
         await openAgreementSheet(agreement.id, { role: 'customer', onChanged: reload });
@@ -551,13 +553,7 @@ export async function openQuoteSheet(quoteId, options = {}) {
 }
 
 export async function copyInviteText(quote) {
-  const message = [
-    `[코리아 에코크린] ${quote.clientCompany} 담당자님, 정기청소 견적서가 도착했습니다.`,
-    '아래 링크를 누르면 초대코드가 입력된 화면이 열립니다. 견적서와 계약서를 확인하고 바로 전자서명하실 수 있습니다.',
-    `링크: ${inviteUrl(quote.inviteCode)}`,
-    `1회용 코드: ${quote.inviteCode}`,
-    `문의: 0507-1317-8369`,
-  ].join('\n');
+  const message = quoteInviteMessage(quote);
   const ok = await copyText(message);
   toast(
     ok ? `${quote.clientCompany} 초대 문구를 복사했습니다. 문자·카톡에 붙여넣으세요.` : '복사가 차단되었습니다. 코드를 길게 눌러 복사해 주세요.',
@@ -631,10 +627,21 @@ function partyRows(agreement, editable) {
 
 function signatureBlock(agreement, role, editable) {
   if (agreement.signature) {
+    const audit = agreement.signatureAudit || {};
     return `
-      <div class="sign-pad sign-pad--done">
+      <div class="sign-pad sign-pad--done" data-sign-done="${esc(agreement.id)}">
         <div class="sign-pad__head"><span>갑(고객) 전자서명</span><span>${esc(agreement.signedByName || '')} · ${esc(fmtDateDot(agreement.signedDate))}</span></div>
         <img class="sign-pad__image" src="${esc(agreement.signature)}" alt="고객 전자서명">
+        ${
+          audit.hash
+            ? `<dl class="sign-audit">
+                 <dt>서명자</dt><dd>${esc(audit.name || agreement.signedByName || '갑(고객)')} ${esc(audit.role || '')}${audit.phone ? ` · ${esc(audit.phone)}` : ''}</dd>
+                 <dt>서명 일시</dt><dd>${esc(String(audit.at || agreement.signedAt || '').slice(0, 19).replace('T', ' '))}</dd>
+                 <dt>서명 방식</dt><dd>${esc(audit.method || '전자서명')}</dd>
+                 <dt>문서 확인값</dt><dd><code>${esc(String(agreement.docHash || audit.hash).slice(0, 24))}…</code> <span class="tiny muted">${esc(agreement.docAlgo || audit.algo || '')}</span></dd>
+               </dl>`
+            : ''
+        }
       </div>`;
   }
   if (!editable || role !== 'customer') {
@@ -643,8 +650,109 @@ function signatureBlock(agreement, role, editable) {
   return signatureFieldTemplate('갑(고객) 전자서명');
 }
 
+/** 계약서 상단의 자동 연동 정보 (기획서 8장 13가지). */
+function autoLinkTable(agreement) {
+  const row = (label, value) => `<tr><th>${label}</th><td class="preserve">${esc(value || '-')}</td></tr>`;
+  return `
+    <table class="doc-table doc-table--auto" data-auto-link-table>
+      ${row('고객사명', agreement.clientBusinessName)}
+      ${row('사업자등록번호', agreement.clientBizNumber)}
+      ${row('대표자', agreement.clientCeo)}
+      ${row('주소', agreement.clientAddress)}
+      ${row('담당자', agreement.contactName)}
+      ${row('연락처', agreement.contactPhone)}
+      ${row('월 계약금액', `${fmtWon(agreement.amount)} ${agreement.vatIncluded ? '부가세 포함' : '부가세 별도'}`)}
+      ${row('청소 주기', agreement.frequency)}
+      ${row('청소 범위', agreement.scope)}
+      ${row('추가 업무', agreement.extraScope)}
+      ${row('계약 기간', `${agreement.startDate || '-'} ~ ${agreement.endDate || '-'} (${agreement.months}개월)`)}
+      ${row('작업시간', agreement.workHours || '현장 협의')}
+      ${row('특약사항', agreement.specialTerms)}
+      ${row('계약 담당자', `${agreement.managerName || ''} ${agreement.managerTitle || ''}`.trim())}
+    </table>`;
+}
+
+/** 관리자 전용 계약 관리(수정 · 갱신 · 종료 · 이력) — 인쇄에는 들어가지 않습니다. */
+function manageBlock(agreement) {
+  const status = AGREEMENT_STATUS[agreement.status] || AGREEMENT_STATUS.draft;
+  const closed = isAgreementClosed(agreement.status);
+  const history = (agreement.history || []).slice(0, 6);
+  const editFields = `
+    <div class="field-row">
+      <div class="field"><label for="ct-edit-amount">월 계약금액(원)</label>
+        <input class="input" id="ct-edit-amount" type="number" data-agree-field="amount" value="${esc(agreement.amount)}"></div>
+      <div class="field"><label for="ct-edit-hours">작업시간</label>
+        <input class="input" id="ct-edit-hours" type="text" data-agree-field="workHours" value="${esc(agreement.workHours)}" placeholder="예: 2시간 30분"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label for="ct-edit-start">계약 시작일</label>
+        <input class="input" id="ct-edit-start" type="date" data-agree-field="startDate" value="${esc(agreement.startDate)}"></div>
+      <div class="field"><label for="ct-edit-end">계약 종료일</label>
+        <input class="input" id="ct-edit-end" type="date" data-agree-field="endDate" value="${esc(agreement.endDate)}"></div>
+    </div>
+    <div class="field"><label for="ct-edit-freq">청소 주기</label>
+      <input class="input" id="ct-edit-freq" type="text" data-agree-field="frequency" value="${esc(agreement.frequency)}"></div>
+    <div class="field"><label for="ct-edit-terms">특약사항</label>
+      <textarea class="textarea" id="ct-edit-terms" rows="3" data-agree-field="specialTerms">${esc(agreement.specialTerms)}</textarea></div>
+    <div class="field"><label for="ct-edit-manager">계약 담당자</label>
+      <input class="input" id="ct-edit-manager" type="text" data-agree-field="managerName" value="${esc(agreement.managerName)}"></div>
+    <button class="btn btn--primary btn--sm" type="button" data-doc-action="save-agreement">계약 내용 저장</button>
+  `;
+  return `
+    <section class="doc__manage" data-agreement-manage="${esc(agreement.id)}">
+      <div class="doc__manage-head">
+        <h3>계약 관리 (대표)</h3>
+        <span class="badge ${status.badge}">${esc(status.label)}</span>
+      </div>
+      ${!closed
+        ? `<details class="settings" open><summary>계약 내용 수정 (서명 전)</summary><div class="settings__body">${editFields}</div></details>`
+        : `<div class="btn-row btn-row--stack">
+             <button class="btn btn--ghost btn--sm" type="button" data-doc-action="verify-hash">문서 확인값 검증</button>
+           </div>
+           <details class="settings"><summary>계약 갱신 (새 기간 · 새 계약서)</summary>
+             <div class="settings__body">
+               <div class="field-row">
+                 <div class="field"><label for="ct-renew-months">기간(개월)</label>
+                   <input class="input" id="ct-renew-months" type="number" min="1" max="120" data-renew-field="months" value="${esc(String(agreement.months))}"></div>
+                 <div class="field"><label for="ct-renew-start">새 시작일</label>
+                   <input class="input" id="ct-renew-start" type="date" data-renew-field="startDate" value="${esc(agreement.endDate || '')}"></div>
+               </div>
+               <div class="field"><label for="ct-renew-amount">갱신 금액(원)</label>
+                 <input class="input" id="ct-renew-amount" type="number" data-renew-field="amount" value="${esc(agreement.amount)}"></div>
+               <button class="btn btn--primary btn--sm" type="button" data-doc-action="renew-agreement">계약 갱신서 만들기</button>
+             </div>
+           </details>
+           <details class="settings"><summary>계약 종료</summary>
+             <div class="settings__body">
+               <div class="field"><label for="ct-terminate-date">종료일</label>
+                 <input class="input" id="ct-terminate-date" type="date" data-terminate-field="date" value="${esc(agreement.endDate || '')}"></div>
+               <div class="field"><label for="ct-terminate-reason">사유</label>
+                 <input class="input" id="ct-terminate-reason" type="text" data-terminate-field="reason" placeholder="예: 고객사 이전 · 계약 만료"></div>
+               <button class="btn btn--danger btn--sm" type="button" data-doc-action="terminate-agreement">계약 종료 처리</button>
+             </div>
+           </details>`
+      }
+      ${
+        history.length
+          ? `<details class="settings"><summary>계약 변경 이력 ${esc(String((agreement.history || []).length))}건</summary>
+               <ul class="site-history__list">
+                 ${history
+                   .map(
+                     (row) => `<li><span class="site-history__when">${esc(String(row.at || '').slice(0, 16).replace('T', ' '))}</span>
+                       <span class="site-history__what"><strong>${esc(row.actor || '')}</strong> ${esc(row.action)}</span>
+                       ${row.note ? `<span class="site-history__note">${esc(row.note)}</span>` : ''}
+                       ${(row.changes || []).slice(0, 4).map((change) => `<span class="site-history__note">· ${esc(change.field)}: ${esc(change.from)} → <strong>${esc(change.to)}</strong></span>`).join('')}</li>`,
+                   )
+                   .join('')}
+               </ul>
+             </details>`
+          : ''
+      }
+    </section>`;
+}
+
 export function agreementSheetHtml(agreement, { role = 'admin' } = {}) {
-  const editable = role === 'customer' && agreement.status !== 'signed';
+  const editable = role === 'customer' && !isAgreementClosed(agreement.status);
   const clauses = CONTRACT_CLAUSES.map((clause) => clauseHtml(clause, agreement)).join('');
   return `
     <article class="sheet doc doc--contract" data-doc="agreement">
@@ -662,6 +770,9 @@ export function agreementSheetHtml(agreement, { role = 'admin' } = {}) {
         <li><span>연락처</span><strong>${esc(agreement.contactPhone || '-')}</strong></li>
       </ul>
 
+      <h2 class="doc__h2">계약 정보 (견적에서 자동 연동)</h2>
+      ${autoLinkTable(agreement)}
+
       ${clauses}
 
       <section class="doc__clause doc__clause--sign">
@@ -669,6 +780,8 @@ export function agreementSheetHtml(agreement, { role = 'admin' } = {}) {
         <table class="doc-table doc-table--party">${partyRows(agreement, editable)}</table>
         ${signatureBlock(agreement, role, editable)}
       </section>
+
+      ${role === 'admin' ? manageBlock(agreement) : ''}
 
       <footer class="doc__foot">
         <p>${esc(CONTRACT_FOOTER)}</p>
@@ -685,7 +798,8 @@ export async function openAgreementSheet(agreementId, options = {}) {
   }
   const role = options.role || 'admin';
   const reload = options.onChanged || (() => {});
-  let agreement = await store.getAgreement(agreementId);
+  const agreementActor = viewer && viewer.role === 'customer' ? viewer : null;
+  let agreement = await store.getAgreement(agreementId, { actor: agreementActor }).catch(() => null);
   if (!agreement) {
     toast('계약서를 찾을 수 없습니다.', { tone: 'error' });
     return;
@@ -696,6 +810,74 @@ export async function openAgreementSheet(agreementId, options = {}) {
       if (action === 'clear-sign') {
         const pad = $('[data-signature-pad]', modal);
         if (pad && pad.pad) pad.pad.clear();
+        return;
+      }
+      if (action === 'save-agreement') {
+        const patch = {};
+        for (const input of Array.from(modal.querySelectorAll('[data-agree-field]'))) {
+          const key = input.dataset.agreeField;
+          patch[key] = key === 'amount' ? Number(input.value) || 0 : input.value;
+        }
+        try {
+          agreement = await store.updateAgreement(agreement.id, patch, { actor: viewer });
+          toast('계약 내용을 저장했습니다. 바뀐 항목은 이력에 남습니다.');
+          await reload();
+          draw();
+        } catch (error) {
+          toast(error.message || '계약 내용을 저장하지 못했습니다.', { tone: 'error' });
+        }
+        return;
+      }
+      if (action === 'renew-agreement') {
+        const months = Number(modal.querySelector('[data-renew-field="months"]')?.value) || agreement.months;
+        const startDate = modal.querySelector('[data-renew-field="startDate"]')?.value || '';
+        const amount = Number(modal.querySelector('[data-renew-field="amount"]')?.value) || agreement.amount;
+        const ok = await confirmDialog({
+          title: '계약을 갱신할까요?',
+          message: `${months}개월 새 계약서(초안)를 만듭니다. 지금 계약서는 ‘갱신 완료’로 보관되고 새 계약서에 서명하면 이어집니다.`,
+          confirmLabel: '갱신서 만들기',
+        });
+        if (!ok) return;
+        try {
+          const result = await store.renewAgreement(agreement.id, { months, startDate, amount, actor: viewer });
+          toast(`새 계약서 ${result.agreement.no} 를 만들었습니다. 고객에게 발송해 서명받으세요.`);
+          agreement = result.agreement;
+          await reload();
+          draw();
+        } catch (error) {
+          toast(error.message || '계약을 갱신하지 못했습니다.', { tone: 'error' });
+        }
+        return;
+      }
+      if (action === 'terminate-agreement') {
+        const reason = modal.querySelector('[data-terminate-field="reason"]')?.value || '';
+        const date = modal.querySelector('[data-terminate-field="date"]')?.value || '';
+        const ok = await confirmDialog({
+          title: '계약을 종료할까요?',
+          message: '종료 처리하면 업장 관리방이 닫히고 계약 상태가 ‘계약 종료’로 남습니다. 지난 기록은 보관됩니다.',
+          confirmLabel: '계약 종료',
+          tone: 'danger',
+        });
+        if (!ok) return;
+        try {
+          const result = await store.terminateAgreement(agreement.id, { reason, date, actor: viewer });
+          agreement = result.agreement;
+          toast('계약을 종료 처리했습니다.');
+          await reload();
+          draw();
+        } catch (error) {
+          toast(error.message || '계약을 종료하지 못했습니다.', { tone: 'error' });
+        }
+        return;
+      }
+      if (action === 'verify-hash') {
+        const result = await verifyAgreementHash(agreement);
+        toast(
+          result.ok
+            ? `문서 확인값이 일치합니다 · ${String(result.saved || '').slice(0, 16)}… (${result.algo || '해시'})`
+            : '문서 확인값이 일치하지 않습니다. 계약서 내용이 서명 뒤에 바뀌었는지 확인해 주세요.',
+          { tone: result.ok ? 'default' : 'error', duration: 6000 },
+        );
         return;
       }
       if (action === 'send-agreement') {
@@ -735,7 +917,7 @@ export async function openAgreementSheet(agreementId, options = {}) {
             bizNumber,
             ceo,
             signedDate,
-          });
+          }, { actor: viewer });
           toast(`${result.site.name} 정기청소 현장이 등록되었습니다.`);
           await reload();
           closeSheet();
@@ -747,6 +929,7 @@ export async function openAgreementSheet(agreementId, options = {}) {
   };
 
   function draw() {
+    const closed = isAgreementClosed(agreement.status);
     const actions =
       role === 'admin'
         ? [
@@ -754,10 +937,11 @@ export async function openAgreementSheet(agreementId, options = {}) {
             agreement.status === 'sent'
               ? `<p class="sheet-actions__note">고객 확인 · 서명을 기다리는 중입니다.</p>`
               : '',
+            closed ? `<p class="sheet-actions__note">${esc((AGREEMENT_STATUS[agreement.status] || {}).label || '')} · 인쇄하거나 PDF로 저장할 수 있습니다.</p>` : '',
           ]
             .filter(Boolean)
             .join('')
-        : agreement.status === 'signed'
+        : closed
           ? `<p class="sheet-actions__note">체결 완료된 계약서입니다. 인쇄하거나 PDF로 저장할 수 있습니다.</p>`
           : actionButton('계약 체결 완료', 'sign-agreement');
 

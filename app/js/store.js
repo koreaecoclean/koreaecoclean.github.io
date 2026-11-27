@@ -1021,7 +1021,28 @@ export const AGREEMENT_STATUS = {
   draft: { label: '작성 중', badge: 'badge--wait' },
   sent: { label: '고객 확인 대기', badge: 'badge--wait' },
   signed: { label: '체결 완료', badge: 'badge--done' },
+  renewed: { label: '갱신 완료', badge: 'badge--wait' },
+  terminated: { label: '계약 종료', badge: 'badge--wait' },
 };
+
+/** 서명이 끝나 더 이상 서명·수정 화면을 열지 않는 계약 상태. */
+export function isAgreementClosed(status) {
+  return status === 'signed' || status === 'renewed' || status === 'terminated';
+}
+
+/** 서명 증빙 — 서명자 · 일시 · 문서 해시(무결성 확인값). */
+export function normalizeSignatureAudit(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    name: toText(source.name),
+    role: toText(source.role),
+    phone: toText(source.phone),
+    at: toText(source.at),
+    method: toText(source.method) || '전자서명(스마트펜·손가락)',
+    hash: toText(source.hash),
+    algo: toText(source.algo),
+  };
+}
 
 /** 직원 계약 상태 — 같은 status 값이라도 ‘고객 확인’이 아니라 ‘서명 대기’입니다. */
 export const STAFF_STATUS = {
@@ -1044,6 +1065,8 @@ export function normalizeQuote(input) {
     clientAddress: toText(source.clientAddress),
     clientContact: toText(source.clientContact),
     clientPhone: toText(source.clientPhone),
+    clientEmail: toText(source.clientEmail),
+    clientCeo: toText(source.clientCeo),
     clientBizNumber: toText(source.clientBizNumber),
     clientTaxEmail: toText(source.clientTaxEmail),
     frequency: toText(source.frequency) || '주 1회 (일정 협의)',
@@ -1114,6 +1137,10 @@ export function normalizeAgreement(input) {
     scope: toText(source.scope),
     extraScope: toText(source.extraScope),
     frequency: toText(source.frequency),
+    // 3단계 — 계약서 자동 연동 정보 (기획서 8장): 작업시간 · 계약 담당자
+    workHours: toText(source.workHours),
+    managerName: toText(source.managerName),
+    managerTitle: toText(source.managerTitle),
     specialTerms: toText(source.specialTerms),
     bizLicense: source.bizLicense && typeof source.bizLicense === 'object' ? source.bizLicense : null,
     contractMemo: toText(source.contractMemo),
@@ -1121,10 +1148,164 @@ export function normalizeAgreement(input) {
     signature: toText(source.signature),
     signedByName: toText(source.signedByName),
     signedAt: toText(source.signedAt),
+    // 3단계 — 서명 증빙(서명자·일시·문서 무결성 해시)과 계약 상태 이력
+    signatureAudit: normalizeSignatureAudit(source.signatureAudit),
+    docHash: toText(source.docHash),
+    docAlgo: toText(source.docAlgo),
+    docHashAt: toText(source.docHashAt),
+    docVersion: Number(source.docVersion) > 0 ? Math.round(Number(source.docVersion)) : 1,
+    renewedFrom: toText(source.renewedFrom),
+    renewedAt: toText(source.renewedAt),
+    renewedTo: toText(source.renewedTo),
+    terminatedAt: toText(source.terminatedAt),
+    terminateReason: toText(source.terminateReason),
     createdAt: toText(source.createdAt),
     updatedAt: toText(source.updatedAt),
     source: toText(source.source) || 'app',
     history: normalizeHistory(source.history),
+  };
+}
+
+/**
+ * 업장 관리방(기획서 9장) — 계약 체결과 동시에 만들어지는 업장 전용 방의 상태.
+ * 고객사 정보 · 계약서 · 견적서 · 최초 현장 사진 · 평수/주기/공정은 업장(siteId)에
+ * 이미 붙어 있으므로, 이 값은 ‘방이 언제 어떤 계약으로 열렸는지’만 남깁니다.
+ */
+export function normalizeRoom(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const status = source.status === 'active' || source.status === 'ended' ? source.status : '';
+  return {
+    status,
+    createdAt: toText(source.createdAt),
+    endedAt: toText(source.endedAt),
+    contractId: toText(source.contractId),
+    quoteId: toText(source.quoteId),
+    openedBy: toText(source.openedBy),
+    pyeong: toText(source.pyeong),
+    frequency: toText(source.frequency),
+    note: toText(source.note),
+  };
+}
+
+/* ---------------- 3단계 — 계약 문서 무결성 해시 ---------------- */
+
+/** 계약서 수정 이력에 남길 칸의 사람이 읽는 이름. */
+const AGREEMENT_HISTORY_LABELS = {
+  clientBusinessName: '고객사명',
+  clientBizNumber: '사업자등록번호',
+  clientCeo: '대표자',
+  clientAddress: '주소',
+  contactName: '담당자',
+  contactPhone: '담당자 연락처',
+  amount: '월 계약금액',
+  frequency: '청소 주기',
+  scope: '청소 범위',
+  extraScope: '추가 업무',
+  startDate: '계약 시작일',
+  endDate: '계약 종료일',
+  months: '계약기간',
+  workHours: '작업시간',
+  specialTerms: '특약사항',
+  managerName: '계약 담당자',
+  billingDay: '결제일',
+};
+
+function agreementHistorySnapshot(agreement) {
+  const row = normalizeAgreement(agreement);
+  const out = {};
+  for (const key of Object.keys(AGREEMENT_HISTORY_LABELS)) out[key] = row[key];
+  return out;
+}
+
+/**
+ * 서명 시점의 계약서 내용을 한 줄로 고정합니다. 서명 뒤 내용이 바뀌었는지
+ * 비교할 수 있도록, 서명·해시처럼 나중에 붙는 값은 넣지 않습니다.
+ */
+export function agreementCanonicalText(agreement) {
+  const row = normalizeAgreement(agreement);
+  const lines = [
+    `계약서번호:${row.no}`,
+    `문서버전:${row.docVersion}`,
+    `견적번호:${row.quoteId}`,
+    `고객사명:${row.clientBusinessName}`,
+    `사업자등록번호:${row.clientBizNumber}`,
+    `대표자:${row.clientCeo}`,
+    `주소:${row.clientAddress}`,
+    `담당자:${row.contactName}`,
+    `연락처:${row.contactPhone}`,
+    `계약금액:${row.amount}`,
+    `부가세:${row.vatIncluded ? '포함' : '별도'}`,
+    `결제일:${row.billingDay}`,
+    `청소주기:${row.frequency}`,
+    `청소범위:${row.scope}`,
+    `추가업무:${row.extraScope}`,
+    `작업시간:${row.workHours}`,
+    `계약기간:${row.startDate}~${row.endDate}(${row.months}개월)`,
+    `특약사항:${row.specialTerms}`,
+    `계약담당자:${row.managerName}`,
+    `공급자:${row.supplierBusinessName}/${row.supplierBizNumber}/${row.supplierCeo}`,
+  ];
+  return lines.join('\n');
+}
+
+function hex32(value) {
+  return String(value >>> 0).toString(16).padStart(8, '0');
+}
+
+/** crypto.subtle 이 없는 환경(테스트 · 구형 기기)을 위한 간이 해시. */
+function fallbackHash(text) {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    h1 ^= code;
+    h1 = Math.imul(h1, 0x01000193);
+    h2 ^= (code + index) & 0xff;
+    h2 = Math.imul(h2, 0x85ebca6b);
+  }
+  return `${hex32(h1)}${hex32(h2)}${hex32(h1 ^ h2)}${hex32(h1 + h2)}`;
+}
+
+/**
+ * 문서 해시 — 브라우저에서는 SHA-256, 없으면 간이 해시.
+ * 돌려주는 값: { hash, algo }
+ */
+export async function hashDocumentText(text) {
+  const body = String(text || '');
+  try {
+    if (typeof crypto !== 'undefined' && crypto && crypto.subtle && crypto.subtle.digest && typeof TextEncoder !== 'undefined') {
+      const bytes = new TextEncoder().encode(body);
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      const view = new Uint8Array(digest);
+      let hex = '';
+      for (let index = 0; index < view.length; index += 1) hex += view[index].toString(16).padStart(2, '0');
+      return { hash: hex, algo: 'SHA-256' };
+    }
+  } catch (error) {
+    /* 간이 해시로 대신합니다. */
+  }
+  return { hash: fallbackHash(body), algo: 'FNV-1a(간이)' };
+}
+
+/** 서명 시점의 문서 해시를 계산합니다. */
+export async function agreementDocHash(agreement) {
+  return hashDocumentText(agreementCanonicalText(agreement));
+}
+
+/**
+ * 저장된 해시와 지금 계약서 내용의 해시를 비교합니다.
+ * ok=false 면 서명 뒤 내용이 바뀐 것입니다.
+ */
+export async function verifyAgreementHash(agreement) {
+  const row = normalizeAgreement(agreement);
+  if (!row.docHash) return { ok: false, reason: '해시 없음', hash: '', saved: '', algo: '' };
+  const now = await agreementDocHash(row);
+  return {
+    ok: now.hash === row.docHash || fallbackHash(agreementCanonicalText(row)) === row.docHash,
+    reason: '',
+    hash: now.hash,
+    saved: row.docHash,
+    algo: row.docAlgo || now.algo,
   };
 }
 
@@ -1216,6 +1397,9 @@ function normalizeSite(site) {
     // 2단계 — 현장 방문 기록 · 구역별 사진 이력(덮어쓰지 않고 쌓입니다).
     survey: normalizeSurvey(site.survey),
     surveyPhotos: normalizeSitePhotos(site.surveyPhotos),
+    // 3단계 — 계약 체결과 함께 열린 업장 관리방
+    contactPhone: toText(site.contactPhone),
+    room: normalizeRoom(site.room),
     // 업장(siteId) 중심 연결 고리 — 이 업장이 어느 견적/계약/팀장 계약에서 왔는지.
     quoteId: toText(site.quoteId),
     contractId: toText(site.contractId),
@@ -1352,6 +1536,41 @@ export function isStaffActor(actor) {
   return actorRole(actor) === 'leader';
 }
 
+export function isCustomerActor(actor) {
+  return actorRole(actor) === 'customer';
+}
+
+/**
+ * 고객에게 보내는 업장 — 고객이 볼 칸만 남깁니다(계약 금액·내부 운영 정보 제외).
+ * 고객 화면은 계약서(agreement)의 금액을 자기 계약 범위에서만 보기 때문입니다.
+ */
+export function siteForCustomer(site) {
+  if (!site) return site;
+  return {
+    id: site.id,
+    code: site.code,
+    name: site.name,
+    clientName: site.clientName,
+    category: site.category,
+    address: site.address,
+    area: site.area,
+    frequency: site.frequency,
+    intervalDays: site.intervalDays,
+    startDate: site.startDate,
+    contactName: site.contactName,
+    manager: site.manager,
+    managerRole: site.managerRole,
+    accessNote: site.accessNote,
+    checklist: site.checklist,
+    baseline: normalizeBaseline(site.baseline),
+    room: normalizeRoom(site.room),
+    quoteId: site.quoteId,
+    contractId: site.contractId,
+    active: site.active,
+    locked: site.locked,
+  };
+}
+
 /** 직원 평가(A~F · 평가 내용)는 대표만 봅니다. */
 export function canSeeStaffEvaluation(session) {
   return isCeoActor(session);
@@ -1441,6 +1660,13 @@ export function siteForSession(session, site) {
 function denyStaff(actor, what) {
   if (isStaffActor(actor)) {
     throw new StoreError('permission-denied', `${what}은(는) 대표(최고관리자)만 볼 수 있습니다.`);
+  }
+}
+
+/** 계약·견적서 작성·발송·수정은 대표만 — 고객 화면에서 보내는 요청도 막습니다. */
+function denyCustomerWrites(actor, what) {
+  if (isCustomerActor(actor)) {
+    throw new StoreError('permission-denied', `${what}은(는) 대표(최고관리자)만 할 수 있습니다.`);
   }
 }
 
@@ -2497,6 +2723,7 @@ export class Store {
         .sort((a, b) => String(b.at).localeCompare(String(a.at)))
         .slice(0, 4);
       out[site.id] = {
+        site,
         quote,
         contract,
         staffContracts: staff,
@@ -2529,20 +2756,64 @@ export class Store {
     const sites = await this.listSites();
     if (!session) return [];
     if (isCeoActor(session)) return sites;
+    // 고객 — 계약한 업장(방 입장 권한 있음) + 견적을 진행 중인 업장만.
+    if (isCustomerActor(session)) {
+      const ids = await this._customerSiteIds(session);
+      return sites.filter((site) => ids.includes(site.id)).map((site) => siteForCustomer(site));
+    }
     if (!isStaffActor(session)) return [];
     const mine = new Set(assignedSiteIdsOf(session));
     return sites.filter((site) => mine.has(site.id)).map((site) => siteForSession(session, site));
   }
 
-  /** 업장 한 곳 — 직원이 배정받지 않은 업장이면 null. */
+  /** 업장 한 곳 — 직원은 배정된 곳만, 고객은 계약·진행 중 견적의 업장만. */
   async getSiteFor(session, id) {
     if (!session) return null;
+    if (isCustomerActor(session)) {
+      const ids = await this._customerSiteIds(session);
+      if (!ids.includes(toText(id))) return null;
+      const site = await this.getSite(id);
+      return site ? siteForCustomer(site) : null;
+    }
     if (!isCeoActor(session)) {
       if (!isStaffActor(session) || !canOpenSite(session, id)) return null;
     }
     const site = await this.getSite(id);
     if (!site) return null;
     return siteForSession(session, site);
+  }
+
+  /**
+   * 고객 계정이 열 수 있는 업장 id (기획서 5장 — 자신이 계약하거나 견적을 진행 중인 업장만).
+   *  · 계약 후: 방 입장 권한이 있는 자기 업장
+   *  · 계약 전: 이 계정이 초대받아 진행 중인 견적의 업장
+   */
+  async _customerSiteIds(session) {
+    if (!session) return [];
+    const ids = [];
+    const add = (value) => {
+      const id = toText(value);
+      if (id && !ids.includes(id)) ids.push(id);
+    };
+    const ownSiteId = toText(session.siteId);
+    if (ownSiteId && session.accountId) {
+      // 계정에 저장된 자기 업장이면 허용합니다. 입장 코드를 아직 안 쓴 계정도
+      // 업장 이름·주소를 확인한 뒤 코드 입력 화면으로 갈 수 있어야 합니다.
+      const account = await this.getAccount(session.accountId);
+      if (account && account.role === 'customer' && toText(account.siteId) === ownSiteId) add(ownSiteId);
+    }
+
+    const quotes = (await this.adapter.getAll('quotes')).map(normalizeQuote);
+    const mine = quotes.filter(
+      (quote) =>
+        session.accountId &&
+        (quote.inviteUsedBy === session.accountId || (session.quoteId && quote.id === session.quoteId)),
+    );
+    for (const quote of mine) {
+      if (quote.status === 'contracted') continue;
+      add(quote.siteId);
+    }
+    return ids;
   }
 
   /**
@@ -2584,6 +2855,7 @@ export class Store {
       managerRole: String(input.managerRole || '팀장').trim(),
       accessNote: String(input.accessNote || '').trim(),
       contactName: String(input.contactName || '').trim(),
+      contactPhone: String(input.contactPhone || '').trim(),
       bizNumber: String(input.bizNumber || '').trim(),
       ceoName: String(input.ceoName || '').trim(),
       taxEmail: String(input.taxEmail || '').trim(),
@@ -2594,6 +2866,10 @@ export class Store {
       checklist: (DEFAULT_CHECKLISTS[category] || DEFAULT_CHECKLISTS.office).slice(),
       locked: true,
       baseline: normalizeBaseline(input.baseline),
+      // 2·3단계 — 방문 기록 · 구역 사진 · 관리방 상태를 처음부터 함께 저장합니다.
+      survey: normalizeSurvey(input.survey),
+      surveyPhotos: normalizeSitePhotos(input.surveyPhotos),
+      room: normalizeRoom(input.room),
       createdAt: new Date().toISOString(),
       source: 'app',
     };
@@ -2661,7 +2937,7 @@ export class Store {
     if (patch.ops && typeof patch.ops === 'object') {
       next.ops = normalizeOps({ ...site.ops, ...patch.ops });
     }
-    for (const key of ['name', 'clientName', 'address', 'area', 'frequency', 'contactName', 'bizNumber', 'ceoName', 'taxEmail', 'manager', 'managerRole', 'accessNote']) {
+    for (const key of ['name', 'clientName', 'address', 'area', 'frequency', 'contactName', 'contactPhone', 'bizNumber', 'ceoName', 'taxEmail', 'manager', 'managerRole', 'accessNote']) {
       if (patch[key] !== undefined) next[key] = String(patch[key]).trim();
     }
     if (patch.category && Object.prototype.hasOwnProperty.call(DEFAULT_CHECKLISTS, patch.category)) {
@@ -2684,6 +2960,36 @@ export class Store {
       }));
     }
     await this.adapter.put('sites', next);
+    // 업장에서 고친 고객사 정보(대표자·사업자번호·주소·담당자)는 연결된 견적서의
+    // **비어 있는 칸**에도 채워, 견적서·계약서에 같은 값을 다시 적지 않게 합니다.
+    if (site.quoteId) {
+      const quote = await this.getQuote(site.quoteId).catch(() => null);
+      if (quote) {
+        const quotePatch = {};
+        const pairs = [
+          ['clientCeo', 'ceoName'],
+          ['clientBizNumber', 'bizNumber'],
+          ['clientAddress', 'address'],
+          ['clientContact', 'contactName'],
+          ['clientPhone', 'contactPhone'],
+        ];
+        for (const [quoteKey, siteKey] of pairs) {
+          if (!quote[quoteKey] && next[siteKey]) quotePatch[quoteKey] = next[siteKey];
+        }
+        if (Object.keys(quotePatch).length) {
+          await this.adapter.put('quotes', normalizeQuote({
+            ...quote,
+            ...quotePatch,
+            updatedAt: new Date().toISOString(),
+            history: withHistory(quote.history, makeHistoryEntry({
+              actor: toText(patch.actor) || '앱',
+              action: '업장 정보에서 승계',
+              note: `${Object.keys(quotePatch).join(', ')} — 업장 정보와 같게 맞춤`,
+            })),
+          }));
+        }
+      }
+    }
     // 담당 팀장을 바꾸면 팀장 계약서 별첨도 함께 맞춥니다.
     if ('manager' in patch || 'managerRole' in patch) await this.syncStaffContractSites(siteId);
     this._notify();
@@ -3026,6 +3332,10 @@ export class Store {
   async listQuotes({ siteId = null, status = null } = {}, { actor = null } = {}) {
     denyStaff(actor, '견적서');
     let rows = (await this.adapter.getAll('quotes')).map(normalizeQuote);
+    if (isCustomerActor(actor)) {
+      // 3단계 — 고객은 자기 견적만 봅니다(다른 고객·다른 업장 견적은 목록에도 없음).
+      rows = rows.filter((quote) => this._quoteAllowed(quote, actor));
+    }
     if (siteId) rows = rows.filter((quote) => quote.siteId === siteId);
     if (status) rows = rows.filter((quote) => quote.status === status);
     return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -3034,7 +3344,22 @@ export class Store {
   async getQuote(id, { actor = null } = {}) {
     denyStaff(actor, '견적서');
     const row = await this.adapter.get('quotes', id);
-    return row ? normalizeQuote(row) : null;
+    if (!row) return null;
+    const quote = normalizeQuote(row);
+    if (isCustomerActor(actor) && !this._quoteAllowed(quote, actor)) {
+      throw new StoreError('permission-denied', '다른 고객·다른 업장의 견적서는 볼 수 없습니다.');
+    }
+    return quote;
+  }
+
+  /** 이 고객 계정이 이 견적을 볼 수 있는가 — 초대받은 견적, 계약 후 자기 업장의 견적만. */
+  _quoteAllowed(quote, session) {
+    if (!quote) return false;
+    if (!isCustomerActor(session)) return true;
+    if (session.accountId && quote.inviteUsedBy === session.accountId) return true;
+    if (session.quoteId && quote.id === session.quoteId) return true;
+    if (quote.siteId && session.siteId && quote.siteId === session.siteId) return true;
+    return false;
   }
 
   /**
@@ -3044,6 +3369,7 @@ export class Store {
    */
   async addQuote(input = {}, { actor = null } = {}) {
     denyStaff(actor, '견적서 작성');
+    denyCustomerWrites(actor, '견적서 작성');
     const site = input.siteId ? await this.getSite(input.siteId) : null;
     const pick = (key, siteValue) => toText(input[key]) || toText(siteValue);
     const fromSite = {
@@ -3053,6 +3379,8 @@ export class Store {
       clientAddress: pick('clientAddress', site ? site.address : ''),
       clientContact: pick('clientContact', site ? site.contactName : ''),
       clientBizNumber: pick('clientBizNumber', site ? site.bizNumber : ''),
+      clientCeo: pick('clientCeo', site ? site.ceoName : ''),
+      clientEmail: pick('clientEmail', site ? site.taxEmail : ''),
       clientTaxEmail: pick('clientTaxEmail', site ? site.taxEmail : ''),
       frequency: pick('frequency', site ? site.frequency : ''),
       area: pick('area', site ? site.area : ''),
@@ -3137,6 +3465,7 @@ export class Store {
 
   async updateQuote(id, patch = {}, { actor = null } = {}) {
     denyStaff(actor, '견적서 수정');
+    denyCustomerWrites(actor, '견적서 수정');
     const quote = await this.getQuote(id);
     if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
     const next = normalizeQuote({
@@ -3176,6 +3505,7 @@ export class Store {
    * 무엇이 바뀌었는지(방문 정보 · 최종 금액)를 견적 이력에 남깁니다.
    */
   async saveQuoteSurvey(quoteId, { survey, estimate, actor = '앱', note = '' } = {}) {
+    if (typeof actor === 'object' && actor) denyCustomerWrites(actor, '견적서 수정');
     const quote = await this.getQuote(quoteId);
     if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
     const nextSurvey = normalizeSurvey({ ...normalizeSurvey(quote.survey), ...(survey || {}) });
@@ -3219,6 +3549,16 @@ export class Store {
       ? input.extras
       : ((zoneChecks.extra || []).slice());
     let survey = normalizeSurvey({ ...input, zones, extras });
+    // 구역 체크를 그대로 청소 범위 문구로 만듭니다 — 계약서 · 업장 공정에 다시 적지 않도록.
+    const scopeText = checklist.zones
+      .filter((zone) => zone.kind !== 'extra')
+      .map((zone) => {
+        const checked = Array.isArray(zoneChecks[zone.key]) ? zoneChecks[zone.key] : [];
+        return checked.length ? `${zone.label}: ${checked.join(', ')}` : '';
+      })
+      .filter(Boolean)
+      .join(' / ');
+    const extraText = (Array.isArray(zoneChecks.extra) ? zoneChecks.extra : extras).join(', ');
     const estimate = estimateQuote(
       {
         ...input,
@@ -3268,6 +3608,8 @@ export class Store {
       clientCategory: input.category || site.category,
       area: survey.area || (survey.pyeong ? `${survey.pyeong}평` : ''),
       frequency: survey.frequency,
+      scope: scopeText,
+      extraScope: extraText,
       amount,
       memo: survey.note,
       survey,
@@ -3313,7 +3655,7 @@ export class Store {
     });
     await this.adapter.put('quotes', next);
     // 승인 후 계약서 자동 연동 — createAgreementFromQuote 는 같은 견적의 계약서를 두 번 만들지 않습니다.
-    const agreement = await this.createAgreementFromQuote(quote.id);
+    const agreement = await this.createAgreementFromQuote(quote.id, { actor: { role: 'admin', name: who } });
     const site = quote.siteId ? await this.getSite(quote.siteId) : null;
     if (site) {
       await this.recordHistory('sites', site.id, {
@@ -3333,6 +3675,7 @@ export class Store {
   /** 견적서 발송 — 고객 방에서 열람할 수 있는 상태로 바꿉니다. */
   async sendQuote(id, { actor = null } = {}) {
     denyStaff(actor, '견적서 발송');
+    denyCustomerWrites(actor, '견적서 발송');
     const quote = await this.getQuote(id);
     if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
     if (quote.status === 'contracted') return quote;
@@ -3346,6 +3689,7 @@ export class Store {
   /** 초대코드 재발급 — 이전 코드는 즉시 쓸 수 없게 됩니다. */
   async regenerateQuoteInvite(id, { actor = null } = {}) {
     denyStaff(actor, '견적서 초대코드');
+    denyCustomerWrites(actor, '견적서 초대코드');
     const quote = await this.getQuote(id);
     if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
     const now = new Date().toISOString();
@@ -3374,7 +3718,7 @@ export class Store {
    * 1회용 초대코드로 견적 방 입장 — 아직 현장이 없는 고객도 견적서 · 계약서를
    * 볼 수 있도록 계정에 `quoteId`를 연결합니다. 계약 체결 시 `siteId`로 바뀝니다.
    */
-  async enterQuoteRoomWithCode({ phone, code, name = '', title = '' }) {
+  async enterQuoteRoomWithCode({ phone, code, name = '', title = '', email = '' }) {
     const digits = normalizePhone(phone);
     if (!digits) throw new StoreError('phone-empty', '전화번호를 입력해 주세요.');
     const needle = normalizeCode(code);
@@ -3414,6 +3758,7 @@ export class Store {
         role: 'customer',
         name: nameValue || `고객 ${digits.slice(-4)}`,
         title: titleValue || '담당자',
+        email: toText(email),
         phone: digits,
         phonePretty: prettyPhone(digits),
         password: '',
@@ -3424,7 +3769,15 @@ export class Store {
         source: 'quote-invite',
       };
     } else {
-      account = { ...account, quoteId: quote.id, updatedAt: new Date().toISOString() };
+      account = {
+        ...account,
+        quoteId: quote.id,
+        // 처음 적어 넣은 담당자 정보만 채웁니다(이미 있는 값은 그대로).
+        name: account.name && !/^고객 /.test(account.name) ? account.name : toText(name) || account.name,
+        title: toText(title) || account.title,
+        email: account.email || toText(email),
+        updatedAt: new Date().toISOString(),
+      };
     }
     await this.adapter.put('accounts', account);
 
@@ -3440,11 +3793,91 @@ export class Store {
     return { account, quote: normalizeQuote(await this.adapter.get('quotes', quote.id)) };
   }
 
+  /**
+   * 고객 담당자 정보 확인 · 등록 (기획서 5장).
+   * 초대코드로 들어온 사람이 자기 이름 · 직함 · 이메일을 확인해 저장하면, 같은 값이
+   * 진행 중인 견적과 계약서의 담당자 칸에도 반영됩니다(같은 내용을 두 번 적지 않도록).
+   */
+  async updateCustomerContact(accountId, patch = {}, { actor = null } = {}) {
+    const account = await this.getAccount(accountId);
+    if (!account || account.role !== 'customer') {
+      throw new StoreError('no-account', '고객 계정을 찾을 수 없습니다.');
+    }
+    if (actor && !isCeoActor(actor) && actor.accountId && actor.accountId !== account.id) {
+      throw new StoreError('permission-denied', '본인 담당자 정보만 바꿀 수 있습니다.');
+    }
+    const name = toText(patch.name) || account.name;
+    const title = patch.title !== undefined ? toText(patch.title) : toText(account.title);
+    const email = patch.email !== undefined ? toText(patch.email) : toText(account.email);
+    if (!name) throw new StoreError('name-empty', '담당자 이름을 입력해 주세요.');
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new StoreError('email-invalid', '이메일 주소를 확인해 주세요.');
+    }
+    const now = new Date().toISOString();
+    const next = {
+      ...account,
+      name,
+      title,
+      email,
+      contactConfirmedAt: now,
+      updatedAt: now,
+    };
+    await this.adapter.put('accounts', next);
+
+    // 이 계정이 보고 있는 견적·계약서의 담당자 칸도 같은 값으로 맞춥니다.
+    const quotes = (await this.adapter.getAll('quotes')).map(normalizeQuote);
+    for (const quote of quotes) {
+      if (quote.inviteUsedBy !== account.id && quote.id !== account.quoteId) continue;
+      const quotePatch = {};
+      if (name && quote.clientContact !== name) quotePatch.clientContact = name;
+      if (quote.clientPhone !== account.phonePretty && quote.clientPhone !== account.phone) {
+        quotePatch.clientPhone = account.phonePretty || account.phone;
+      }
+      if (email && quote.clientEmail !== email) quotePatch.clientEmail = email;
+      if (!Object.keys(quotePatch).length) continue;
+      await this.adapter.put('quotes', normalizeQuote({
+        ...quote,
+        ...quotePatch,
+        updatedAt: now,
+        history: withHistory(quote.history, makeHistoryEntry({
+          actor: name,
+          action: '담당자 정보 확인',
+          note: `${name}${title ? ` ${title}` : ''}${email ? ` · ${email}` : ''}`,
+        })),
+      }));
+    }
+    const agreements = (await this.adapter.getAll('contracts')).map(normalizeAgreement);
+    for (const agreement of agreements) {
+      if (!account.siteId || agreement.siteId !== account.siteId) continue;
+      // 서명된 계약서 원문은 그대로 둡니다(문서 해시 보존). 담당자 변경은 계정·견적에만 반영하고 이력에 남깁니다.
+      const signed = agreement.status === 'signed' || agreement.status === 'renewed' || agreement.status === 'terminated';
+      const agreementPatch = {};
+      if (!signed && name && agreement.contactName !== name) agreementPatch.contactName = name;
+      if (!Object.keys(agreementPatch).length && !signed) continue;
+      await this.adapter.put('contracts', normalizeAgreement({
+        ...agreement,
+        ...agreementPatch,
+        updatedAt: now,
+        history: withHistory(agreement.history, makeHistoryEntry({
+          actor: name,
+          action: '담당자 정보 확인',
+          note: `${name}${title ? ` ${title}` : ''}${signed ? ' · 서명된 계약서 원문은 그대로 보관' : ''}`,
+        })),
+      }));
+    }
+    this._notify();
+    return next;
+  }
+
   /* ---------------- contracts (도급 계약서 · 대표 전용) ---------------- */
 
   async listAgreements({ siteId = null, status = null } = {}, { actor = null } = {}) {
     denyStaff(actor, '고객 계약서');
     let rows = (await this.adapter.getAll('contracts')).map(normalizeAgreement);
+    if (isCustomerActor(actor)) {
+      // 3단계 — 고객은 자기 계약서만 봅니다.
+      rows = rows.filter((row) => this._agreementAllowed(row, actor));
+    }
     if (siteId) rows = rows.filter((row) => row.siteId === siteId);
     if (status) rows = rows.filter((row) => row.status === status);
     return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -3453,14 +3886,34 @@ export class Store {
   async getAgreement(id, { actor = null } = {}) {
     denyStaff(actor, '고객 계약서');
     const row = await this.adapter.get('contracts', id);
-    return row ? normalizeAgreement(row) : null;
+    if (!row) return null;
+    const agreement = normalizeAgreement(row);
+    if (isCustomerActor(actor) && !this._agreementAllowed(agreement, actor)) {
+      throw new StoreError('permission-denied', '다른 고객·다른 업장의 계약서는 볼 수 없습니다.');
+    }
+    return agreement;
+  }
+
+  /** 이 고객 계정이 이 계약서를 볼 수 있는가 — 자기 업장 계약, 초대받은 견적의 계약만. */
+  _agreementAllowed(agreement, session) {
+    if (!agreement) return false;
+    if (!isCustomerActor(session)) return true;
+    if (agreement.siteId && session.siteId && agreement.siteId === session.siteId) return true;
+    const quoteId = agreement.quoteId;
+    if (!quoteId) return false;
+    if (session.quoteId && session.quoteId === quoteId) return true;
+    return false;
   }
 
   async getAgreementByQuote(quoteId, { actor = null } = {}) {
     denyStaff(actor, '고객 계약서');
     if (!quoteId) return null;
     const rows = (await this.adapter.getAll('contracts')).map(normalizeAgreement);
-    return rows.find((row) => row.quoteId === quoteId) || null;
+    const found = rows.find((row) => row.quoteId === quoteId) || null;
+    if (found && isCustomerActor(actor) && !this._agreementAllowed(found, actor)) {
+      throw new StoreError('permission-denied', '다른 고객·다른 업장의 계약서는 볼 수 없습니다.');
+    }
+    return found;
   }
 
   /** 견적을 표준 도급 계약서로 전환합니다 (이미 있으면 그 계약서). */
@@ -3472,6 +3925,10 @@ export class Store {
     denyStaff(actor, '고객 계약서 작성');
     const quote = await this.getQuote(quoteId);
     if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
+    // 고객은 자기 견적으로만 계약서를 열 수 있습니다(계약 진행 버튼).
+    if (isCustomerActor(actor) && !this._quoteAllowed(quote, actor)) {
+      throw new StoreError('permission-denied', '다른 고객·다른 업장의 견적으로는 계약을 만들 수 없습니다.');
+    }
     const existing = await this.getAgreementByQuote(quote.id);
     if (existing) return existing;
 
@@ -3484,18 +3941,28 @@ export class Store {
     }
 
     const now = new Date().toISOString();
+    const actorName = toText(actor && actor.name) || toText(actor && actor.title) || '';
+    const adminActor = !!actor && actor.role === 'admin';
+    // 기획서 8장 — 견적에서 그대로 이어받는 계약 정보 13가지.
+    //  고객사명 · 사업자등록번호 · 대표자 · 주소 · 담당자 · 계약 금액 · 청소 주기 ·
+    //  청소 범위 · 계약 시작일 · 계약 종료일 · 작업시간 · 특약사항 · 계약 담당자
+    const autoWorkHours =
+      toText(quote.survey && quote.survey.hours) ||
+      toText(site && site.survey && site.survey.hours) ||
+      '';
+    const autoCeo = toText(quote.clientCeo) || toText(site && site.ceoName) || '';
     const agreement = normalizeAgreement({
       id: uid('contract'),
       no: await this._nextDocNumber('contracts', 'CT'),
       quoteId: quote.id,
       siteId: site ? site.id : '',
       status: 'draft',
-      clientAddress: quote.clientAddress,
+      clientAddress: quote.clientAddress || (site ? site.address : ''),
       clientBusinessName: quote.clientCompany,
-      clientBizNumber: quote.clientBizNumber,
-      clientCeo: '',
-      contactName: quote.clientContact,
-      contactPhone: quote.clientPhone,
+      clientBizNumber: quote.clientBizNumber || (site ? site.bizNumber : ''),
+      clientCeo: autoCeo,
+      contactName: quote.clientContact || (site ? site.contactName : ''),
+      contactPhone: quote.clientPhone || (site ? site.contactPhone : ''),
       startDate: quote.startDate,
       endDate: quote.endDate,
       months: quote.periodMonths,
@@ -3505,10 +3972,19 @@ export class Store {
       scope: quote.scope,
       extraScope: quote.extraScope,
       frequency: quote.frequency,
+      workHours: autoWorkHours,
+      managerName: (adminActor ? actorName : '') || SUPPLIER.ceo,
+      managerTitle: '대표',
       specialTerms: [quote.terms, quote.memo].filter(Boolean).join('\n'),
+      docVersion: 1,
       createdAt: now,
       updatedAt: now,
       source: 'app',
+      history: withHistory([], makeHistoryEntry({
+        actor: '앱',
+        action: '계약서 자동 생성',
+        note: `견적 ${quote.no} 승인 — 고객사 · 사업자번호 · 대표자 · 주소 · 담당자 · 금액 · 주기 · 범위 · 기간 · 작업시간 · 특약을 견적에서 그대로 옮겼습니다`,
+      })),
     });
     await this.adapter.put('contracts', agreement);
     const nextQuote = normalizeQuote({
@@ -3516,6 +3992,12 @@ export class Store {
       status: quote.status === 'sent' ? 'accepted' : quote.status,
       contractId: agreement.id,
       siteId: quote.siteId || (site ? site.id : ''),
+      // 비어 있던 고객사 정보는 이 기회에 업장 값에서 채웁니다(이미 있는 값은 그대로).
+      clientCeo: quote.clientCeo || autoCeo,
+      clientBizNumber: quote.clientBizNumber || (site ? site.bizNumber : ''),
+      clientAddress: quote.clientAddress || (site ? site.address : ''),
+      clientContact: quote.clientContact || (site ? site.contactName : ''),
+      clientPhone: quote.clientPhone || (site ? site.contactPhone : ''),
       updatedAt: now,
       history: withHistory(quote.history, makeHistoryEntry({
         actor: '앱',
@@ -3542,10 +4024,11 @@ export class Store {
 
   async updateAgreement(id, patch = {}, { actor = null } = {}) {
     denyStaff(actor, '고객 계약서 수정');
+    denyCustomerWrites(actor, '고객 계약서 수정');
     const agreement = await this.getAgreement(id);
     if (!agreement) throw new StoreError('no-contract', '계약서를 찾을 수 없습니다.');
-    if (agreement.status === 'signed') {
-      throw new StoreError('already-signed', '체결된 계약서는 수정할 수 없습니다.');
+    if (isAgreementClosed(agreement.status)) {
+      throw new StoreError('already-signed', '체결·갱신·종료된 계약서는 수정할 수 없습니다.');
     }
     const next = normalizeAgreement({
       ...agreement,
@@ -3555,6 +4038,15 @@ export class Store {
       createdAt: agreement.createdAt,
       updatedAt: new Date().toISOString(),
     });
+    // 3단계 — 계약 수정은 무엇이 바뀌었는지 history[] 에 남깁니다.
+    const changes = diffFields(agreementHistorySnapshot(agreement), agreementHistorySnapshot(next), AGREEMENT_HISTORY_LABELS);
+    if (changes.length) {
+      next.history = withHistory(agreement.history, makeHistoryEntry({
+        actor: toText(actor && actor.name) || toText(patch.actor) || '대표',
+        action: '계약서 수정',
+        changes,
+      }));
+    }
     await this.adapter.put('contracts', next);
     this._notify();
     return next;
@@ -3565,12 +4057,31 @@ export class Store {
     denyStaff(actor, '고객 계약서 수정');
     const agreement = await this.getAgreement(id);
     if (!agreement) throw new StoreError('no-contract', '계약서를 찾을 수 없습니다.');
+    if (isCustomerActor(actor) && !this._agreementAllowed(agreement, actor)) {
+      throw new StoreError('permission-denied', '다른 고객·다른 업장의 계약서는 고칠 수 없습니다.');
+    }
+    const before = {
+      사업자등록증: agreement.bizLicense && agreement.bizLicense.id ? '등록' : '미등록',
+      특이사항: agreement.contractMemo,
+    };
     const next = normalizeAgreement({
       ...agreement,
       bizLicense: patch.bizLicense !== undefined ? patch.bizLicense : agreement.bizLicense,
       contractMemo: patch.contractMemo !== undefined ? patch.contractMemo : agreement.contractMemo,
       updatedAt: new Date().toISOString(),
     });
+    const after = {
+      사업자등록증: next.bizLicense && next.bizLicense.id ? '등록' : '미등록',
+      특이사항: next.contractMemo,
+    };
+    const changes = diffFields(before, after, { 사업자등록증: '사업자등록증', 특이사항: '특이사항' });
+    if (changes.length) {
+      next.history = withHistory(agreement.history, makeHistoryEntry({
+        actor: toText(actor && actor.name) || '대표',
+        action: '계약서 특이사항 수정',
+        changes,
+      }));
+    }
     await this.adapter.put('contracts', next);
     this._notify();
     return next;
@@ -3579,9 +4090,10 @@ export class Store {
   /** 계약서를 고객에게 보냅니다 (고객 방에 ‘서명’ 카드가 뜨는 상태). */
   async sendAgreement(id, { actor = null } = {}) {
     denyStaff(actor, '고객 계약서 발송');
+    denyCustomerWrites(actor, '고객 계약서 발송');
     const agreement = await this.getAgreement(id);
     if (!agreement) throw new StoreError('no-contract', '계약서를 찾을 수 없습니다.');
-    if (agreement.status === 'signed') return agreement;
+    if (isAgreementClosed(agreement.status)) return agreement;
     const now = new Date().toISOString();
     const next = { ...agreement, status: 'sent', updatedAt: now };
     await this.adapter.put('contracts', next);
@@ -3594,11 +4106,20 @@ export class Store {
    * 자동 등록합니다. 계약금 · 계약일 · 청소 공정 · 첫 견적(오염) 사진이 그대로
    * 넘어가 관리자 매출 정리와 고객 방 3단계 비교에 바로 표시됩니다.
    */
-  async signAgreement(contractId, payload = {}) {
+  async signAgreement(contractId, payload = {}, { actor = null } = {}) {
     const agreement = await this.getAgreement(contractId);
     if (!agreement) throw new StoreError('no-contract', '계약서를 찾을 수 없습니다.');
+    if (isStaffActor(actor)) {
+      throw new StoreError('permission-denied', '고객 계약서에는 서명할 수 없습니다.');
+    }
+    if (isCustomerActor(actor) && !this._agreementAllowed(agreement, actor)) {
+      throw new StoreError('permission-denied', '다른 고객·다른 업장의 계약서에는 서명할 수 없습니다.');
+    }
     if (agreement.status === 'signed' && agreement.siteId) {
       return { agreement, site: await this.getSite(agreement.siteId) };
+    }
+    if (agreement.status === 'renewed' || agreement.status === 'terminated') {
+      throw new StoreError('contract-closed', '갱신·종료된 계약서에는 다시 서명할 수 없습니다.');
     }
     // 서명 창에서 [서명 적용]을 누른 서명만 계약서에 들어갑니다.
     if (!toText(payload.signature)) {
@@ -3626,11 +4147,37 @@ export class Store {
         .filter(Boolean)
         .join(' → ') || '';
     const note = `${agreement.months}개월 · 부가세 ${agreement.vatIncluded ? '포함' : '별도'} · ${frequency}`;
+    const pyeong =
+      toText(quote && quote.survey && quote.survey.pyeong ? String(quote.survey.pyeong) : '') ||
+      toText(parsePyeong(quote ? quote.area : '')) ||
+      '';
 
     let site = agreement.siteId ? await this.getSite(agreement.siteId) : null;
     if (!site) {
       site = (await this.listSites()).find((row) => row.name === client.businessName) || null;
     }
+
+    // 견적 방문 사진(구역별)은 계약 뒤에도 첫 견적 사진으로 남습니다.
+    const surveyPhotos = quote && quote.siteId
+      ? await this.listSitePhotos(quote.siteId).catch(() => [])
+      : [];
+    const baselineQuotePhotos =
+      quote && quote.photos && quote.photos.length
+        ? quote.photos.slice()
+        : surveyPhotos.map((photo) => ({
+            ...(photo.ref || {}),
+            caption: `${(SURVEY_PHOTO_AREAS.find((row) => row.key === photo.area) || {}).label || '현장'}${photo.memo ? ` · ${photo.memo}` : ''}`,
+          }));
+    const room = normalizeRoom({
+      status: 'active',
+      createdAt: now,
+      contractId: agreement.id,
+      quoteId: quote ? quote.id : '',
+      openedBy: '고객 계약 체결',
+      pyeong,
+      frequency,
+      note: '계약서·견적서·최초 현장 사진·청소 조건을 그대로 이어받은 업장 관리방',
+    });
 
     if (!site) {
       site = await this.addSite({
@@ -3641,11 +4188,12 @@ export class Store {
         contractId: agreement.id,
         category,
         address: client.address,
-        area: quote ? quote.area : '',
+        area: (quote ? quote.area : '') || (pyeong ? `${pyeong}평` : ''),
         frequency,
         intervalDays: intervalFromFrequency(frequency),
         startDate: agreement.startDate || signedDate,
         contactName: agreement.contactName || (quote ? quote.clientContact : ''),
+        contactPhone: agreement.contactPhone || (quote ? quote.clientPhone : ''),
         bizNumber: client.bizNumber,
         ceoName: client.ceo,
         taxEmail: quote ? quote.clientTaxEmail : '',
@@ -3658,11 +4206,14 @@ export class Store {
           note,
         },
         ops: { process, accessMethod: '', trashLocation: '', parkingMethod: '' },
+        survey: quote ? quote.survey : null,
+        surveyPhotos,
+        room,
         baseline: {
           quote: {
             date: signedDate,
             note: '계약 전 견적 방문 · 오염 상태',
-            photos: quote ? quote.photos.slice() : [],
+            photos: baselineQuotePhotos,
           },
         },
       });
@@ -3676,6 +4227,12 @@ export class Store {
           billingDay: contract.billingDay || `매월 ${agreement.billingDay}일`,
         },
         ops: site.ops && site.ops.process ? site.ops : { process },
+        contactName: site.contactName || agreement.contactName || '',
+        contactPhone: site.contactPhone || agreement.contactPhone || '',
+        area: site.area || (quote ? quote.area : '') || (pyeong ? `${pyeong}평` : ''),
+        frequency: site.frequency || frequency,
+        ceoName: site.ceoName || client.ceo,
+        bizNumber: site.bizNumber || client.bizNumber,
       });
     }
 
@@ -3687,8 +4244,48 @@ export class Store {
       }
     }
 
+    // 3단계 — 업장 관리방(기획서 9장)을 계약과 함께 엽니다.
+    {
+      const current = await this.getSite(site.id);
+      const currentRoom = normalizeRoom(current.room);
+      const nextRoom = normalizeRoom({
+        ...currentRoom,
+        ...room,
+        // 이미 열려 있는 방이면 처음 연 시각은 그대로 둡니다.
+        createdAt: currentRoom.createdAt || room.createdAt,
+      });
+      const patch = { room: nextRoom, updatedAt: now };
+      if (!current.quoteId && quote) patch.quoteId = quote.id;
+      if (!current.contractId) patch.contractId = agreement.id;
+      // 최초 견적 사진이 비어 있으면 방문 사진 · 견적 사진으로 채웁니다(덮어쓰지 않음).
+      if (baselineQuotePhotos.length) {
+        const baseline = normalizeBaseline(current.baseline);
+        if (!baseline.quote.photos.length) {
+          baseline.quote = { date: signedDate, note: '계약 전 견적 방문 · 오염 상태', photos: baselineQuotePhotos };
+          patch.baseline = baseline;
+        }
+      }
+      await this.adapter.put('sites', { ...current, ...patch });
+      site = normalizeSite(await this.getSite(site.id));
+      await this.recordHistory('sites', site.id, {
+        actor: '고객',
+        action: '고객 계약 체결 · 업장 관리방 생성',
+        note: `${agreement.no} · ${client.businessName} · 월 ${agreement.amount.toLocaleString('ko-KR')}원 · ${frequency}${pyeong ? ` · ${pyeong}평` : ''}`,
+      });
+      site = await this.getSite(site.id);
+    }
+
     // 서명 이미지는 Storage 에 올려 여러 기기에서 같은 서명을 보게 합니다(실패 시 dataURL).
     const signature = await this.storeSignature(toText(payload.signature));
+    // 3단계 — 서명 시점의 문서 해시(무결성 확인값)를 남깁니다.
+    const doc = await agreementDocHash({
+      ...agreement,
+      siteId: site.id,
+      clientAddress: client.address,
+      clientBusinessName: client.businessName,
+      clientBizNumber: client.bizNumber,
+      clientCeo: client.ceo,
+    });
     const nextAgreement = normalizeAgreement({
       ...agreement,
       status: 'signed',
@@ -3698,14 +4295,26 @@ export class Store {
       clientBizNumber: client.bizNumber,
       clientCeo: client.ceo,
       signedDate,
-      signedByName: client.ceo || agreement.signedByName,
+      signedByName: client.ceo || agreement.contactName || agreement.signedByName,
       signature: signature || agreement.signature,
       signedAt: now,
+      docHash: doc.hash,
+      docAlgo: doc.algo,
+      docHashAt: now,
+      signatureAudit: normalizeSignatureAudit({
+        name: client.ceo || agreement.contactName || client.businessName,
+        role: '갑(고객)',
+        phone: agreement.contactPhone,
+        at: now,
+        method: '전자서명(스마트펜·손가락)',
+        hash: doc.hash,
+        algo: doc.algo,
+      }),
       updatedAt: now,
       history: withHistory(agreement.history, makeHistoryEntry({
         actor: '고객',
         action: '고객 계약 체결',
-        note: `${site.name} · 서명 ${signedDate}`,
+        note: `${site.name} · 서명 ${signedDate} · 문서 해시 ${doc.hash.slice(0, 12)}… (${doc.algo})`,
       })),
     });
     await this.adapter.put('contracts', nextAgreement);
@@ -3740,32 +4349,187 @@ export class Store {
         site = { ...current, ...patch };
       }
     }
-    await this.recordHistory('sites', site.id, {
-      actor: '고객',
-      action: '고객 계약 체결',
-      note: `${nextAgreement.no} · ${client.businessName} · 월 ${agreement.amount.toLocaleString('ko-KR')}원`,
-    });
     // 이 업장을 맡은 팀장의 도급계약서 별첨에 업장을 더합니다.
     // (서명으로 기존 계약의 별첨 줄을 빼지는 않습니다 — add-only)
     await this.syncStaffContractSites(site.id, { remove: false });
 
     // 견적 방에 있던 고객 계정을 새 현장 방으로 옮깁니다.
+    // 계약 담당자 번호로 이미 계정이 있고 아직 방이 없으면 그 계정도 이 방에 연결합니다.
     const accounts = await this.adapter.getAll('accounts');
+    const contactPhone = normalizePhone(agreement.contactPhone || (quote ? quote.clientPhone : ''));
     for (const account of accounts) {
       if (account.role !== 'customer') continue;
-      if (quote && account.quoteId === quote.id) {
-        await this.adapter.put('accounts', {
-          ...account,
-          siteId: site.id,
-          quoteId: '',
-          updatedAt: now,
-        });
-        await this.createGrant(account.id, site.id, '');
-      }
+      const byQuote = quote && account.quoteId === quote.id;
+      const byPhone =
+        contactPhone &&
+        normalizePhone(account.phone) === contactPhone &&
+        (!account.siteId || account.siteId === site.id);
+      if (!byQuote && !byPhone) continue;
+      if (account.siteId && account.siteId !== site.id) continue;
+      await this.adapter.put('accounts', {
+        ...account,
+        siteId: site.id,
+        quoteId: '',
+        updatedAt: now,
+      });
+      await this.createGrant(account.id, site.id, '');
     }
 
     this._notify();
     return { agreement: normalizeAgreement(nextAgreement), site };
+  }
+
+  /**
+   * 계약 갱신 — 기존 계약서는 ‘갱신 완료’로 남기고, 같은 조건에서 기간·금액만
+   * 고친 새 계약서(초안)를 만듭니다. 서명 이력은 계약서마다 따로 보관됩니다.
+   */
+  async renewAgreement(id, { months = 0, startDate = '', endDate = '', amount = 0, actor = null, note = '' } = {}) {
+    denyStaff(actor, '고객 계약서 갱신');
+    denyCustomerWrites(actor, '고객 계약서 갱신');
+    const agreement = await this.getAgreement(id);
+    if (!agreement) throw new StoreError('no-contract', '계약서를 찾을 수 없습니다.');
+    if (agreement.status !== 'signed') {
+      throw new StoreError('renew-needs-sign', '체결된 계약서만 갱신할 수 있습니다.');
+    }
+    const period = Number(months) > 0 ? Math.round(Number(months)) : agreement.months;
+    const start = toText(startDate) || (agreement.endDate ? addDaysISO(agreement.endDate, 1) : todayISO());
+    const end = toText(endDate) || addMonthsISO(start, period);
+    const now = new Date().toISOString();
+    const who = toText(actor && actor.name) || '대표';
+
+    const previous = normalizeAgreement({
+      ...agreement,
+      status: 'renewed',
+      renewedAt: now,
+      updatedAt: now,
+      history: withHistory(agreement.history, makeHistoryEntry({
+        actor: who,
+        action: '계약 갱신',
+        note: `${start} ~ ${end} (${period}개월) 새 계약서로 이어집니다${note ? ` · ${note}` : ''}`,
+      })),
+    });
+    const next = normalizeAgreement({
+      ...agreement,
+      id: uid('contract'),
+      no: await this._nextDocNumber('contracts', 'CT'),
+      status: 'draft',
+      startDate: start,
+      endDate: end,
+      months: period,
+      amount: toAmount(amount) || agreement.amount,
+      signedDate: '',
+      signature: '',
+      signedByName: '',
+      signedAt: '',
+      signatureAudit: normalizeSignatureAudit({}),
+      docHash: '',
+      docAlgo: '',
+      docHashAt: '',
+      renewedFrom: agreement.id,
+      renewedAt: '',
+      renewedTo: '',
+      terminatedAt: '',
+      terminateReason: '',
+      docVersion: (agreement.docVersion || 1) + 1,
+      createdAt: now,
+      updatedAt: now,
+      history: withHistory([], makeHistoryEntry({
+        actor: who,
+        action: '계약 갱신 초안',
+        note: `${agreement.no} 갱신 — ${start} ~ ${end} (${period}개월) · ${(toAmount(amount) || agreement.amount).toLocaleString('ko-KR')}원`,
+      })),
+    });
+    previous.renewedTo = next.id;
+    await this.adapter.put('contracts', previous);
+    await this.adapter.put('contracts', next);
+
+    if (agreement.siteId) {
+      const site = await this.getSite(agreement.siteId);
+      if (site) {
+        const room = normalizeRoom(site.room);
+        const patch = { contractId: next.id, updatedAt: now };
+        if (room.createdAt) {
+          patch.room = normalizeRoom({ ...room, status: 'active', contractId: next.id, endedAt: '' });
+        }
+        await this.adapter.put('sites', { ...site, ...patch });
+        await this.recordHistory('sites', site.id, {
+          actor: who,
+          action: '계약 갱신',
+          note: `${agreement.no} → ${next.no} · ${start} ~ ${end}`,
+        });
+      }
+    }
+    if (agreement.quoteId) {
+      const quote = await this.getQuote(agreement.quoteId);
+      if (quote) {
+        await this.adapter.put('quotes', normalizeQuote({
+          ...quote,
+          contractId: next.id,
+          updatedAt: now,
+          history: withHistory(quote.history, makeHistoryEntry({
+            actor: who,
+            action: '계약 갱신',
+            note: `${agreement.no} → ${next.no}`,
+          })),
+        }));
+      }
+    }
+    this._notify();
+    return {
+      previous: normalizeAgreement(await this.adapter.get('contracts', previous.id)),
+      agreement: normalizeAgreement(await this.adapter.get('contracts', next.id)),
+      site: agreement.siteId ? await this.getSite(agreement.siteId) : null,
+    };
+  }
+
+  /** 계약 종료 — 사유와 시각을 남기고 업장 관리방을 닫습니다(기록은 보관). */
+  async terminateAgreement(id, { reason = '', date = '', actor = null } = {}) {
+    denyStaff(actor, '고객 계약서 종료');
+    denyCustomerWrites(actor, '고객 계약서 종료');
+    const agreement = await this.getAgreement(id);
+    if (!agreement) throw new StoreError('no-contract', '계약서를 찾을 수 없습니다.');
+    if (agreement.status === 'terminated') {
+      return { agreement, site: agreement.siteId ? await this.getSite(agreement.siteId) : null };
+    }
+    if (agreement.status !== 'signed' && agreement.status !== 'renewed') {
+      throw new StoreError('terminate-needs-sign', '체결된 계약서만 종료할 수 있습니다.');
+    }
+    const now = new Date().toISOString();
+    const who = toText(actor && actor.name) || '대표';
+    const closedAt = toText(date) || todayISO();
+    const next = normalizeAgreement({
+      ...agreement,
+      status: 'terminated',
+      terminatedAt: now,
+      terminateReason: toText(reason),
+      updatedAt: now,
+      history: withHistory(agreement.history, makeHistoryEntry({
+        actor: who,
+        action: '계약 종료',
+        note: `${closedAt} 종료${reason ? ` · 사유: ${reason}` : ''}`,
+      })),
+    });
+    await this.adapter.put('contracts', next);
+
+    let site = agreement.siteId ? await this.getSite(agreement.siteId) : null;
+    if (site) {
+      const room = normalizeRoom(site.room);
+      if (room.createdAt) {
+        await this.adapter.put('sites', {
+          ...site,
+          room: normalizeRoom({ ...room, status: 'ended', endedAt: now }),
+          updatedAt: now,
+        });
+      }
+      await this.recordHistory('sites', site.id, {
+        actor: who,
+        action: '계약 종료',
+        note: `${agreement.no} · ${closedAt}${reason ? ` · ${reason}` : ''}`,
+      });
+      site = await this.getSite(site.id);
+    }
+    this._notify();
+    return { agreement: normalizeAgreement(next), site };
   }
 
   /* ---------------- staff contracts (직원 계약 · 직원관리방) ---------------- */
@@ -4407,6 +5171,14 @@ export class Store {
       const mine = new Set(assignedSiteIdsOf(actor));
       reports = reports.filter((report) => mine.has(report.siteId));
     }
+    // 3단계 — 고객은 자기 업장 보고만.
+    if (isCustomerActor(actor)) {
+      const mine = await this._customerSiteIds(actor);
+      if (siteId && mine.indexOf(toText(siteId)) < 0) {
+        throw new StoreError('permission-denied', '다른 업장의 청소 보고는 볼 수 없습니다.');
+      }
+      reports = reports.filter((report) => mine.indexOf(toText(report.siteId)) >= 0);
+    }
     if (siteId) reports = reports.filter((report) => report.siteId === siteId);
     if (leader) reports = reports.filter((report) => report.leader === leader);
     if (status) reports = reports.filter((report) => reportStatusKey(report) === status);
@@ -4415,8 +5187,16 @@ export class Store {
     return limit > 0 ? reports.slice(0, limit) : reports;
   }
 
-  async getReport(id) {
-    return normalizeReport(await this.adapter.get('reports', id));
+  async getReport(id, { actor = null } = {}) {
+    const row = await this.adapter.get('reports', id);
+    if (!row) return null;
+    if (isCustomerActor(actor)) {
+      const mine = await this._customerSiteIds(actor);
+      if (mine.indexOf(toText(row.siteId)) < 0) {
+        throw new StoreError('permission-denied', '다른 업장의 청소 보고는 볼 수 없습니다.');
+      }
+    }
+    return normalizeReport(row);
   }
 
   /**
@@ -4887,7 +5667,7 @@ export class Store {
    * joining an existing room). The code is consumed; the phone number becomes a
    * customer account for that site when it is new, and gets room access.
    */
-  async enterCustomerRoomWithCode({ phone, code, name = '', title = '' }) {
+  async enterCustomerRoomWithCode({ phone, code, name = '', title = '', email = '' }) {
     const digits = normalizePhone(phone);
     if (!digits) throw new StoreError('phone-empty', '전화번호를 입력해 주세요.');
     const needle = normalizeCode(code);
@@ -4930,6 +5710,7 @@ export class Store {
         role: 'customer',
         name: nameValue || `고객 ${digits.slice(-4)}`,
         title: titleValue || '담당자',
+        email: toText(email),
         phone: digits,
         phonePretty: prettyPhone(digits),
         password: '',

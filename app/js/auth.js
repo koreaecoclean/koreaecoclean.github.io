@@ -71,6 +71,7 @@ function publicSession(account) {
     name: account.name,
     title: account.title || '',
     phone: account.phonePretty || account.phone,
+    email: account.email || '',
     siteId: account.siteId || null,
     quoteId: account.quoteId || '',
     assignedSiteIds: (account.assignedSiteIds || []).slice(),
@@ -107,6 +108,7 @@ export async function getSession() {
     name: account.name,
     title: account.title || '',
     phone: account.phonePretty || account.phone,
+    email: account.email || stored.email || '',
     siteId: account.siteId || stored.siteId || null,
     quoteId: account.quoteId || '',
     assignedSiteIds: (account.assignedSiteIds || []).slice(),
@@ -134,7 +136,7 @@ export async function logout() {
 /* logins                                                              */
 /* ------------------------------------------------------------------ */
 
-export async function loginCustomer({ phone, code = '', name = '', title = '' }) {
+export async function loginCustomer({ phone, code = '', name = '', title = '', email = '' }) {
   const digits = normalizePhone(phone);
   if (!digits) throw new AuthError('phone-empty', '전화번호를 입력해 주세요.');
 
@@ -159,10 +161,10 @@ export async function loginCustomer({ phone, code = '', name = '', title = '' })
       );
     }
     if (await store.findQuoteByInviteCode(code)) {
-      const entered = await store.enterQuoteRoomWithCode({ phone: digits, code, name, title });
+      const entered = await store.enterQuoteRoomWithCode({ phone: digits, code, name, title, email });
       return startSession(entered.account);
     }
-    const entered = await store.enterCustomerRoomWithCode({ phone: digits, code, name, title });
+    const entered = await store.enterCustomerRoomWithCode({ phone: digits, code, name, title, email });
     return startSession(entered.account);
   }
 
@@ -173,10 +175,10 @@ export async function loginCustomer({ phone, code = '', name = '', title = '' })
     );
   }
   if (await store.findQuoteByInviteCode(code)) {
-    const entered = await store.enterQuoteRoomWithCode({ phone: digits, code, name, title });
+    const entered = await store.enterQuoteRoomWithCode({ phone: digits, code, name, title, email });
     return startSession(entered.account);
   }
-  const entered = await store.enterCustomerRoomWithCode({ phone: digits, code, name, title });
+  const entered = await store.enterCustomerRoomWithCode({ phone: digits, code, name, title, email });
   return startSession(entered.account);
 }
 

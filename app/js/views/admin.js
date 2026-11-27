@@ -14,7 +14,6 @@ import { getSession, loginAdmin, logout, demoAccounts, getWorkMode, setWorkMode 
 import {
   quotePanelTemplate,
   staffPanelTemplate,
-  quoteInviteMessage,
   staffInviteMessage,
   roomCodeInviteMessage,
   defaultScope,
@@ -24,8 +23,9 @@ import {
   quoteSettingsPanelTemplate,
   estimateBoxTemplate,
   staffAccountPanelTemplate,
+  customerInvitePanelTemplate,
 } from './admin-docs.js';
-import { inviteUrl } from '../invite.js';
+import { inviteUrl, quoteInviteMessage } from '../invite.js';
 
 /**
  * 초대 링크를 보낸다는 것은 곧 발송이라는 뜻입니다.
@@ -406,6 +406,8 @@ export function createAdminView(container) {  const state = {
     const staff = link.staffContracts || [];
     const quoteStatus = quote ? (QUOTE_STATUS[quote.status] || {}).label || '' : '';
     const contractStatus = contract ? (AGREEMENT_STATUS[contract.status] || {}).label || '' : '';
+    const room = (link.site && link.site.room) || {};
+    const roomLabel = room.status === 'active' ? '운영 중' : room.status === 'ended' ? '종료' : '없음';
     const history = (link.history || []).slice(0, 4);
     // 이력 값 보기 — 숫자면 천 단위, 글이면 앞부분만(스크롤 길어짐 방지).
     const showValue = (value) => {
@@ -419,9 +421,12 @@ export function createAdminView(container) {  const state = {
         <div class="site-links__grid">
           <span><em>견적</em><strong>${quote ? `${esc(quote.no)} · ${esc(quoteStatus)}` : '없음'}</strong></span>
           <span><em>고객 계약</em><strong>${contract ? `${esc(contract.no)} · ${esc(contractStatus)}` : '없음'}</strong></span>
+          <span><em>업장 관리방</em><strong>${esc(roomLabel)}${room.createdAt ? ` · ${esc(String(room.createdAt).slice(0, 10))} 생성` : ''}</strong></span>
+          <span><em>서명 증빙</em><strong>${contract && contract.signatureAudit && contract.signatureAudit.hash ? `${esc(contract.signatureAudit.name || '고객')} · ${esc(String(contract.signatureAudit.at || '').slice(0, 10))} · ${esc(contract.docHash ? contract.docHash.slice(0, 8) : '')}…` : contract ? '미서명' : '없음'}</strong></span>
           <span><em>팀장 계약</em><strong>${staff.length ? staff.map((row) => `${esc(row.name)} ${esc(row.no)}`).join(' / ') : '없음'}</strong></span>
           <span><em>보고</em><strong>${link.reportTotal}건${link.reportPending ? ` · 확인 대기 ${link.reportPending}` : ''}</strong></span>
         </div>
+        ${contract ? `<div class="btn-row" style="margin-top:8px"><button class="btn btn--quiet btn--sm" type="button" data-open-agreement="${esc(contract.id)}">계약서 열기 · ${esc(contractStatus)}</button></div>` : ''}
         ${link.lastReport ? `<p class="tiny muted">최근 보고 ${esc(link.lastReport.date)} ${esc(link.lastReport.time || '')} · ${esc(link.lastReport.leader)}</p>` : ''}
         ${
           history.length
@@ -548,6 +553,16 @@ export function createAdminView(container) {  const state = {
 
         ${siteMoneyLine(site)}
         ${siteDetailsTemplate(site, link)}
+
+        ${
+          link && link.quote && link.quote.status !== 'contracted'
+            ? `<div class="site-invite" data-site-invite="${esc(site.id)}">
+                 <span>고객사 초대 <code>${esc(link.quote.inviteCode)}</code></span>
+                 <button class="link-btn" type="button" data-copy-quote-invite="${esc(link.quote.id)}">초대 문구</button>
+                 <button class="link-btn" type="button" data-copy-quote-link="${esc(link.quote.id)}">초대 링크</button>
+               </div>`
+            : ''
+        }
 
         ${baselineAdminTemplate(site)}
 
@@ -1311,6 +1326,8 @@ export function createAdminView(container) {  const state = {
 
       ${quotePanelTemplate({ quotes, agreements, state })}
 
+      ${customerInvitePanelTemplate({ quotes })}
+
       ${quoteSettingsPanelTemplate({ settings: quoteSettings, checklist: quoteChecklist, state })}
 
       ${staffPanelTemplate({ staffContracts, staffChecks, sites, state })}
@@ -1359,17 +1376,18 @@ export function createAdminView(container) {  const state = {
           ${customers
             .map((account) => {
               const site = sites.find((item) => item.id === account.siteId);
+              const quote = quotes.find((item) => item.inviteUsedBy === account.id && item.status !== 'contracted');
               const granted = grants.some((grant) => grant.accountId === account.id && grant.siteId === account.siteId);
               return `
-                <div class="staff-row">
+                <div class="staff-row" data-customer-account="${esc(account.id)}">
                   <div class="staff-row__who">
                     <span class="avatar" aria-hidden="true">${esc(account.name.slice(0, 1))}</span>
                     <div>
                       <strong>${esc(account.name)} ${esc(account.title || '')}</strong>
-                      <span>${esc(account.phonePretty || account.phone)}${site ? ` · ${esc(site.name)}` : ''}</span>
+                      <span>${esc(account.phonePretty || account.phone)}${account.email ? ` · ${esc(account.email)}` : ''}${site ? ` · ${esc(site.name)}` : quote ? ` · ${esc(quote.clientCompany)} (견적 진행)` : ''}</span>
                     </div>
                   </div>
-                  <span class="badge ${granted ? 'badge--done' : 'badge--wait'}">${granted ? '방 입장 완료' : '코드 대기'}</span>
+                  <span class="badge ${granted ? 'badge--done' : account.contactConfirmedAt ? 'badge--done' : 'badge--wait'}">${granted ? '방 입장 완료' : account.contactConfirmedAt ? '담당자 확인' : '코드 대기'}</span>
                 </div>`;
             })
             .join('')}
@@ -1686,6 +1704,8 @@ export function createAdminView(container) {  const state = {
         clientContact: $('#nq-contact', container)?.value || '',
         clientPhone: $('#nq-phone', container)?.value || '',
         clientBizNumber: $('#nq-biz', container)?.value || '',
+        clientCeo: $('#nq-ceo', container)?.value || '',
+        clientEmail: $('#nq-email', container)?.value || '',
         clientTaxEmail: $('#nq-tax', container)?.value || '',
         frequency: $('#nq-frequency', container)?.value || '',
         scope: $('#nq-scope', container)?.value || '',

@@ -85,3 +85,43 @@ export function consumeInviteHash(hash) {
   if (code) setPendingInvite(code);
   return code;
 }
+
+/* ------------------------------------------------------------------ */
+/* 고객사 초대 문구 · 문자/메일 공유 링크 (3단계 기획서 5장)              */
+/* ------------------------------------------------------------------ */
+
+/** 견적 · 계약 초대 문구 — 문자·카톡에 그대로 붙여넣는 글. */
+export function quoteInviteMessage(quote) {
+  const row = quote || {};
+  return [
+    `[코리아 에코크린] ${row.clientCompany || '고객사'} 담당자님, 정기청소 견적서가 도착했습니다.`,
+    '아래 링크를 누르면 초대코드가 입력된 화면이 열립니다. 견적서와 계약서를 확인하고 바로 전자서명하실 수 있습니다.',
+    `링크: ${inviteUrl(row.inviteCode)}`,
+    `1회용 코드: ${row.inviteCode || ''}`,
+    '문의: 0507-1317-8369',
+  ].join('\n');
+}
+
+/** 초대 링크만 보낼 때의 한 줄. */
+export function quoteInviteLinkLine(quote) {
+  return inviteUrl(quote && quote.inviteCode);
+}
+
+/** 관리 화면이 쓰는 같은 문구 (이름만 다릅니다). */
+export function buildQuoteInviteMessage(quote) {
+  return quoteInviteMessage(quote);
+}
+
+/** 문자 앱 공유 링크 (휴대폰 번호가 없으면 주소만 채웁니다). */
+export function quoteSmsHref(quote) {
+  const phone = String((quote && quote.clientPhone) || '').replace(/[^0-9+]/g, '');
+  return `sms:${phone}?body=${encodeURIComponent(quoteInviteMessage(quote))}`;
+}
+
+/** 메일 앱 공유 링크 — 받는 사람은 세금계산서 이메일 → 담당자 이메일 순서. */
+export function quoteMailtoHref(quote) {
+  const row = quote || {};
+  const to = row.clientEmail || row.clientTaxEmail || '';
+  const subject = `[코리아 에코크린] ${row.clientCompany || '고객사'} 정기청소 견적서`;
+  return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(quoteInviteMessage(row))}`;
+}

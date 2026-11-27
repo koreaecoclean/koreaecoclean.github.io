@@ -140,15 +140,28 @@ export function createCustomerView(container) {
             <label for="cust-phone">전화번호 <span class="req">*</span></label>
             <input class="input" id="cust-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="010-0000-0000" required>
           </div>
-          <div class="field">
-            <label for="cust-code">1회용 청소코드 <span class="tiny muted">(처음 한 번만)</span></label>
-            <input class="input" id="cust-code" type="text" inputmode="text" autocomplete="off" spellcheck="false"
-                   placeholder="예: C-7F3K9Q" maxlength="14" value="${esc(inviteCode)}">
-            <span class="field__hint">등록된 번호는 비워 두고 입장하세요.</span>
+          <div class="field-row">
+            <div class="field">
+              <label for="cust-code">1회용 청소코드 <span class="tiny muted">(처음 한 번만)</span></label>
+              <input class="input" id="cust-code" type="text" inputmode="text" autocomplete="off" spellcheck="false"
+                     placeholder="예: C-7F3K9Q" maxlength="14" value="${esc(inviteCode)}">
+              <span class="field__hint">등록된 번호는 비워 두고 입장하세요.</span>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="cust-name">이름 <span class="tiny muted">(선택)</span></label>
+              <input class="input" id="cust-name" type="text" autocomplete="name" placeholder="예: 정하윤" maxlength="20">
+            </div>
+            <div class="field">
+              <label for="cust-title">직함 <span class="tiny muted">(선택)</span></label>
+              <input class="input" id="cust-title" type="text" placeholder="예: 총무" maxlength="20">
+            </div>
           </div>
           <div class="field">
-            <label for="cust-name">이름 <span class="tiny muted">(선택)</span></label>
-            <input class="input" id="cust-name" type="text" autocomplete="name" placeholder="예: 정하윤 총무" maxlength="20">
+            <label for="cust-email">이메일 <span class="tiny muted">(선택 · 계약서 안내)</span></label>
+            <input class="input" id="cust-email" type="email" inputmode="email" autocomplete="email" placeholder="예: name@company.com" maxlength="60">
+            <span class="field__hint">나중에 ‘담당자 정보’에서 언제든 고칠 수 있습니다.</span>
           </div>
           ${state.loginError ? `<p class="field__error">${esc(state.loginError)}</p>` : ''}
           <button class="btn btn--primary btn--block" type="submit">입장</button>
@@ -471,8 +484,9 @@ export function createCustomerView(container) {
   function docsTemplate(documents) {
     const agreements = (documents && documents.agreements) || [];
     const quotes = ((documents && documents.quotes) || []).filter((quote) => quote.status !== 'draft');
-    const signed = agreements.filter((row) => row.status === 'signed');
-    const pending = agreements.filter((row) => row.status !== 'signed');
+    const closed = (status) => status === 'signed' || status === 'renewed' || status === 'terminated';
+    const signed = agreements.filter((row) => closed(row.status));
+    const pending = agreements.filter((row) => !closed(row.status));
     const openQuotes = signed.length || pending.length ? [] : quotes.filter((quote) => quote.status !== 'contracted');
 
     const cards = [];
@@ -495,11 +509,12 @@ export function createCustomerView(container) {
         </article>`);
     });
     signed.forEach((agreement) => {
+      const label = (AGREEMENT_STATUS[agreement.status] || {}).label || '체결 완료';
       cards.push(`
         <article class="doc-banner doc-banner--done">
-          <span class="doc-banner__tag">체결된 계약서</span>
+          <span class="doc-banner__tag">${agreement.status === 'terminated' ? '종료된 계약서' : '체결된 계약서'}</span>
           <strong>${esc(agreement.clientBusinessName || '표준 계약서')}</strong>
-          <p>${esc(agreement.signedDate || '')} 체결 · 인쇄하거나 PDF로 저장할 수 있습니다.</p>
+          <p>${esc(agreement.signedDate || '')} ${esc(label)} · 인쇄하거나 PDF로 저장할 수 있습니다.</p>
           <button class="btn btn--ghost btn--sm" type="button" data-open-agreement="${esc(agreement.id)}">계약서 보기</button>
         </article>`);
     });
@@ -627,6 +642,9 @@ export function createCustomerView(container) {
         </section>`;
     }
     const status = AGREEMENT_STATUS[agreement.status] || AGREEMENT_STATUS.draft;
+    const closed = agreement.status === 'signed' || agreement.status === 'renewed' || agreement.status === 'terminated';
+    const audit = agreement.signatureAudit || {};
+    const history = (agreement.history || []).slice(0, 3);
     return `
       <section class="panel doc-tab" data-contract-tab="${esc(agreement.id)}">
         <div class="section-head">
@@ -638,14 +656,101 @@ export function createCustomerView(container) {
         </div>
         <dl class="kv kv--left">
           <dt>계약기간</dt><dd>${esc(agreement.startDate)} ~ ${esc(agreement.endDate)} (${esc(String(agreement.months))}개월)</dd>
+          <dt>청소 주기</dt><dd>${esc(agreement.frequency || '-')}</dd>
+          <dt>작업시간</dt><dd>${esc(agreement.workHours || '현장 협의')}</dd>
+          <dt>계약 담당자</dt><dd>${esc(agreement.managerName || '코리아 에코크린')} ${esc(agreement.managerTitle || '')}</dd>
           <dt>결제일</dt><dd>매월 ${esc(agreement.billingDay)}일</dd>
           <dt>체결일</dt><dd>${esc(agreement.signedDate || '미체결')}</dd>
+          ${
+            agreement.status === 'terminated'
+              ? `<dt>종료</dt><dd>${esc(String(agreement.terminatedAt || '').slice(0, 10))}${agreement.terminateReason ? ` · ${esc(agreement.terminateReason)}` : ''}</dd>`
+              : ''
+          }
+          ${agreement.renewedFrom ? `<dt>갱신</dt><dd>이전 계약서에서 이어받은 갱신 계약입니다.</dd>` : ''}
         </dl>
+        ${
+          agreement.specialTerms
+            ? `<details class="settings" open><summary>특약사항</summary><div class="settings__body"><p class="tiny preserve">${esc(agreement.specialTerms)}</p></div></details>`
+            : ''
+        }
         <button class="btn btn--primary btn--block" type="button" data-open-agreement="${esc(agreement.id)}">
-          ${agreement.status === 'signed' ? '계약서 보기 · 인쇄' : '계약서 확인 · 서명'}
+          ${closed ? '계약서 보기 · 인쇄' : '계약서 확인 · 서명'}
         </button>
+        ${
+          audit.hash
+            ? `<div class="sign-evidence" data-sign-evidence="${esc(agreement.id)}">
+                 <strong>전자서명 증빙</strong>
+                 <dl class="kv kv--left">
+                   <dt>서명자</dt><dd>${esc(audit.name || agreement.signedByName || '갑(고객)')} ${esc(audit.role || '')}</dd>
+                   <dt>서명 일시</dt><dd>${esc(String(audit.at || agreement.signedAt || '').slice(0, 16).replace('T', ' '))}</dd>
+                   <dt>문서 확인값</dt><dd><code>${esc(String(agreement.docHash || audit.hash).slice(0, 16))}</code> <span class="tiny muted">${esc(agreement.docAlgo || audit.algo || '')}</span></dd>
+                 </dl>
+                 <p class="tiny muted">서명한 계약서 원본과 이 확인값이 같아야 합니다.</p>
+               </div>`
+            : ''
+        }
+        ${
+          history.length
+            ? `<details class="settings"><summary>계약 변경 이력 ${esc(String((agreement.history || []).length))}건</summary>
+                 <div class="settings__body"><ul class="site-history__list">
+                   ${history
+                     .map((row) => `<li><span class="site-history__when">${esc(String(row.at || '').slice(0, 10))}</span><span>${esc(row.action)}</span></li>`)
+                     .join('')}
+                 </ul></div></details>`
+            : ''
+        }
         ${bizLicenseTemplate(agreement)}
         ${contractMemoTemplate(agreement)}
+      </section>`;
+  }
+
+  function profilePanelTemplate(session) {
+    const account = session.account || {};
+    const confirmed = !!account.contactConfirmedAt;
+    const name = account.name || session.name || '';
+    const title = account.title || session.title || '';
+    const email = account.email || '';
+    const form = `
+      <p class="tiny muted">
+        초대받은 담당자 정보입니다. 이름 · 직함 · 이메일을 확인해 주세요. 회사 정보와 계약 내용은 대표가 등록한 값 그대로입니다.
+      </p>
+      <form class="form" id="customer-profile-form" style="margin-top:10px" novalidate>
+        <div class="field-row">
+          <div class="field">
+            <label for="cp-name">이름 <span class="req">*</span></label>
+            <input class="input" id="cp-name" type="text" autocomplete="name" maxlength="20" value="${esc(name)}" placeholder="담당자 이름">
+          </div>
+          <div class="field">
+            <label for="cp-title">직함</label>
+            <input class="input" id="cp-title" type="text" maxlength="20" value="${esc(title)}" placeholder="예: 총무">
+          </div>
+        </div>
+        <div class="field">
+          <label for="cp-email">이메일 <span class="tiny muted">(선택)</span></label>
+          <input class="input" id="cp-email" type="email" inputmode="email" autocomplete="email" maxlength="60" value="${esc(email)}" placeholder="예: name@company.com">
+          <span class="field__hint">계약서 · 견적서 안내를 받을 메일입니다.</span>
+        </div>
+        <p class="tiny muted">연락처 ${esc(session.phone || '')} · 이 번호가 입장 번호입니다.</p>
+        <button class="btn ${confirmed ? 'btn--quiet' : 'btn--primary'} btn--sm" type="submit">담당자 정보 저장</button>
+      </form>`;
+    // 확인이 끝난 담당자 정보는 접어 두고, 필요할 때만 펼쳐 고칩니다.
+    if (confirmed) {
+      return `
+        <details class="settings customer-profile" data-customer-profile>
+          <summary>담당자 정보 · ${esc(name)} ${esc(title)} (확인 완료)</summary>
+          <div class="settings__body">${form}</div>
+        </details>`;
+    }
+    return `
+      <section class="panel customer-profile" data-customer-profile>
+        <div class="section-head">
+          <div>
+            <h2>담당자 정보</h2>
+            <p>한 번만 확인해 주세요</p>
+          </div>
+          <span class="badge badge--wait">확인 필요</span>
+        </div>
+        ${form}
       </section>`;
   }
 
@@ -653,18 +758,22 @@ export function createCustomerView(container) {
     const last = stats.last;
     const reports = filterReports(stats.reports);
     const nextLabel = stats.nextDate ? `${fmtDateLong(stats.nextDate)} 예정` : '일정 확인 필요';
+    const room = site.room || {};
+    const roomLabel = room.status === 'active' ? '운영 중' : room.status === 'ended' ? '종료' : '연결 중';
     return `
       ${compareTemplate(site, stats)}
 
       <section class="panel">
         <dl class="kv kv--left">
           <dt>${viewer.preview ? '보는 사람' : '입장 계정'}</dt><dd>${esc(viewer.name)} ${esc(viewer.title || '')} · ${esc(viewer.phone || '')}${viewer.preview ? ' (미리보기)' : ''}</dd>
+          <dt>업장 관리방</dt><dd>${esc(roomLabel)}${room.createdAt ? ` · ${esc(fmtDateLong(String(room.createdAt).slice(0, 10)))} 연결` : ''}</dd>
+          <dt>청소 조건</dt><dd>${esc(site.area || '-')} · ${esc(site.frequency || '-')}</dd>
           <dt>다음 방문</dt><dd>${esc(nextLabel)}</dd>
           <dt>출입 안내</dt><dd>${esc(site.accessNote || '-')}</dd>
           <dt>최근 방문</dt><dd>${last ? `${esc(fmtDateLong(last.date))} ${esc(fmtTime(last.time))}` : '기록 없음'}</dd>
         </dl>
         <p class="hint" style="margin-top:10px">
-          이 방에는 ${esc(site.clientName)} 현장 기록만 표시됩니다. 다음 방문일은 정기 주기를 기준으로 계산한 예상일입니다.
+          이 방에는 ${esc(site.clientName)} 현장 기록만 표시됩니다. 계약서 · 견적서 · 첫 견적 사진은 ② 계약 · ① 견적 탭에서 보고, 다음 방문일은 정기 주기를 기준으로 계산한 예상일입니다.
         </p>
       </section>
 
@@ -703,6 +812,8 @@ export function createCustomerView(container) {
           ${esc(quote.frequency)}
         </p>
       </section>
+
+      ${profilePanelTemplate(session)}
 
       ${roomTabsTemplate(tab, false)}
 
@@ -765,6 +876,8 @@ export function createCustomerView(container) {
 
       ${roomTabsTemplate(tab, true)}
 
+      ${viewer.preview ? '' : profilePanelTemplate(viewer)}
+
       ${tab === 'quote' ? quoteTabTemplate(documents) : tab === 'contract' ? contractTabTemplate(documents) : manageTabTemplate(site, stats, viewer)}
     `;
   }
@@ -799,8 +912,9 @@ export function createCustomerView(container) {
     state.session = session;
 
     if (session.quoteId) {
-      const quote = await store.getQuote(session.quoteId);
-      const agreement = quote ? await store.getAgreementByQuote(quote.id) : null;
+      // 3단계 — 고객은 자기에게 온 견적만 열 수 있습니다(store 가 한 번 더 막습니다).
+      const quote = await store.getQuote(session.quoteId, { actor: session }).catch(() => null);
+      const agreement = quote ? await store.getAgreementByQuote(quote.id, { actor: session }).catch(() => null) : null;
       if (token !== renderToken) return;
       if (quote) {
         if (!state.roomTab) state.roomTab = 'quote';
@@ -809,7 +923,7 @@ export function createCustomerView(container) {
       }
     }
 
-    const site = await store.getSite(session.siteId);
+    const site = await store.getSiteFor(session, session.siteId);
     state.category = site ? site.category : '';
     if (token !== renderToken) return;
 
@@ -834,8 +948,8 @@ export function createCustomerView(container) {
     reportsById.clear();
     stats.reports.forEach((report) => reportsById.set(report.id, report));
     const documents = {
-      quotes: await store.listQuotes({ siteId: site.id }),
-      agreements: await store.listAgreements({ siteId: site.id }),
+      quotes: await store.listQuotes({ siteId: site.id }, { actor: session }),
+      agreements: await store.listAgreements({ siteId: site.id }, { actor: session }),
     };
     if (!['quote', 'contract', 'manage'].includes(state.roomTab)) state.roomTab = 'manage';
     if (token !== renderToken) return;
@@ -885,8 +999,9 @@ export function createCustomerView(container) {
     reportsById.clear();
     stats.reports.forEach((report) => reportsById.set(report.id, report));
     const documents = {
-      quotes: await store.listQuotes({ siteId: site.id }),
-      agreements: await store.listAgreements({ siteId: site.id }),
+      // v2.8.2 유지 — 직원(팀장·본부장) 미리보기에는 고객 견적서·계약서를 넘기지 않습니다.
+      quotes: session.role === 'admin' ? await store.listQuotes({ siteId: site.id }) : [],
+      agreements: session.role === 'admin' ? await store.listAgreements({ siteId: site.id }) : [],
     };
 
     const viewer = {
@@ -963,15 +1078,36 @@ export function createCustomerView(container) {
   }
 
   async function onSubmit(event) {
+    if (event.target.id === 'customer-profile-form') {
+      event.preventDefault();
+      const name = $('#cp-name', container)?.value || '';
+      const title = $('#cp-title', container)?.value || '';
+      const email = $('#cp-email', container)?.value || '';
+      if (!name.trim()) {
+        toast('담당자 이름을 입력해 주세요.', { tone: 'error' });
+        return;
+      }
+      try {
+        await store.updateCustomerContact(state.session.accountId, { name, title, email }, { actor: state.session });
+        toast('담당자 정보를 저장했습니다. 견적서 · 계약서 담당자 칸에도 반영됩니다.');
+        await render();
+      } catch (error) {
+        toast(error.message || '담당자 정보를 저장하지 못했습니다.', { tone: 'error' });
+      }
+      return;
+    }
+
     if (event.target.id === 'customer-login') {
       event.preventDefault();
       const phone = $('#cust-phone', container)?.value || '';
       const code = $('#cust-code', container)?.value || '';
       const nameRaw = $('#cust-name', container)?.value || '';
+      const titleInput = $('#cust-title', container)?.value || '';
+      const email = $('#cust-email', container)?.value || '';
       const [name, ...rest] = nameRaw.trim().split(/\s+/);
       state.loginError = '';
       try {
-        const session = await loginCustomer({ phone, code, name, title: rest.join(' ') });
+        const session = await loginCustomer({ phone, code, name, title: titleInput || rest.join(' '), email });
         clearPendingInvite();
         toast(`${session.name}님, ${session.title || ''} · 우리 현장 방에 입장했습니다.`);
         await render();
@@ -1005,7 +1141,7 @@ export function createCustomerView(container) {
   }
 
   async function showQuotePhotos(quoteId, startIndex) {
-    const quote = await store.getQuote(quoteId);
+    const quote = await store.getQuote(quoteId, { actor: state.session }).catch(() => null);
     if (!quote) return;
     const items = [];
     for (const photo of quote.photos || []) {

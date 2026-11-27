@@ -8,29 +8,20 @@ import { esc, fmtWon } from '../ui.js';
 import {
   QUOTE_STATUS,
   AGREEMENT_STATUS,
+  isAgreementClosed,
   STAFF_STATUS,
   SURVEY_PHOTO_AREAS,
   QUOTE_DIFFICULTIES,
   QUOTE_TEAM_SIZES,
 } from '../store.js';
 import { CATEGORY_META, STAFF_TYPES, SUPPLIER, PAYMENT_ACCOUNT, APP_URL, DEFAULT_CHECKLISTS } from '../seed.js';
-import { inviteUrl } from '../invite.js';
+import { inviteUrl, quoteSmsHref, quoteMailtoHref } from '../invite.js';
 
 const money = (value) => esc(fmtWon(value));
 
 /** 카테고리별 기본 청소 범위 (폼 자동 채우기). */
 export function defaultScope(category) {
   return (DEFAULT_CHECKLISTS[category] || DEFAULT_CHECKLISTS.office).join(', ');
-}
-
-export function quoteInviteMessage(quote) {
-  return [
-    `[코리아 에코크린] ${quote.clientCompany} 담당자님, 정기청소 견적서가 도착했습니다.`,
-    '아래 링크를 누르면 초대코드가 입력된 화면이 열립니다. 견적서와 계약서를 확인하고 바로 전자서명하실 수 있습니다.',
-    `링크: ${inviteUrl(quote.inviteCode)}`,
-    `1회용 코드: ${quote.inviteCode}`,
-    `문의: ${SUPPLIER.phone}`,
-  ].join('\n');
 }
 
 export function staffInviteMessage(contract) {
@@ -103,6 +94,16 @@ export function quoteFormTemplate(state) {
             <div class="field">
               <label for="nq-biz">사업자등록번호 <span class="tiny muted">(선택)</span></label>
               <input class="input" id="nq-biz" type="text" inputmode="numeric" placeholder="000-00-00000" maxlength="20">
+            </div>
+            <div class="field">
+              <label for="nq-ceo">대표자 <span class="tiny muted">(계약서 자동 연동)</span></label>
+              <input class="input" id="nq-ceo" type="text" placeholder="예: 박한빛" maxlength="30">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="nq-email">담당자 이메일 <span class="tiny muted">(초대 메일)</span></label>
+              <input class="input" id="nq-email" type="email" inputmode="email" placeholder="예: name@company.com" maxlength="60">
             </div>
             <div class="field">
               <label for="nq-tax">세금계산서 이메일 <span class="tiny muted">(선택)</span></label>
@@ -209,6 +210,9 @@ function quoteCardTemplate(quote, agreement) {
         <span class="badge ${status.badge}">${esc(status.label)}</span>
       </header>
       <p class="quote-card__amount">월 ${money(quote.amount)} <em>${quote.vatIncluded ? '부가세 포함' : '부가세 별도'}</em></p>
+      <p class="quote-card__contact">
+        담당자 <strong>${esc(quote.clientContact || '미등록')}</strong>${quote.clientPhone ? ` · ${esc(quote.clientPhone)}` : ''}${quote.clientEmail || quote.clientTaxEmail ? ` · ${esc(quote.clientEmail || quote.clientTaxEmail)}` : ''}
+      </p>
       ${quote.estimate
         ? `<p class="quote-card__estimate">
              <span>기준 ${quote.estimate.base ? `${esc(fmtWon(quote.estimate.base.min))}~${esc(fmtWon(quote.estimate.base.max))}` : '미설정'}</span>
@@ -228,6 +232,8 @@ function quoteCardTemplate(quote, agreement) {
         <a class="invite-link" href="${esc(inviteUrl(quote.inviteCode))}" data-invite-link="${esc(quote.inviteCode)}" target="_blank" rel="noreferrer">${esc(inviteUrl(quote.inviteCode))}</a>
         <button class="link-btn" type="button" data-copy-quote-invite="${esc(quote.id)}">초대 문구 복사</button>
         <button class="link-btn" type="button" data-copy-quote-link="${esc(quote.id)}">초대 링크 복사</button>
+        <a class="link-btn" href="${esc(quoteSmsHref(quote))}" data-sms-invite="${esc(quote.id)}">문자로 보내기</a>
+        <a class="link-btn" href="${esc(quoteMailtoHref(quote))}" data-mail-invite="${esc(quote.id)}">메일로 보내기</a>
         <button class="link-btn" type="button" data-regen-quote-invite="${esc(quote.id)}">재발급</button>
       </div>
       <div class="quote-card__actions">
@@ -244,17 +250,74 @@ function quoteCardTemplate(quote, agreement) {
         }
       </div>
       ${
-        agreement && agreement.status !== 'signed'
+        agreement && !isAgreementClosed(agreement.status)
           ? `<p class="hint">계약서 ${esc(agreement.no)} · ${esc((AGREEMENT_STATUS[agreement.status] || {}).label || '')}${agreement.status === 'draft' ? ' — 고객에게 발송하면 서명할 수 있습니다.' : ''}</p>`
           : agreement
-            ? `<p class="hint">계약서 ${esc(agreement.no)} · 체결 ${esc(agreement.signedDate)} · 현장 자동 등록 완료</p>`
+            ? `<p class="hint">계약서 ${esc(agreement.no)} · ${esc((AGREEMENT_STATUS[agreement.status] || {}).label || '체결')} ${esc(agreement.signedDate || '')} · 현장 자동 등록 완료</p>`
             : ''
       }
     </article>`;
 }
 
+export function customerInvitePanelTemplate({ quotes }) {
+  const rows = (quotes || []).slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  const open = rows.filter((quote) => quote.status !== 'contracted');
+  const joined = open.filter((quote) => quote.inviteUsedAt);
+  const contracted = rows.filter((quote) => quote.status === 'contracted');
+  return `
+    <section class="panel invite-panel" data-invite-panel>
+      <div class="section-head">
+        <div>
+          <h2>고객사 초대</h2>
+          <p>현장 방문 · 견적 뒤 담당자에게 링크 한 번에 보내기</p>
+        </div>
+      </div>
+      <div class="admin-stats">
+        <div><strong>${open.length}</strong><span>초대 진행</span></div>
+        <div><strong>${joined.length}</strong><span>담당자 입장</span></div>
+        <div><strong>${contracted.length}</strong><span>계약 체결</span></div>
+        <div><strong>${rows.length}</strong><span>전체 견적</span></div>
+      </div>
+      ${
+        open.length
+          ? `<div class="stack-10">
+               ${open
+                 .map(
+                   (quote) => `
+                 <article class="invite-row" data-invite-row="${esc(quote.id)}">
+                   <header class="invite-row__head">
+                     <div>
+                       <strong>${esc(quote.clientCompany)}</strong>
+                       <span>${esc(quote.no)} · ${esc((QUOTE_STATUS[quote.status] || {}).label || '')}</span>
+                     </div>
+                     <span class="badge ${quote.inviteUsedAt ? 'badge--done' : 'badge--wait'}">${quote.inviteUsedAt ? '담당자 입장' : '미입장'}</span>
+                   </header>
+                   <p class="invite-row__who">
+                     담당자 <strong>${esc(quote.clientContact || '미등록')}</strong>${quote.clientPhone ? ` · ${esc(quote.clientPhone)}` : ''}${quote.clientEmail || quote.clientTaxEmail ? ` · ${esc(quote.clientEmail || quote.clientTaxEmail)}` : ''}
+                   </p>
+                   <p class="invite-row__code"><code>${esc(quote.inviteCode)}</code><span>${esc(inviteUrl(quote.inviteCode))}</span></p>
+                   <div class="invite-row__actions">
+                     <button class="btn btn--primary btn--sm" type="button" data-copy-quote-invite="${esc(quote.id)}">문구 복사</button>
+                     <button class="btn btn--ghost btn--sm" type="button" data-copy-quote-link="${esc(quote.id)}">링크 복사</button>
+                     <a class="btn btn--quiet btn--sm" href="${esc(quoteSmsHref(quote))}" data-sms-invite="${esc(quote.id)}">문자</a>
+                     <a class="btn btn--quiet btn--sm" href="${esc(quoteMailtoHref(quote))}" data-mail-invite="${esc(quote.id)}">메일</a>
+                     <button class="btn btn--quiet btn--sm" type="button" data-regen-quote-invite="${esc(quote.id)}">재발급</button>
+                   </div>
+                 </article>`,
+                 )
+                 .join('')}
+             </div>`
+          : '<p class="tiny muted">초대할 견적이 없습니다. 현장 방문 · 자동 견적에서 견적을 만들면 초대 링크가 함께 발급됩니다.</p>'
+      }
+      <p class="hint">
+        링크를 누르면 초대코드가 입력된 입장 화면이 열립니다. 담당자는 전화번호와 코드로 입장해 담당자 정보를 확인 · 등록하고,
+        견적서 확인 → 계약서 전자서명까지 자기 폰에서 끝냅니다. 링크가 한 번 쓰이면 재발급하세요.
+      </p>
+    </section>`;
+}
+
 export function quotePanelTemplate({ quotes, agreements, state }) {
-  const signed = agreements.filter((row) => row.status === 'signed').length;
+  const signed = agreements.filter((row) => isAgreementClosed(row.status)).length;
   const sent = quotes.filter((row) => row.status === 'sent' || row.status === 'accepted').length;
   return `
     <section class="panel quote-panel" data-quote-panel>
@@ -275,7 +338,7 @@ export function quotePanelTemplate({ quotes, agreements, state }) {
         ${
           quotes.length
             ? quotes
-                .map((quote) => quoteCardTemplate(quote, agreements.find((row) => row.quoteId === quote.id) || null))
+                .map((quote) => quoteCardTemplate(quote, agreements.find((row) => row.id === quote.contractId) || agreements.find((row) => row.quoteId === quote.id) || null))
                 .join('')
             : '<p class="tiny muted">아직 등록된 견적이 없습니다. 위에서 첫 견적을 등록해 보세요.</p>'
         }

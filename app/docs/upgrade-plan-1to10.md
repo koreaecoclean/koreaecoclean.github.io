@@ -1,7 +1,7 @@
 # 코리아 에코크린 통합 운영 앱 — 기존 구조 분석 · 1~10단계 통합 설계안
 
 - 작성일: 2026-11-27
-- 기준 코드: **v2.7.1** (2단계 기록 추가: 2026-11-27 · v2.8.0) (라이브 `https://koreaecoclean.github.io/app/`, 저장소 `koreaecoclean/koreaecoclean.github.io` 의 `app/`)
+- 기준 코드: **v2.9.0** (3단계 기록 추가: 2026-11-27) (라이브 `https://koreaecoclean.github.io/app/`, 저장소 `koreaecoclean/koreaecoclean.github.io` 의 `app/`)
 - 근거 문서: 기획서 「코리아에코크린 통합 운영 앱 고도화 프로젝트」 1~32장 (대표 제공, 2026-11-27)
 - 이 문서의 목적: ① 지금 앱이 실제로 무엇을 하는지 사실대로 정리, ② 기획서 2·3·29·30·31장 기준의 격차 목록, ③ 1단계에서 실제로 바꾼 것, ④ 2~10단계를 기존 구조 위에서 어떻게 붙일지의 설계.
 
@@ -364,6 +364,56 @@
 - **공개 데모 목록**: 대표 · 김미영 · 이정숙 · 박희승 · 이용구 · 이아름 계정에 `demoHidden: true` 를 적용해 로그인 화면 데모 목록에서 비밀번호·코드가 보이지 않게 했습니다(데이터 값 자체는 그대로). 관리자 로그인 화면에 하드코딩돼 있던 본부장 계정 안내도 제거했습니다.
 - **검증**: `tests/test_staff_accounts.py` 52개 + `tests/test_staff_account_render.py` 42개. 새 직원 로그인(전화·비번·코드), 수정 후 새 값 로그인/이전 값 거부, 역할·담당 현장·중지 반영, 중복·형식 거부, 대표 외 차단, 기존 계정 9개 필드·계약서 보존을 확인했습니다.
 
+## 9-D. 3단계에서 실제로 구현한 것 (v2.9.0)
+
+기획서 5·8·9장(고객사 초대 · 고객사 계약 · 계약 완료 후 업장 관리방)을 기존 컬렉션 위에 붙였습니다. **새 컬렉션·스키마 변경·운영 데이터 마이그레이션 없음.**
+
+### 9-D-1. 고객사 초대 (기획서 5장)
+
+| 무엇 | 어디에 | 내용 |
+| --- | --- | --- |
+| 초대 문구 · 링크 · 문자/메일 주소 | `js/invite.js` | `quoteInviteMessage` · `quoteSmsHref`(`sms:`) · `quoteMailtoHref`(`mailto:`) · `inviteUrl` — 한 곳에서 생성 |
+| 초대 패널 | 관리 → 「고객사 초대」 | 견적별 1회용 코드 · `#invite=` 링크 · 문구/링크 복사 · 문자 · 메일 · 재발급. 견적 카드·업장 카드에도 같은 버튼 |
+| 담당자 정보 확인/등록 | 고객 견적 방 · 업장 방 상단 | 이름 · 직함 · 이메일 → `store.updateCustomerContact()` 가 계정 · 견적서 · 계약서 담당자 칸에 반영 |
+| 고객 접근 범위 | `store.listSitesFor` · `getSiteFor` · `listQuotes` · `getQuote` · `listAgreements` · `getAgreement` | 고객은 **자기 계정 업장 + 초대받아 진행 중인 견적의 업장**만. 남의 문서는 목록에도 없고 id로도 `permission-denied`. 고객에게 넘기는 업장은 `siteForCustomer` 로 정리(계약 금액·내부 운영 정보 제외) |
+| 대표 전용 쓰기 | `denyCustomerWrites` | 견적 작성·수정·발송·재발급, 계약서 수정·발송·갱신·종료는 대표만. 고객은 자기 견적으로 계약서를 여는 것까지만 |
+
+### 9-D-2. 계약 자동 생성 · 서명 · 상태 (기획서 8장)
+
+| 무엇 | 어디에 | 내용 |
+| --- | --- | --- |
+| 자동 연동 13가지 | `contracts` (기존 컬렉션) | 고객사명 · 사업자등록번호 · 대표자 · 주소 · 담당자 · 계약 금액 · 청소 주기 · 청소 범위 · 시작일 · 종료일 · 작업시간 · 특약사항 · 계약 담당자 |
+| 승인 → 자동 생성 | `createAgreementFromQuote()` | 대표 금액 승인 시 1건 생성(중복 방지). 업장의 대표자·사업자번호, 견적의 방문 기록 작업시간·구역 체크 범위를 그대로 승계 |
+| 서명 증빙 | `signatureAudit` · `docHash` · `docAlgo` · `docHashAt` | 서명자 · 직함 · 연락처 · 일시 · 방식 + 서명 시점 문서 해시(SHA-256, 미지원 기기 간이 해시) |
+| 해시 검증 | `agreementCanonicalText()` · `agreementDocHash()` · `verifyAgreementHash()` | 서명 뒤 내용이 바뀌면 불일치. 시트의 [문서 확인값 검증] |
+| 상태 | `AGREEMENT_STATUS` | 작성 중(초안) · 고객 확인 대기(발송) · 체결 완료 · 갱신 완료 · 계약 종료 |
+| 수정 이력 | `updateAgreement()` · `updateAgreementMeta()` | 바뀐 칸의 전/후 값을 `history[]` 에 기록. 체결·갱신·종료 계약서는 수정·재서명 차단 |
+| 갱신 | `renewAgreement()` | 기존 계약서 ‘갱신 완료’ + 새 초안(`renewedFrom`). 업장 `contractId`, 견적 `contractId`, 관리방 계약 연결을 새 계약서로 |
+| 종료 | `terminateAgreement()` | 종료일·사유 기록, 관리방 `status:'ended'` (기록은 보관) |
+
+### 9-D-3. 업장 관리방 자동 생성 (기획서 9장)
+
+- `signAgreement()` 가 서명과 동시에 `site.room = {status:'active', createdAt, contractId, quoteId, openedBy, pyeong, frequency, note}` 를 만들고, 업장 이력에 「고객 계약 체결 · 업장 관리방 생성」을 남깁니다.
+- 이어지는 정보: 고객사 정보(상호·사업자번호·대표자·주소·담당자·연락처) · 계약서(`site.contractId`) · 견적서(`site.quoteId`) · 최초 현장 사진(`baseline.quote.photos` + `surveyPhotos`) · 평수 · 주기 · 청소 공정(`ops.process` = 계약 범위 + 추가 업무).
+- 견적 방 고객 계정은 새 업장 방으로 옮기고 grant 를 만듭니다. 계약 담당자 번호의 기존 계정도 (아직 방이 없으면) 연결합니다.
+- 업장이 이미 있으면 새로 만들지 않습니다(1단계 연결 로직 유지). 화면: 업장 연결 정보에 **관리방 상태 · 서명 증빙 · 계약서 열기**, 고객 관리 탭에 관리방 상태·청소 조건.
+
+### 9-D-4. 검증 (2026-11-27)
+
+| 테스트 | 결과 | 무엇을 보나 |
+| --- | --- | --- |
+| `tests/test_stage3_contract.py` (신규) | **103/103** | 초대 문구·링크·문자/메일, 담당자 등록·동기화, 고객 접근 범위(업장·견적·계약), 13가지 자동 연동, 해시·변조 감지, 수정 이력, 갱신·종료, 관리방·grant·사진·공정 이어짐, 라이브 63행 보존 |
+| `tests/test_stage3_render.py` (신규) | **53/53** | 초대 패널, 계약서 자동 연동 표·관리 블록(대표만), 서명 증빙, 고객 담당자/계약/관리 탭, 직원 화면 비노출 |
+| 기존 13종 | 787/787 | `run_tests` 204 · `data_links` 52 · `quote_survey` 80 · `quote_render` 73 · `role_permissions` 61 · 직원·계약·장비·매뉴얼 회귀 |
+| `run_views` · `browser_test` | ALL PASSED · 273/273 | 화면 렌더 · 실제 Chromium 흐름(콘솔 오류 0) |
+| `check_static.py` | ALL PASSED | JS·CSS·HTML·경로·권한 분리 |
+
+### 9-D-5. 남은 것
+
+- 서버 단위 권한(Supabase Auth·RLS)은 여전히 미적용 — 고객 문서 접근 제한은 앱 저장소 계층까지입니다.
+- 계약서 PDF는 지금처럼 브라우저 인쇄로 저장합니다(서버 PDF 생성은 7단계). 계약서 이메일 자동 발송(Brevo)은 7단계 PDF와 함께.
+- 갱신 계약서의 서명 요청은 초대코드가 아니라 고객 방(이미 입장한 계정)에서 이루어집니다.
+
 ## 10. 구현 상태 표기 규칙 (기획서 30장 7·8항)
 
 화면에서 "되는 것처럼" 보이지 않게 다음 규칙을 씁니다.
@@ -393,10 +443,11 @@
 - 데이터: `site.survey` · `site.surveyPhotos[]` · `quote.survey` · `quote.estimate` · `quote.approval` · `meta.quoteSettings` · `meta.quoteChecklist` (스키마 변경 없음).
 - 검증: 신규 153개 포함 576개 통과. 상세는 9-B장.
 
-### 3단계 — 고객 계약 (기획서 5·8장)
-- 재사용: `contracts` · 전자서명 · PDF(인쇄) · 사업자등록증 업로드 · `#invite=Q-` 링크.
-- 신규: 계약 변경 이력(이미 `history`), 계약 갱신/종료 상태(`active/expired/terminated`), 전자서명 증빙(서명자·시각·문서 해시).
-- 외부설정: 메일 발송(Brevo) — 계약서 PDF 첨부는 7단계 PDF 생성과 함께.
+### 3단계 — 고객 계약 (기획서 5·8·9장) ✅ v2.9.0
+- 구현: 초대 패널(문구·링크·문자·메일) · 담당자 정보 확인/등록 · 고객 접근 범위 강화 · 계약 자동 연동 13가지 · 전자서명 증빙(서명자·일시·문서 해시) · 계약 상태(초안/발송/체결/갱신/종료) · 수정 이력 · 갱신·종료 · 업장 관리방 자동 생성.
+- 데이터: `site.room` · `contracts.signatureAudit/docHash/docAlgo/docVersion/renewedFrom/terminatedAt` · `quotes.clientCeo/clientEmail` (스키마 변경 없음).
+- 검증: 신규 156개 포함 887개 + 브라우저 273개 통과. 상세는 9-D장.
+- 외부설정: 메일 자동 발송(Brevo) — 계약서 PDF 첨부는 7단계 PDF 생성과 함께.
 
 ### 4단계 — 업장 관리방 (기획서 9·10장)
 - 재사용: `sites.ops`(출입·쓰레기·주차·공정), `manual`, `baseline` 사진, 고객 방 ③.
