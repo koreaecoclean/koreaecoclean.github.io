@@ -809,7 +809,6 @@ export function createLeaderView(container) {
     const required = group.required;
     const max = Number(group.max) || 0;
     const full = max > 0 && photos.length >= max;
-    const caption = group.key === 'issue' ? '특이사항 사진 추가' : '사진 촬영 · 선택';
 
     return `
       <section class="panel photo-panel photo-panel--${group.key}">
@@ -831,8 +830,8 @@ export function createLeaderView(container) {
           </label>
           <label class="upload-pick__btn" for="photo-${group.key}-album">
             ${icons.image}
-            <strong>${esc(caption)}</strong>
-            <span>앨범에서 여러 장</span>
+            <strong>앨범에서 선택</strong>
+            <span>여러 장 한 번에</span>
           </label>
         </div>
         <input id="photo-${group.key}-camera" data-photo-input="${group.key}" type="file"
