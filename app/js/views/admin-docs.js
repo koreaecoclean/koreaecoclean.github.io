@@ -1389,18 +1389,14 @@ export function staffAccountPanelTemplate({ accounts, sites, state }) {
               </div>
               <div class="field">
                 <label for="sa-password">비밀번호 <span class="req">*</span></label>
-                <div class="inline-field">
-                  <input class="input" id="sa-password" type="text" maxlength="30" value="" placeholder="${editing ? '비우면 기존 비밀번호 유지' : '4자 이상'}">
-                  <button class="link-btn" type="button" data-gen-password>만들기</button>
-                </div>
+                <input class="input" id="sa-password" type="text" maxlength="30" value="" placeholder="${editing ? '비우면 기존 비밀번호 유지' : '4자 이상'}">
+                <div class="inline-actions"><button class="link-btn link-btn--dark" type="button" data-gen-password>임시 비밀번호 만들기</button></div>
               </div>
             </div>
             <div class="field">
               <label for="sa-code">팀장 고유코드 <span class="req">*</span></label>
-              <div class="inline-field">
-                <input class="input" id="sa-code" type="text" maxlength="8" value="${esc(values.leaderCode)}" placeholder="예: TL-0000">
-                <button class="link-btn" type="button" data-gen-code>자동생성</button>
-              </div>
+              <input class="input" id="sa-code" type="text" maxlength="8" value="${esc(values.leaderCode)}" placeholder="예: TL-0000">
+              <div class="inline-actions"><button class="link-btn link-btn--dark" type="button" data-gen-code>자동생성</button></div>
               <span class="field__hint">현장 보고 로그인에 함께 쓰는 코드입니다. 직접 입력하거나 자동생성(TL-0000)을 쓰세요.</span>
             </div>
             <div class="field">
@@ -1411,7 +1407,7 @@ export function staffAccountPanelTemplate({ accounts, sites, state }) {
               </select>
             </div>
             <div class="field">
-              <label>담당 현장 <span class="tiny muted">(${values.assignedSiteIds.length}곳 선택)</span></label>
+              <label>담당 현장</label>
               <div class="survey-checks account-sites">${siteChips || '<span class="tiny muted">등록된 현장이 없습니다.</span>'}</div>
             </div>
             ${

@@ -3285,6 +3285,7 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .account-row .staff-row__who .avatar { display: grid; place-items: center; font-size: 13px; color: #fff; }
 .account-row .staff-row__actions { justify-content: flex-start; margin-top: 3px; }
 .account-sites { max-height: 220px; overflow-y: auto; }
-.inline-field { display: flex; align-items: center; gap: 6px; }
-.inline-field .input { flex: 1; min-width: 0; }
-.inline-field .link-btn { flex: 0 0 auto; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); font-weight: 800; }
+.inline-actions { display: flex; justify-content: flex-end; }
+.inline-actions .link-btn { padding: 7px 11px; }
+.link-btn--dark { color: var(--brand-800); background: var(--surface); border-color: var(--line-strong); }
+.link-btn--dark:hover { background: var(--brand-50); }
