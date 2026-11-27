@@ -500,12 +500,13 @@ export function createCustomerView(container) {
         </article>`);
     });
     pending.forEach((agreement) => {
+      const sent = agreement.status === 'sent';
       cards.push(`
         <article class="doc-banner doc-banner--sign">
-          <span class="doc-banner__tag">계약서 확인 및 서명</span>
+          <span class="doc-banner__tag">${sent ? '계약서 확인 및 서명' : '계약서 준비 중'}</span>
           <strong>${esc(agreement.clientBusinessName || '표준 계약서')}</strong>
-          <p>계약 내용을 확인하시고 전자서명해 주세요. 서명하시면 정기청소가 바로 시작됩니다.</p>
-          <button class="btn btn--primary btn--sm" type="button" data-open-agreement="${esc(agreement.id)}">계약서 열기 · 서명</button>
+          <p>${sent ? '계약 내용을 확인하시고 전자서명해 주세요. 서명하시면 정기청소가 바로 시작됩니다.' : '대표가 계약서를 발송하면 확인하고 서명하실 수 있습니다.'}</p>
+          <button class="btn btn--primary btn--sm" type="button" data-open-agreement="${esc(agreement.id)}">${sent ? '계약서 열기 · 서명' : '계약서 확인'}</button>
         </article>`);
     });
     signed.forEach((agreement) => {
@@ -674,7 +675,7 @@ export function createCustomerView(container) {
             : ''
         }
         <button class="btn btn--primary btn--block" type="button" data-open-agreement="${esc(agreement.id)}">
-          ${closed ? '계약서 보기 · 인쇄' : '계약서 확인 · 서명'}
+          ${closed ? '계약서 보기 · 인쇄' : agreement.status === 'sent' ? '계약서 확인 · 서명' : '계약서 확인 (발송 대기)'}
         </button>
         ${
           audit.hash

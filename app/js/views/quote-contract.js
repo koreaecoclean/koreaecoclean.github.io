@@ -752,7 +752,7 @@ function manageBlock(agreement) {
 }
 
 export function agreementSheetHtml(agreement, { role = 'admin' } = {}) {
-  const editable = role === 'customer' && !isAgreementClosed(agreement.status);
+  const editable = role === 'customer' && agreement.status === 'sent';
   const clauses = CONTRACT_CLAUSES.map((clause) => clauseHtml(clause, agreement)).join('');
   return `
     <article class="sheet doc doc--contract" data-doc="agreement">
@@ -943,7 +943,9 @@ export async function openAgreementSheet(agreementId, options = {}) {
             .join('')
         : closed
           ? `<p class="sheet-actions__note">체결 완료된 계약서입니다. 인쇄하거나 PDF로 저장할 수 있습니다.</p>`
-          : actionButton('계약 체결 완료', 'sign-agreement');
+          : agreement.status === 'sent'
+            ? actionButton('계약 체결 완료', 'sign-agreement')
+            : `<p class="sheet-actions__note">대표가 계약서를 발송하면 이 자리에서 전자서명할 수 있습니다.</p>`;
 
     renderSheet({
       title: `도급 계약서 · ${agreement.clientBusinessName || '고객사'}`,

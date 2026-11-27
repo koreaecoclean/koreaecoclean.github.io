@@ -3814,6 +3814,10 @@ export class Store {
       throw new StoreError('email-invalid', '이메일 주소를 확인해 주세요.');
     }
     const now = new Date().toISOString();
+    const contactChanged =
+      name !== toText(account.name) ||
+      title !== toText(account.title) ||
+      email !== toText(account.email);
     const next = {
       ...account,
       name,
@@ -3851,6 +3855,8 @@ export class Store {
       if (!account.siteId || agreement.siteId !== account.siteId) continue;
       // 서명된 계약서 원문은 그대로 둡니다(문서 해시 보존). 담당자 변경은 계정·견적에만 반영하고 이력에 남깁니다.
       const signed = agreement.status === 'signed' || agreement.status === 'renewed' || agreement.status === 'terminated';
+      // 바뀐 담당자 정보가 없으면 서명된 계약서 이력에 같은 줄을 되풀이하지 않습니다.
+      if (!contactChanged) continue;
       const agreementPatch = {};
       if (!signed && name && agreement.contactName !== name) agreementPatch.contactName = name;
       if (!Object.keys(agreementPatch).length && !signed) continue;
@@ -4114,6 +4120,10 @@ export class Store {
     }
     if (isCustomerActor(actor) && !this._agreementAllowed(agreement, actor)) {
       throw new StoreError('permission-denied', '다른 고객·다른 업장의 계약서에는 서명할 수 없습니다.');
+    }
+    // 고객은 대표가 발송한 계약서에만 서명합니다(초안 상태에서 먼저 서명하지 않도록).
+    if (isCustomerActor(actor) && agreement.status !== 'sent') {
+      throw new StoreError('contract-not-sent', '대표가 계약서를 발송하면 서명할 수 있습니다.');
     }
     if (agreement.status === 'signed' && agreement.siteId) {
       return { agreement, site: await this.getSite(agreement.siteId) };
