@@ -404,7 +404,7 @@
 | --- | --- | --- |
 | `tests/test_stage3_contract.py` (신규) | **104/104** | 초대 문구·링크·문자/메일, 담당자 등록·동기화, 고객 접근 범위(업장·견적·계약), 13가지 자동 연동, 해시·변조 감지, 수정 이력, 갱신·종료, 관리방·grant·사진·공정 이어짐, 라이브 63행 보존 |
 | `tests/test_stage3_render.py` (신규) | **55/55** | 초대 패널, 계약서 자동 연동 표·관리 블록(대표만), 서명 증빙, 고객 담당자/계약/관리 탭, 직원 화면 비노출 |
-| 기존 13종 | 787/787 | `run_tests` 204 · `data_links` 52 · `quote_survey` 80 · `quote_render` 73 · `role_permissions` 61 · 직원·계약·장비·매뉴얼 회귀 |
+| 기존 13종 | 731/731 | `run_tests` 204 · `quote_survey` 80 · `quote_render` 73 · `role_permissions` 61 · `data_links` 52 · `staff_accounts` 52 · `fastfive` 49 · `staff_account_render` 42 · `leader_migration` 58 · `contract_migration` 20 · `admin_render` 15 · `supply_migration` 13 · `admin_migration` 12 |
 | `run_views` · `browser_test` | ALL PASSED · 273/273 | 화면 렌더 · 실제 Chromium 흐름(콘솔 오류 0) |
 | `check_static.py` | ALL PASSED | JS·CSS·HTML·경로·권한 분리 |
 
