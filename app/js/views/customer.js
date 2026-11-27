@@ -704,7 +704,7 @@ export function createCustomerView(container) {
       </section>`;
   }
 
-  function profilePanelTemplate(session) {
+  function profilePanelTemplate(session, { open = false } = {}) {
     const account = session.account || {};
     const confirmed = !!account.contactConfirmedAt;
     const name = account.name || session.name || '';
@@ -733,11 +733,12 @@ export function createCustomerView(container) {
         <p class="tiny muted">연락처 ${esc(session.phone || '')} · 이 번호가 입장 번호입니다.</p>
         <button class="btn ${confirmed ? 'btn--quiet' : 'btn--primary'} btn--sm" type="submit">담당자 정보 저장</button>
       </form>`;
-    // 확인이 끝난 담당자 정보는 접어 두고, 필요할 때만 펼쳐 고칩니다.
-    if (confirmed) {
+    // 확인이 끝났거나 이미 쓰던 업장 방이면 접어 두고, 필요할 때만 펼쳐 고칩니다.
+    // (초대받아 처음 들어온 견적 방에서만 크게 열어 확인을 요청합니다.)
+    if (confirmed || !open) {
       return `
         <details class="settings customer-profile" data-customer-profile>
-          <summary>담당자 정보 · ${esc(name)} ${esc(title)} (확인 완료)</summary>
+          <summary>담당자 정보 · ${esc(name)} ${esc(title)} ${confirmed ? '(확인 완료)' : '(확인 전)'}</summary>
           <div class="settings__body">${form}</div>
         </details>`;
     }
@@ -813,7 +814,7 @@ export function createCustomerView(container) {
         </p>
       </section>
 
-      ${profilePanelTemplate(session)}
+      ${profilePanelTemplate(session, { open: true })}
 
       ${roomTabsTemplate(tab, false)}
 
