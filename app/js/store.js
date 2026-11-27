@@ -2113,6 +2113,13 @@ export class Store {
       createdAt: now,
       updatedAt: now,
       source: 'app',
+      history: withHistory([], makeHistoryEntry({
+        actor: toText(input.actor) || '앱',
+        action: '견적 작성',
+        note: site
+          ? `${site.name} 업장 정보에서 자동 승계 · ${company} · 월 ${amount.toLocaleString('ko-KR')}원`
+          : `${company} · 월 ${amount.toLocaleString('ko-KR')}원`,
+      })),
     });
     await this.adapter.put('quotes', quote);
     if (site) {
@@ -2121,11 +2128,6 @@ export class Store {
       if (Object.keys(patch).length) {
         await this.adapter.put('sites', { ...(await this.adapter.get('sites', site.id)), ...patch });
       }
-      await this.recordHistory('quotes', quote.id, {
-        actor: toText(input.actor) || '앱',
-        action: '견적 작성',
-        note: `${site.name} 업장 정보에서 자동으로 가져옴 · ${quote.no}`,
-      });
     }
     this._notify();
     return normalizeQuote(await this.adapter.get('quotes', quote.id));
