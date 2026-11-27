@@ -3,7 +3,7 @@
  *
  * 입장: 전화번호 + 비밀번호 + 팀장 고유코드 (대표가 발급/관리)
  * 보고: ① 시건장치 확인 사진 ② 업장별 맞춤 청소 사진 ③ 특이사항 사진(선택) + 점검 항목 + 메모
- * 등록한 보고는 고객 방에 바로 표시됩니다.
+ * 등록한 보고는 최고관리자(대표) 확인 후 고객 방에 제출됩니다.
  */
 
 import {
@@ -522,7 +522,7 @@ export function createLeaderView(container) {
           <div class="step"><span class="step__num">2</span><div><strong>업장별 맞춤 청소 사진</strong><span>사무실·병원·매장·헬스장에 맞춘 결과 사진. (필수)</span></div></div>
           <div class="step"><span class="step__num">3</span><div><strong>새로 발생한 특이사항</strong><span>문제가 있을 때만 사진과 메모를 남깁니다. (선택)</span></div></div>
         </div>
-        <p class="hint" style="margin-top:10px">등록된 보고는 고객의 전용 방에 바로 표시됩니다.</p>
+        <p class="hint" style="margin-top:10px">등록된 보고는 최고관리자(대표) 확인을 거쳐 고객의 전용 방에 제출됩니다.</p>
       </section>
     `;
   }
