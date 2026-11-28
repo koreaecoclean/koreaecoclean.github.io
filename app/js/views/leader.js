@@ -450,6 +450,7 @@ export function createLeaderView(container) {
       leader: session.name,
       leaderRole: session.title || '팀장',
       duration: 90,
+      durationTouched: false,
       note: '',
       issueNote: '',
       photos: emptyPhotos(),
@@ -1622,6 +1623,11 @@ export function createLeaderView(container) {
     const meta = CATEGORY_META[site.category] || {};
     const hasManual = manualDays(site).length > 0;
     const workEntry = scheduleEntryOfDate(site.id, draft.date);
+    // 현장 도착 · 청소 완료로 계산된 소요 시간이 있으면 처음 열 때 그 값으로 채워 둡니다
+    //  (팀장이 직접 고친 뒤에는 덮어쓰지 않음).
+    if (!draft.durationTouched && workEntry && Number(workEntry.workMinutes) > 0) {
+      draft.duration = Number(workEntry.workMinutes);
+    }
 
     return `
       ${leaderBarTemplate(session)}
@@ -2461,7 +2467,10 @@ export function createLeaderView(container) {
     }
     if (target.id === 'r-date') draft.date = target.value || toISODate();
     if (target.id === 'r-time') draft.time = target.value || nowHHMM();
-    if (target.id === 'r-duration') draft.duration = Number(target.value) || 90;
+    if (target.id === 'r-duration') {
+      draft.duration = Number(target.value) || 90;
+      draft.durationTouched = true;
+    }
     if (target.id === 'r-note') draft.note = target.value;
     if (target.id === 'r-issue-note') draft.issueNote = target.value;
   }
@@ -2479,7 +2488,10 @@ export function createLeaderView(container) {
     if (target.id === 'r-issue-note') draft.issueNote = target.value;
     if (target.id === 'r-date' && target.value) draft.date = target.value;
     if (target.id === 'r-time' && target.value) draft.time = target.value;
-    if (target.id === 'r-duration') draft.duration = Number(target.value) || 90;
+    if (target.id === 'r-duration') {
+      draft.duration = Number(target.value) || 90;
+      draft.durationTouched = true;
+    }
   }
 
   async function onClick(event) {
@@ -2530,6 +2542,7 @@ export function createLeaderView(container) {
       const minutes = Number(fillDuration.dataset.fillDuration) || 0;
       if (minutes > 0) {
         state.draft.duration = minutes;
+        state.draft.durationTouched = true;
         const input = $('#r-duration', container);
         if (input) input.value = String(minutes);
         toast(`소요 시간을 ${durationText(minutes)}로 채웠습니다.`, { duration: 4000 });
