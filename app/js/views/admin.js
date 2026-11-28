@@ -6,8 +6,8 @@
  * - 고객 계정과 방 입장 상태 확인
  */
 
-import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate, fmtDateLong, fmtTime, openLightbox, modeSwitchTemplate } from '../ui.js';
-import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, reportNoOf, countReportPhotos, reportStatusKey, monthGrid, entriesByDate, CALENDAR_WEEKDAYS, QUOTE_STATUS, AGREEMENT_STATUS, SURVEY_PHOTO_AREAS, QUOTE_TEAM_SIZES, QUOTE_DIFFICULTIES, parsePyeong, estimateQuote, handoverPhotoCatalog, HANDOVER_ACCESS_TYPES, HANDOVER_CHECK_KEYS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, SCHEDULE_DAYS, SCHEDULE_STATUS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, DEFAULT_GPS_RADIUS_M, siteSchedule, scheduleDayText, scheduleTimeText, visitWorkOf, clockOfISO, clockLabel, ISSUE_STATUS, issueStatus, issueStatusKey, issueTitleOf, issueStats, isIssueOpen, isExtraQuote, INVOICE_STATUS, INVOICE_STATUS_ORDER, TAX_INVOICE_STATUS, PAYOUT_STATUS, billingMonthKey, billingMonthLabel, shiftBillingMonth, invoiceStatusKey, invoiceStats, payoutStats, payoutStatusKey } from '../store.js';
+import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate, fmtDateLong, fmtTime, openLightbox, modeSwitchTemplate, localDateOf } from '../ui.js';
+import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, reportNoOf, countReportPhotos, reportStatusKey, monthGrid, entriesByDate, CALENDAR_WEEKDAYS, QUOTE_STATUS, AGREEMENT_STATUS, SURVEY_PHOTO_AREAS, QUOTE_TEAM_SIZES, QUOTE_DIFFICULTIES, parsePyeong, estimateQuote, handoverPhotoCatalog, HANDOVER_ACCESS_TYPES, HANDOVER_CHECK_KEYS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, SCHEDULE_DAYS, SCHEDULE_STATUS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, DEFAULT_GPS_RADIUS_M, siteSchedule, scheduleDayText, scheduleTimeText, visitWorkOf, clockOfISO, clockLabel, ISSUE_STATUS, issueStatus, issueStatusKey, issueTitleOf, issueStats, isIssueOpen, isExtraQuote, INVOICE_STATUS, INVOICE_STATUS_ORDER, TAX_INVOICE_STATUS, PAYOUT_STATUS, billingMonthKey, billingMonthLabel, shiftBillingMonth, invoiceStatusKey, invoiceStats, payoutStats, payoutStatusKey, COMPLAINT_STATUS, COMPLAINT_TYPES, complaintStats, complaintStatus, complaintStatusKey, complaintTypeLabel, isComplaintOpen, EVAL_ITEMS, EVAL_TOTAL_MAX, evaluationGrade, evaluationMonthKey } from '../store.js';
 import { openReportSheet } from './report-sheet.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import { preparePhoto } from '../photos.js';
@@ -122,6 +122,10 @@ export function createAdminView(container) {  const state = {
     issueClose: null,
     // 9단계 — 청구 · 입금 · 미수금 · 도급 정산
     billing: { month: '', filter: '', open: '', extraQuoteId: '' },
+    // 10단계 — 직원 100점 평가 · 고객 컴플레인 · 대표 대시보드 접기
+    evaluation: { month: '', open: '', draft: null, memo: '' },
+    complaints: { filter: '', open: '' },
+    folded: {},
   };
   let mounted = false;
   let renderToken = 0;
@@ -407,7 +411,7 @@ export function createAdminView(container) {  const state = {
                   <span data-rev-field="contractAmount">${esc(fmtNumber(row.contractAmount))}</span>
                   <span data-rev-field="subcontractAmount">${esc(fmtNumber(row.subcontractAmount))}</span>
                   <span data-rev-field="feeAmount">${esc(fmtNumber(row.feeAmount))}</span>
-                  <span class="rev-net" data-rev-field="netProfit">${esc(fmtNumber(row.netProfit))}</span>
+                  <span class="rev-net" data-rev-field="netProfit">${row.netProfit < 0 ? '-' : ''}${esc(fmtNumber(row.netProfit))}</span>
                 </div>`,
             )
             .join('')}
@@ -1419,6 +1423,146 @@ export function createAdminView(container) {  const state = {
       if (byName) return byName;
       return String(a.dueDate || '').localeCompare(String(b.dueDate || ''));
     });
+  }
+
+  /* ---------------- 10단계 — 컴플레인 · 100점 평가 처리 ---------------- */
+
+  async function submitEvaluation(form) {
+    if (state.busy) return;
+    const contractId = form.dataset.evalForm;
+    const itemScores = {};
+    form.querySelectorAll('[data-eval-item]').forEach((input) => {
+      itemScores[input.dataset.evalItem] = Number(input.value) || 0;
+    });
+    const memo = form.querySelector('[data-eval-memo]')?.value || '';
+    state.busy = true;
+    try {
+      const saved = await store.saveStaffEvaluation(
+        {
+          staffContractId: contractId,
+          month: state.evaluation.month,
+          itemScores,
+          memo,
+          evaluatorName: state.session ? state.session.name : '',
+        },
+        { actor: state.session },
+      );
+      state.evaluation.draft = saved.itemScores;
+      state.evaluation.memo = saved.memo;
+      await render();
+      toast(`${saved.name} ${billingMonthLabel(saved.month)} 평가를 ${saved.total}점 ${saved.grade}로 저장했습니다. 감점 ${saved.penalty}점 반영.`, { duration: 8000 });
+    } catch (error) {
+      toast(error.message || '평가를 저장하지 못했습니다.', { tone: 'error' });
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  async function submitComplaintForm(form) {
+    if (state.busy) return;
+    state.busy = true;
+    try {
+      const saved = await store.addComplaint(
+        {
+          siteId: form.querySelector('[data-complaint-site]')?.value || '',
+          type: form.querySelector('[data-complaint-type]')?.value || 'etc',
+          title: form.querySelector('[data-complaint-title]')?.value || '',
+          content: form.querySelector('[data-complaint-content]')?.value || '',
+          reporterName: state.session ? state.session.name : '대표',
+        },
+        { actor: state.session },
+      );
+      await render();
+      toast(`컴플레인 ${saved.no || ''}을 접수했습니다.`, { duration: 7000 });
+    } catch (error) {
+      toast(error.message || '컴플레인을 접수하지 못했습니다.', { tone: 'error' });
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  function complaintBoxOf(button) {
+    const card = button.closest('[data-complaint-card]');
+    return card ? card.querySelector('[data-complaint-handle-box]') : null;
+  }
+
+  async function setComplaintStatus(button, status) {
+    try {
+      await store.updateComplaint(
+        button.dataset.complaintSite,
+        button.dataset.complaintHandle,
+        { status, by: state.session ? state.session.name : '' },
+        { actor: state.session },
+      );
+      await render();
+      toast(status === 'resolved' ? '해결 완료로 저장했습니다.' : '조치 중으로 바꿨습니다.');
+    } catch (error) {
+      toast(error.message || '상태를 바꾸지 못했습니다.', { tone: 'error' });
+    }
+  }
+
+  async function saveComplaintRequest(button) {
+    const box = complaintBoxOf(button);
+    const assigneeName = box ? box.querySelector('[data-complaint-assignee]')?.value || '' : '';
+    const request = box ? box.querySelector('[data-complaint-request]')?.value || '' : '';
+    try {
+      await store.updateComplaint(
+        button.dataset.complaintSite,
+        button.dataset.complaintSave,
+        { assigneeName, request, by: state.session ? state.session.name : '' },
+        { actor: state.session },
+      );
+      await render();
+      toast(request ? '담당 팀장에게 조치 요청을 전달했습니다. 팀장 화면에 요청 내용과 상태가 보입니다.' : '담당을 저장했습니다.', { duration: 8000 });
+    } catch (error) {
+      toast(error.message || '조치 요청을 저장하지 못했습니다.', { tone: 'error' });
+    }
+  }
+
+  async function resolveComplaint(button) {
+    const box = complaintBoxOf(button);
+    const assigneeName = box ? box.querySelector('[data-complaint-assignee]')?.value || '' : '';
+    const request = box ? box.querySelector('[data-complaint-request]')?.value || '' : '';
+    const note = box ? box.querySelector('[data-complaint-note]')?.value || '' : '';
+    const prevention = box ? box.querySelector('[data-complaint-prevention]')?.value || '' : '';
+    try {
+      await store.updateComplaint(
+        button.dataset.complaintSite,
+        button.dataset.complaintResolve,
+        { assigneeName, request, resolutionNote: note, preventionNote: prevention, status: 'resolved', by: state.session ? state.session.name : '' },
+        { actor: state.session },
+      );
+      state.complaints.open = '';
+      await render();
+      toast('해결 완료로 저장했습니다. 고객 화면에 조치 내용이 보입니다.', { duration: 8000 });
+    } catch (error) {
+      toast(error.message || '해결 완료로 저장하지 못했습니다.', { tone: 'error' });
+    }
+  }
+
+  async function openComplaintPhoto(complaintId, siteId, startIndex) {
+    const complaint = await store.getComplaint(siteId, complaintId, { actor: state.session });
+    if (!complaint) return;
+    const items = [];
+    for (const photo of complaint.photos || []) {
+      const url = await store.photoFullUrl(photo);
+      if (!url) continue;
+      items.push({
+        url,
+        caption: [
+          complaint.siteName,
+          complaint.title,
+          complaint.createdAt ? fmtDateLong(String(complaint.createdAt).slice(0, 10)) : '',
+        ]
+          .filter(Boolean)
+          .join(' · '),
+      });
+    }
+    if (!items.length) {
+      toast('사진을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.', { tone: 'error' });
+      return;
+    }
+    openLightbox(items, Math.min(Number(startIndex) || 0, items.length - 1));
   }
 
   async function generateInvoicesForMonth(button) {
@@ -2845,6 +2989,492 @@ export function createAdminView(container) {  const state = {
     toast(`현장 사진 ${added}장을 ${areaLabel} 구역에 등록했습니다. 기존 사진은 그대로 남습니다.`);
   }
 
+  /* ---------------- 10단계 — 오늘 운영 종합 대시보드 ---------------- */
+
+  /** 대표 「관리」 최상단 — 오늘 운영 현황을 카드 6개로 요약합니다. */
+  function operationsDashboardTemplate({ schedule, pendingReports, returnedReports, issues, complaints, billing, payouts }) {
+    const today = (schedule && schedule.today) || toISODate();
+    const todayEntries = ((schedule && schedule.entries) || []).filter((entry) => entry.date === today);
+    const done = todayEntries.filter((entry) => entry.status === 'done').length;
+    const planned = todayEntries.filter((entry) => entry.status === 'planned' || entry.status === 'active').length;
+    const missed = todayEntries.filter((entry) => entry.status === 'missed').length;
+    const issue = issueStats(issues);
+    const comp = complaintStats(complaints);
+    const pay = payoutStats(payouts);
+    const cards = [
+      {
+        key: 'schedule',
+        label: '오늘 일정',
+        value: `완료 ${done}`,
+        unit: `예정 ${planned}`,
+        note: `미방문 ${missed}곳 · 오늘 ${todayEntries.length}건`,
+      },
+      {
+        key: 'approval',
+        label: '보고서',
+        value: `확인 대기 ${pendingReports.length}`,
+        unit: `수정 요청 ${returnedReports.length}`,
+        note: '누르면 확인 · 수정 요청 화면으로',
+      },
+      {
+        key: 'issue',
+        label: '특이사항',
+        value: `미검토 ${issue.open}`,
+        unit: `진행 ${issue.active}`,
+        note: `전체 ${issue.total}건 · 발견 우선`,
+      },
+      {
+        key: 'complaint',
+        label: '컴플레인',
+        value: `미해결 ${comp.unresolved}`,
+        unit: `접수 ${comp.open} · 조치 중 ${comp.handling}`,
+        note: `해결 ${comp.resolved}건 · 전체 ${comp.total}건`,
+      },
+      {
+        key: 'billing',
+        label: '이 달 청구 · 입금',
+        value: `청구 ${fmtNumber(billing.invoicedTotal)}원`,
+        unit: `입금 ${fmtNumber(billing.paidTotal)}원`,
+        note: `미수 ${fmtNumber(billing.unpaidTotal)}원 · ${billing.monthLabel}`,
+      },
+      {
+        key: 'payout',
+        label: '도급 정산 대기',
+        value: `대기 ${pay.scheduledCount}건`,
+        unit: `지급 완료 ${pay.paidCount}건`,
+        note: `대기 ${fmtNumber(pay.scheduled)}원 · ${billing.monthLabel}`,
+      },
+    ];
+    return `
+      <section class="panel ops-dash" data-ops-dashboard>
+        <div class="section-head">
+          <div>
+            <h2>오늘 운영 종합 대시보드</h2>
+            <p>${esc(`${today.slice(0, 4)}년 ${fmtDateLong(today)}`)} · 대표 전용</p>
+          </div>
+        </div>
+        <div class="ops-dash__grid">
+          ${cards
+            .map(
+              (card) => `
+            <button class="ops-card" type="button" data-dash-card="${card.key}" data-dash-go="${card.key}" aria-label="${esc(`${card.label} 화면으로 이동`)}">
+              <span class="ops-card__label">${esc(card.label)}</span>
+              <strong class="ops-card__value">${esc(card.value)}${card.unit ? `<em> ${esc(card.unit)}</em>` : ''}</strong>
+              <small class="ops-card__note">${esc(card.note)}</small>
+            </button>`,
+            )
+            .join('')}
+        </div>
+        <p class="hint">카드를 누르면 해당 관리 화면으로 이동합니다. 패널 머리글의 <strong>[접기]</strong>로 화면을 줄일 수 있습니다.</p>
+      </section>`;
+  }
+
+  /* ---------------- 10단계 — 고객 컴플레인 관리 ---------------- */
+
+  const COMPLAINT_FILTERS = [
+    { key: '', label: '전체' },
+    { key: 'unresolved', label: '미해결' },
+    { key: 'open', label: '접수' },
+    { key: 'handling', label: '조치 중' },
+    { key: 'resolved', label: '해결' },
+  ];
+
+  function complaintCardTemplate(complaint, { leaders, sites }) {
+    const status = complaintStatus(complaint);
+    const key = complaintStatusKey(complaint);
+    const open = state.complaints.open === complaint.id;
+    const photos = complaint.photos || [];
+    const history = complaint.history || [];
+    return `
+      <article class="complaint-card" data-complaint-card="${esc(complaint.id)}" data-complaint-status="${esc(key)}">
+        <div class="complaint-card__head">
+          <div>
+            <strong>${esc(complaint.title)}</strong>
+            <span>${esc(complaint.siteName || '')} · ${esc(complaintTypeLabel(complaint.type))} · ${esc(complaint.no || '')}</span>
+          </div>
+          <span class="badge ${status.badge}">${esc(status.label)}</span>
+        </div>
+        <p class="complaint-card__content">${esc(complaint.content)}</p>
+        ${
+          photos.length
+            ? `<div class="issue-thumbs">${photos
+                .map(
+                  (photo, index) => `
+              <button class="photo-btn" type="button" data-complaint-photo="${esc(complaint.id)}" data-complaint-site="${esc(complaint.siteId)}"
+                      data-complaint-photo-index="${index}" aria-label="컴플레인 사진 크게 보기">
+                <img src="${esc(store.photoThumbUrl(photo))}" alt="컴플레인 사진" loading="lazy" decoding="async">
+              </button>`,
+                )
+                .join('')}</div>`
+            : ''
+        }
+        <p class="tiny muted complaint-card__meta">
+          접수 ${complaint.createdAt ? esc(fmtDateLong(localDateOf(complaint.createdAt))) : '날짜 없음'}
+          · ${esc(complaint.reporterName || (complaint.source === 'admin' ? '대표 직접 접수' : '고객'))}
+          ${complaint.assigneeName ? ` · 담당 ${esc(complaint.assigneeName)}` : ' · 담당 미지정'}
+        </p>
+        ${
+          complaint.request
+            ? `<div class="complaint-request"><strong>팀장 전달 내용</strong><p>${esc(complaint.request)}</p><span>${complaint.requestedAt ? `${esc(fmtDateLong(localDateOf(complaint.requestedAt)))} 전달` : '전달'}</span></div>`
+            : ''
+        }
+        ${
+          complaint.resolution && complaint.resolution.note
+            ? `<div class="complaint-resolution"><strong>조치 내용</strong><p>${esc(complaint.resolution.note)}</p>${
+                complaint.resolution.prevention
+                  ? `<p class="tiny muted">재발 방지: ${esc(complaint.resolution.prevention)}</p>`
+                  : ''
+              }<span>${esc(complaint.resolution.by || '')}${complaint.resolvedAt ? ` · ${esc(fmtDateLong(localDateOf(complaint.resolvedAt)))}` : ''}</span></div>`
+            : ''
+        }
+        ${
+          key === 'resolved'
+            ? ''
+            : `<div class="btn-row">
+                 ${
+                   key === 'open'
+                     ? `<button class="btn btn--quiet btn--sm" type="button" data-complaint-handle="${esc(complaint.id)}" data-complaint-site="${esc(complaint.siteId)}">조치 중으로</button>`
+                     : ''
+                 }
+                 <button class="btn btn--primary btn--sm" type="button" data-complaint-open="${esc(complaint.id)}">${open ? '처리 상자 닫기' : '담당 연결 · 해결 처리'}</button>
+               </div>`
+        }
+        ${
+          open
+            ? `<div class="complaint-handle" data-complaint-handle-box="${esc(complaint.id)}">
+                 <div class="field">
+                   <label>담당 팀장</label>
+                   <select class="select" data-complaint-assignee>
+                     <option value="">담당 미지정</option>
+                     ${leaders
+                       .map(
+                         (leader) =>
+                           `<option value="${esc(leader.name)}"${complaint.assigneeName === leader.name ? ' selected' : ''}>${esc(leader.name)} ${esc(leader.title || '팀장')}</option>`,
+                       )
+                       .join('')}
+                   </select>
+                 </div>
+                 <div class="field">
+                   <label>팀장에게 전달할 조치 요청</label>
+                   <textarea class="textarea" rows="3" data-complaint-request placeholder="예: 화장실 배수구 냄새 원인 확인 후 조치 바랍니다.">${esc(complaint.request || '')}</textarea>
+                 </div>
+                 <div class="btn-row">
+                   <button class="btn btn--quiet btn--sm" type="button" data-complaint-save="${esc(complaint.id)}" data-complaint-site="${esc(complaint.siteId)}">조치 요청 전달</button>
+                 </div>
+                 <div class="field">
+                   <label>조치 내용 (고객에게 안내)</label>
+                   <textarea class="textarea" rows="2" data-complaint-note placeholder="예: 배수구 트랩 세척 · 소독 완료">${esc(complaint.resolution && complaint.resolution.note ? complaint.resolution.note : '')}</textarea>
+                 </div>
+                 <div class="field">
+                   <label>재발 방지 메모 <span class="tiny muted">(내부)</span></label>
+                   <textarea class="textarea" rows="2" data-complaint-prevention placeholder="예: 월 1회 트랩 점검 추가">${esc(complaint.resolution && complaint.resolution.prevention ? complaint.resolution.prevention : '')}</textarea>
+                 </div>
+                 <button class="btn btn--primary btn--sm" type="button" data-complaint-resolve="${esc(complaint.id)}" data-complaint-site="${esc(complaint.siteId)}">해결 완료로 저장</button>
+               </div>`
+            : ''
+        }
+        ${
+          history.length
+            ? `<details class="complaint-history"><summary>처리 이력 ${history.length}건</summary><ul>${history
+                .slice(0, 6)
+                .map(
+                  (row) =>
+                    `<li><strong>${esc(row.action)}</strong>${row.actor ? ` · ${esc(row.actor)}` : ''}${row.at ? ` · ${esc(String(row.at).slice(0, 10))}` : ''}${row.note ? `<br>${esc(row.note)}` : ''}</li>`,
+                )
+                .join('')}</ul></details>`
+            : ''
+        }
+      </article>`;
+  }
+
+  function complaintPanelTemplate({ complaints, sites, leaders }) {
+    const stats = complaintStats(complaints);
+    const filter = state.complaints.filter || '';
+    const rows = complaints.filter((row) => {
+      if (!filter) return true;
+      if (filter === 'unresolved') return isComplaintOpen(row);
+      return complaintStatusKey(row) === filter;
+    });
+    return `
+      <section class="panel complaint-panel" data-complaint-panel>
+        <div class="section-head">
+          <div>
+            <h2>고객 컴플레인</h2>
+            <p>미해결 ${stats.unresolved}건 · 접수 ${stats.open} · 조치 중 ${stats.handling} · 해결 ${stats.resolved}</p>
+          </div>
+        </div>
+        <p class="tiny muted" style="margin:-6px 0 10px">
+          고객이 ③ 관리에서 보낸 불편 사항과 대표가 직접 접수한 건입니다.
+          담당 팀장에게 <strong>조치 요청</strong>을 전달하면 팀장 화면에 <strong>요청 내용과 진행 상태만</strong> 보이고, 평가 점수·내부 메모는 보이지 않습니다.
+        </p>
+        <div class="chips billing-filters" data-complaint-filters>
+          ${COMPLAINT_FILTERS.map(
+            (row) =>
+              `<button class="chip" type="button" data-complaint-filter="${esc(row.key)}" aria-pressed="${filter === row.key}">${esc(
+                row.key === ''
+                  ? `${row.label} ${stats.total}`
+                  : row.key === 'unresolved'
+                    ? `${row.label} ${stats.unresolved}`
+                    : `${row.label} ${stats[row.key] || 0}`,
+              )}</button>`,
+          ).join('')}
+        </div>
+        ${
+          rows.length
+            ? `<div class="stack-10" data-complaint-list>${rows.map((row) => complaintCardTemplate(row, { leaders, sites })).join('')}</div>`
+            : '<p class="tiny muted">해당하는 컴플레인이 없습니다.</p>'
+        }
+        <details class="complaint-new" data-complaint-new>
+          <summary>대표가 직접 컴플레인 접수</summary>
+          <form class="form" data-complaint-form="admin" novalidate>
+            <div class="field">
+              <label for="cmp-new-site">업장</label>
+              <select class="select" id="cmp-new-site" data-complaint-site>
+                ${sites.map((site) => `<option value="${esc(site.id)}">${esc(site.name)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="field">
+              <label for="cmp-new-type">유형</label>
+              <select class="select" id="cmp-new-type" data-complaint-type>
+                ${Object.entries(COMPLAINT_TYPES)
+                  .map(([key, label]) => `<option value="${esc(key)}">${esc(label)}</option>`)
+                  .join('')}
+              </select>
+            </div>
+            <div class="field"><label for="cmp-new-title">제목</label><input class="input" id="cmp-new-title" type="text" maxlength="80" data-complaint-title placeholder="예: 5층 회의실 바닥 물때"></div>
+            <div class="field"><label for="cmp-new-content">내용</label><textarea class="textarea" id="cmp-new-content" rows="3" maxlength="2000" data-complaint-content placeholder="고객이 전한 내용 그대로 적어 두세요."></textarea></div>
+            <button class="btn btn--primary btn--sm" type="submit">컴플레인 접수</button>
+          </form>
+        </details>
+      </section>`;
+  }
+
+  /* ---------------- 10단계 — 직원 100점 평가 (대표 전용) ---------------- */
+
+  function rateText(value) {
+    return value === null || value === undefined || !Number.isFinite(Number(value)) ? '자료 없음' : `${value}%`;
+  }
+
+  function evaluationFormTemplate({ contract, month, metrics, draft, memo, existing }) {
+    const scores = draft || (existing ? existing.itemScores : metrics ? metrics.suggestedScores : {});
+    const penalty = metrics ? metrics.penalty : existing ? existing.penalty : 0;
+    const itemSum = EVAL_ITEMS.reduce((sum, item) => sum + (Number(scores[item.key]) || 0), 0);
+    const total = Math.min(EVAL_TOTAL_MAX, Math.max(0, itemSum - penalty));
+    const grade = evaluationGrade(total);
+    return `
+      <div class="eval-form" data-eval-form-wrap="${esc(contract.id)}">
+        <div class="eval-metrics" data-eval-metrics>
+          <div><span>일정 완료율</span><strong>${esc(rateText(metrics ? metrics.scheduleRate : null))}</strong><small>${metrics ? `예정 ${metrics.scheduleTotal} · 이행 ${metrics.scheduleDone}` : ''}</small></div>
+          <div><span>GPS 준수</span><strong>${esc(rateText(metrics ? metrics.gpsRate : null))}</strong><small>${metrics ? `도착·완료 기록 ${metrics.gpsTotal}건` : ''}</small></div>
+          <div><span>보고서 승인율</span><strong>${esc(rateText(metrics ? metrics.approvalRate : null))}</strong><small>${metrics ? `보고 ${metrics.reportsTotal} · 승인 ${metrics.reportsApproved}` : ''}</small></div>
+          <div><span>수정 요청</span><strong>${metrics ? `${metrics.revisionReports}건` : '-'}</strong><small>보완 재제출 포함</small></div>
+          <div><span>컴플레인</span><strong>${metrics ? `${metrics.complaintTotal}건` : '-'}</strong><small>${metrics ? `미해결 ${metrics.complaintOpen + metrics.complaintHandling} · 감점 ${metrics.penalty}점` : ''}</small></div>
+          <div class="eval-metrics__suggest"><span>참고 점수</span><strong>${metrics ? `${metrics.suggestedTotal}점 ${metrics.suggestedGrade}` : '-'}</strong><small>현장 지표 기준</small></div>
+        </div>
+        <form class="form" data-eval-form="${esc(contract.id)}" novalidate>
+          <div class="eval-items">
+            ${EVAL_ITEMS.map(
+              (item) => `
+              <div class="field eval-item">
+                <label for="eval-${esc(item.key)}-${esc(contract.id)}">${esc(item.label)} <span class="tiny muted">/ ${item.max}</span></label>
+                <input class="input" id="eval-${esc(item.key)}-${esc(contract.id)}" type="number" inputmode="numeric"
+                       min="0" max="${item.max}" step="1" value="${esc(scores[item.key] || 0)}" data-eval-item="${esc(item.key)}">
+                <span class="tiny muted">${esc(item.hint)}</span>
+              </div>`,
+            ).join('')}
+          </div>
+          <div class="eval-total" data-eval-total-box data-eval-penalty="${penalty}">
+            <span>총점</span>
+            <strong data-eval-total>${total}</strong>
+            <em data-eval-grade>${esc(grade)}</em>
+            <small>항목 ${itemSum}점 − 컴플레인 감점 ${penalty}점</small>
+          </div>
+          <div class="field">
+            <label for="eval-memo-${esc(contract.id)}">평가 메모</label>
+            <textarea class="textarea" id="eval-memo-${esc(contract.id)}" rows="3" maxlength="1000" data-eval-memo placeholder="현장 태도 · 고객 반응 · 다음 달 목표">${esc(memo || '')}</textarea>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn--quiet btn--sm" type="button" data-eval-suggest="${esc(contract.id)}">현장 지표로 채우기</button>
+            <button class="btn btn--primary btn--sm" type="submit">평가 저장</button>
+          </div>
+        </form>
+      </div>`;
+  }
+
+  function evaluationPanelTemplate({ staffContracts, sites, month, monthEvaluations, allEvaluations, metrics }) {
+    const rows = staffContracts
+      .slice()
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ko'));
+    const totals = monthEvaluations.map((row) => Number(row.total)).filter((value) => Number.isFinite(value));
+    const average = totals.length ? Math.round((totals.reduce((sum, value) => sum + value, 0) / totals.length) * 10) / 10 : null;
+    const grades = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
+    monthEvaluations.forEach((row) => {
+      grades[evaluationGrade(row.total)] += 1;
+    });
+    const openContract = state.evaluation.open
+      ? staffContracts.find((contract) => contract.id === state.evaluation.open) || null
+      : null;
+    return `
+      <section class="panel eval-panel" data-evaluation-panel>
+        <div class="section-head">
+          <div>
+            <h2>직원 100점 평가</h2>
+            <p>대표 전용 · ${esc(billingMonthLabel(month))}</p>
+          </div>
+        </div>
+        <div class="billing-month">
+          <button class="billing-month__nav" type="button" data-eval-month="prev">‹ ${esc(billingMonthLabel(shiftBillingMonth(month, -1)))}</button>
+          <strong>${esc(billingMonthLabel(month))}</strong>
+          <button class="billing-month__nav" type="button" data-eval-month="next">${esc(billingMonthLabel(shiftBillingMonth(month, 1)))} ›</button>
+        </div>
+        <div class="billing-totals">
+          <div><span>이 달 평가</span><strong data-eval-stat="count">${monthEvaluations.length}명 / ${staffContracts.length}명</strong></div>
+          <div><span>평균 점수</span><strong data-eval-stat="average">${average === null ? '평가 전' : `${average}점`}</strong></div>
+          <div><span>A · B 등급</span><strong data-eval-stat="grades">${grades.A + grades.B}명</strong></div>
+          <div><span>C 이하</span><strong data-eval-stat="low">${grades.C + grades.D + grades.E + grades.F}명</strong></div>
+        </div>
+        <p class="tiny muted" style="margin:-4px 0 10px">
+          현장 지표(일정 완료율 · GPS · 보고 승인율 · 수정 요청 · 컴플레인)는 자동 계산한 <strong>참고 값</strong>이고,
+          점수는 대표가 정합니다. 총점 0~100점에서 컴플레인 감점(최대 10점)을 빼고 등급(A~F)을 자동으로 매깁니다.
+        </p>
+        <div class="stack-10">
+          ${rows
+            .map((contract) => {
+              const monthRecord = monthEvaluations.find((row) => row.staffContractId === contract.id) || null;
+              const history = allEvaluations.filter((row) => row.staffContractId === contract.id);
+              const latest = history[0] || null;
+              const open = openContract && openContract.id === contract.id;
+              const siteNames = (contract.siteIds || [])
+                .map((id) => (sites.find((site) => site.id === id) || {}).name)
+                .filter(Boolean);
+              return `
+                <article class="eval-row" data-eval-row="${esc(contract.id)}" data-eval-state="${monthRecord ? 'done' : 'none'}">
+                  <div class="eval-row__head">
+                    <div class="eval-row__who">
+                      <strong>${esc(contract.name)} <span class="tiny muted">${esc(contract.roleTitle || '')}</span></strong>
+                      <span>${esc(siteNames.join(', ') || '현장 미배정')}</span>
+                    </div>
+                    <div class="eval-row__score">
+                      ${
+                        monthRecord
+                          ? `<span class="grade grade--${esc(monthRecord.grade)}">${esc(monthRecord.grade)}</span><strong data-eval-row-total>${monthRecord.total}점</strong>`
+                          : '<span class="badge badge--wait">평가 전</span>'
+                      }
+                    </div>
+                  </div>
+                  <p class="tiny muted">
+                    ${
+                      latest
+                        ? `최근 평가 ${esc(billingMonthLabel(latest.month))} ${latest.total}점 ${esc(latest.grade)} · 평가자 ${esc(latest.evaluatorName || '대표')}`
+                        : '아직 100점 평가가 없습니다.'
+                    }
+                    ${monthRecord ? ` · 이 달 일정 ${esc(rateText(monthRecord.metrics.scheduleRate))} · 보고 ${esc(rateText(monthRecord.metrics.approvalRate))} · 컴플레인 ${monthRecord.metrics.complaintTotal}건` : ''}
+                  </p>
+                  <div class="btn-row">
+                    <button class="btn ${open ? 'btn--quiet' : 'btn--primary'} btn--sm" type="button" data-eval-open="${esc(contract.id)}">${open ? '평가 닫기' : monthRecord ? '평가 수정' : '평가하기'}</button>
+                  </div>
+                  ${
+                    open
+                      ? evaluationFormTemplate({
+                          contract,
+                          month,
+                          metrics,
+                          draft: state.evaluation.draft,
+                          memo: state.evaluation.memo,
+                          existing: monthRecord,
+                        })
+                      : ''
+                  }
+                  ${
+                    history.length
+                      ? `<details class="eval-history"><summary>월별 평가 이력 ${history.length}건</summary><ul>${history
+                          .slice(0, 12)
+                          .map(
+                            (row) =>
+                              `<li><span class="grade grade--${esc(row.grade)}">${esc(row.grade)}</span><strong>${esc(billingMonthLabel(row.month))} ${row.total}점</strong><span>${esc(row.memo || '메모 없음')}</span></li>`,
+                          )
+                          .join('')}</ul></details>`
+                      : ''
+                  }
+                </article>`;
+            })
+            .join('')}
+        </div>
+      </section>`;
+  }
+
+  /* ---------------- 대표 패널 접기 · 대시보드 이동 ---------------- */
+
+  const FOLDABLE_PANELS = [
+    { key: 'approval', attr: 'data-approval-panel' },
+    { key: 'issue', attr: 'data-issue-panel' },
+    { key: 'complaint', attr: 'data-complaint-panel' },
+    { key: 'schedule', attr: 'data-schedule-panel' },
+    { key: 'revenue', attr: 'data-revenue-summary' },
+    { key: 'billing', attr: 'data-billing-panel' },
+    { key: 'payout', attr: 'data-payout-panel' },
+    { key: 'staff', attr: 'data-staff-panel' },
+    { key: 'evaluation', attr: 'data-evaluation-panel' },
+  ];
+
+  const DASH_TARGETS = {
+    schedule: { attr: '[data-schedule-panel]', fold: 'schedule' },
+    approval: { attr: '[data-approval-panel]', fold: 'approval' },
+    issue: { attr: '[data-issue-panel]', fold: 'issue' },
+    complaint: { attr: '[data-complaint-panel]', fold: 'complaint' },
+    billing: { attr: '[data-billing-panel]', fold: 'billing' },
+    payout: { attr: '[data-payout-panel]', fold: 'payout' },
+  };
+
+  /** 같은 태그의 닫는 위치 — section-head 안쪽에 단추를 넣을 때 씁니다. */
+  function elementCloseAt(html, startAt, tagName) {
+    const closeTag = `</${tagName}>`;
+    let depth = 0;
+    let cursor = startAt;
+    while (cursor < html.length) {
+      const nextOpen = html.indexOf(`<${tagName}`, cursor);
+      const nextClose = html.indexOf(closeTag, cursor);
+      if (nextClose < 0) return -1;
+      if (nextOpen >= 0 && nextOpen < nextClose) {
+        depth += 1;
+        cursor = nextOpen + tagName.length + 1;
+      } else {
+        depth -= 1;
+        if (depth <= 0) return nextClose;
+        cursor = nextClose + closeTag.length;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * 주요 패널 머리글에 [접기] 단추를 붙이고, 접힌 패널은 머리글만 남깁니다.
+   * (패널마다 표를 다시 쓰지 않고 한 곳에서 처리합니다.)
+   */
+  function withFolds(html) {
+    let out = String(html || '');
+    for (const panel of FOLDABLE_PANELS) {
+      const attrAt = out.indexOf(panel.attr);
+      if (attrAt < 0) continue;
+      const folded = !!state.folded[panel.key];
+      const sectionAt = out.lastIndexOf('<section', attrAt);
+      const tagEnd = out.indexOf('>', attrAt);
+      if (sectionAt < 0 || tagEnd < 0) continue;
+      let tag = out.slice(sectionAt, tagEnd + 1);
+      if (folded && tag.indexOf('is-folded') < 0) {
+        tag = tag.replace('<section class="', '<section class="is-folded ');
+      }
+      out = out.slice(0, sectionAt) + tag + out.slice(tagEnd + 1);
+      const headAt = out.indexOf('<div class="section-head', sectionAt);
+      if (headAt < 0) continue;
+      const headEnd = elementCloseAt(out, headAt, 'div');
+      if (headEnd < 0) continue;
+      const button = `<button class="fold-btn" type="button" data-fold-toggle="${panel.key}" aria-expanded="${folded ? 'false' : 'true'}">${folded ? '펼치기' : '접기'}</button>`;
+      out = out.slice(0, headEnd) + button + out.slice(headEnd);
+    }
+    return out;
+  }
+
   async function dashboardTemplate(session) {
     const actor = { actor: session };
     const sites = await store.listSites();
@@ -2871,6 +3501,27 @@ export function createAdminView(container) {  const state = {
     const recentSubmitted = await store.listReports({ status: 'submitted', limit: 3 });
     // 7단계 — 특이사항 · 추가 영업 (미검토 발견 건이 먼저 오도록 정렬되어 옵니다)
     const issues = await store.listIssues({}, { actor: session });
+    // 10단계 — 고객 컴플레인 · 직원 100점 평가 (둘 다 대표 전용)
+    const complaints = await store.listComplaints({}, { actor: session });
+    const evalMonth = evaluationMonthKey(state.evaluation.month || billingMonth);
+    state.evaluation.month = evalMonth;
+    const monthEvaluations = await store.listStaffEvaluations({ month: evalMonth }, { actor: session });
+    const allEvaluations = await store.listStaffEvaluations({}, { actor: session });
+    const openEvalContract = state.evaluation.open
+      ? staffContracts.find((contract) => contract.id === state.evaluation.open) || null
+      : null;
+    let evalMetrics = null;
+    if (openEvalContract) {
+      evalMetrics = await store.staffEvaluationMetrics(
+        { staffContractId: openEvalContract.id, month: evalMonth },
+        { actor: session },
+      );
+      if (!state.evaluation.draft) {
+        const existing = monthEvaluations.find((row) => row.staffContractId === openEvalContract.id) || null;
+        state.evaluation.draft = existing ? existing.itemScores : evalMetrics.suggestedScores;
+        state.evaluation.memo = existing ? existing.memo : '';
+      }
+    }
     // 업장(siteId) 중심 연결 요약 — 견적 · 계약 · 팀장 계약 · 보고 · 이력을 한 번에 읽습니다.
     const links = await store.listSiteLinks().catch(() => ({}));
     // 5단계 — 일정 · 현장 도착/완료 (대표는 전체 업장 · 팀장별 필터)
@@ -2892,7 +3543,7 @@ export function createAdminView(container) {  const state = {
     const unusedTotal = codes.filter((code) => !code.usedAt).length;
     const usedTotal = codes.filter((code) => code.usedAt).length;
 
-    return `
+    return withFolds(`
       <div class="leader-bar">
         <div class="leader-bar__who">
           <span class="avatar" aria-hidden="true">${esc(session.name.slice(0, 1))}</span>
@@ -2904,6 +3555,8 @@ export function createAdminView(container) {  const state = {
         <button class="btn btn--sm btn--quiet" type="button" data-action="logout">로그아웃</button>
       </div>
       ${modeSwitchTemplate(getWorkMode())}
+
+      ${operationsDashboardTemplate({ schedule, pendingReports, returnedReports, issues, complaints, billing, payouts })}
 
       <section class="panel">
         <div class="admin-stats">
@@ -2917,6 +3570,8 @@ export function createAdminView(container) {  const state = {
       ${reportApprovalPanelTemplate({ pending: pendingReports, returned: returnedReports, recent: recentSubmitted })}
 
       ${issueSalesPanelTemplate({ issues })}
+
+      ${complaintPanelTemplate({ complaints, sites, leaders })}
 
       ${schedulePanelTemplate(schedule, monthSchedule)}
 
@@ -2945,6 +3600,8 @@ export function createAdminView(container) {  const state = {
       ${quoteSettingsPanelTemplate({ settings: quoteSettings, checklist: quoteChecklist, state })}
 
       ${staffPanelTemplate({ staffContracts, staffChecks, sites, state })}
+
+      ${evaluationPanelTemplate({ staffContracts, sites, month: evalMonth, monthEvaluations, allEvaluations, metrics: evalMetrics })}
 
       ${staffAccountPanelTemplate({ accounts, sites, state })}
 
@@ -3021,7 +3678,7 @@ export function createAdminView(container) {  const state = {
           </div>
         </div>
       </details>
-    `;
+    `);
   }
 
   /* ---------------- render ---------------- */
@@ -3595,6 +4252,26 @@ export function createAdminView(container) {  const state = {
   }
 
   function onInput(event) {
+    const evalInput = event.target.closest('[data-eval-item]');
+    if (evalInput) {
+      const form = evalInput.closest('[data-eval-form]');
+      const box = form ? form.querySelector('[data-eval-total-box]') : null;
+      if (form && box) {
+        let sum = 0;
+        form.querySelectorAll('[data-eval-item]').forEach((input) => {
+          const value = Number(input.value) || 0;
+          const max = Number(input.max) || 0;
+          sum += Math.min(max, Math.max(0, value));
+        });
+        const penalty = Number(box.dataset.evalPenalty) || 0;
+        const total = Math.min(100, Math.max(0, Math.round(sum - penalty)));
+        const out = form.querySelector('[data-eval-total]');
+        const gradeOut = form.querySelector('[data-eval-grade]');
+        if (out) out.textContent = String(total);
+        if (gradeOut) gradeOut.textContent = evaluationGrade(total);
+      }
+      return;
+    }
     const issueNote = event.target.closest('[data-issue-close-note]');
     if (issueNote && state.issueClose) {
       state.issueClose.note = issueNote.value;
@@ -3716,6 +4393,16 @@ export function createAdminView(container) {  const state = {
     if (event.target.matches('[data-site-details-form]')) {
       event.preventDefault();
       await submitSiteDetails(event.target);
+      return;
+    }
+    if (event.target.matches('[data-eval-form]')) {
+      event.preventDefault();
+      await submitEvaluation(event.target);
+      return;
+    }
+    if (event.target.matches('[data-complaint-form]')) {
+      event.preventDefault();
+      await submitComplaintForm(event.target);
       return;
     }
     if (event.target.matches('[data-staff-check-form]')) {
@@ -4143,6 +4830,119 @@ export function createAdminView(container) {  const state = {
     const issueCloseSave = event.target.closest('[data-issue-close-save]');
     if (issueCloseSave) {
       await completeIssueCard(issueCloseSave.dataset.issueSite, issueCloseSave.dataset.issueCloseSave, issueCloseSave);
+      return;
+    }
+
+    /* ---------------- 10단계 — 대시보드 이동 · 접기 · 컴플레인 · 100점 평가 ---------------- */
+    const dashGo = event.target.closest('[data-dash-go]');
+    if (dashGo) {
+      const target = DASH_TARGETS[dashGo.dataset.dashGo];
+      if (target) {
+        if (state.folded[target.fold]) {
+          delete state.folded[target.fold];
+          await render();
+        }
+        const panel = $(target.attr, container);
+        if (panel) panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+      return;
+    }
+
+    const foldToggle = event.target.closest('[data-fold-toggle]');
+    if (foldToggle) {
+      const key = foldToggle.dataset.foldToggle;
+      state.folded[key] = !state.folded[key];
+      await render();
+      const toggle = container.querySelector(`[data-fold-toggle="${key}"]`);
+      if (toggle) toggle.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+
+    const evalMonthButton = event.target.closest('[data-eval-month]');
+    if (evalMonthButton) {
+      state.evaluation.month = shiftBillingMonth(
+        state.evaluation.month || billingMonthKey(''),
+        evalMonthButton.dataset.evalMonth === 'prev' ? -1 : 1,
+      );
+      state.evaluation.open = '';
+      state.evaluation.draft = null;
+      state.evaluation.memo = '';
+      await render();
+      const panel = $('[data-evaluation-panel]', container);
+      if (panel) panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      return;
+    }
+
+    const evalOpenButton = event.target.closest('[data-eval-open]');
+    if (evalOpenButton) {
+      const id = evalOpenButton.dataset.evalOpen;
+      state.evaluation.open = state.evaluation.open === id ? '' : id;
+      state.evaluation.draft = null;
+      state.evaluation.memo = '';
+      await render();
+      const row = container.querySelector(`[data-eval-row="${id}"]`);
+      if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+
+    const evalSuggest = event.target.closest('[data-eval-suggest]');
+    if (evalSuggest) {
+      try {
+        const metrics = await store.staffEvaluationMetrics(
+          { staffContractId: evalSuggest.dataset.evalSuggest, month: state.evaluation.month },
+          { actor: state.session },
+        );
+        state.evaluation.draft = metrics.suggestedScores;
+        state.evaluation.open = evalSuggest.dataset.evalSuggest;
+        await render();
+        toast(`현장 지표 참고 점수 ${metrics.suggestedTotal}점으로 채웠습니다. 고친 뒤 저장하세요.`, { duration: 8000 });
+      } catch (error) {
+        toast(error.message || '참고 점수를 만들지 못했습니다.', { tone: 'error' });
+      }
+      return;
+    }
+
+    const complaintFilter = event.target.closest('[data-complaint-filter]');
+    if (complaintFilter) {
+      state.complaints.filter = complaintFilter.dataset.complaintFilter || '';
+      state.complaints.open = '';
+      await render();
+      return;
+    }
+
+    const complaintOpenButton = event.target.closest('[data-complaint-open]');
+    if (complaintOpenButton) {
+      const id = complaintOpenButton.dataset.complaintOpen;
+      state.complaints.open = state.complaints.open === id ? '' : id;
+      await render();
+      return;
+    }
+
+    const complaintHandleButton = event.target.closest('[data-complaint-handle]');
+    if (complaintHandleButton) {
+      await setComplaintStatus(complaintHandleButton, 'handling');
+      return;
+    }
+
+    const complaintSaveButton = event.target.closest('[data-complaint-save]');
+    if (complaintSaveButton) {
+      await saveComplaintRequest(complaintSaveButton);
+      return;
+    }
+
+    const complaintResolveButton = event.target.closest('[data-complaint-resolve]');
+    if (complaintResolveButton) {
+      await resolveComplaint(complaintResolveButton);
+      return;
+    }
+
+    const complaintPhotoButton = event.target.closest('[data-complaint-photo]');
+    if (complaintPhotoButton) {
+      await openComplaintPhoto(
+        complaintPhotoButton.dataset.complaintPhoto,
+        complaintPhotoButton.dataset.complaintSite,
+        complaintPhotoButton.dataset.complaintPhotoIndex,
+      );
       return;
     }
 

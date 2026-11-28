@@ -2249,6 +2249,317 @@ export function quoteKindLabel(quote) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 10단계 — 고객 컴플레인 · 직원 100점 평가 (v2.15.0)                   */
+/*  · 컴플레인은 업장 안 `complaints[]`, 100점 평가는 staffChecks        */
+/*    (attitudeLogs) 안에 kind:'score' 로 쌓습니다.                     */
+/*  · 새 서버 컬렉션을 만들지 않아 Supabase 허용 collection(CHECK 제약)과 */
+/*    라이브 데이터를 건드리지 않고 기기 간 동기화가 됩니다.            */
+/* ------------------------------------------------------------------ */
+
+/** 컴플레인 상태 — 접수 → 조치 중 → 해결 완료. */
+export const COMPLAINT_STATUS = {
+  open: { label: '접수', short: '접수', badge: 'badge--wait', step: 0 },
+  handling: { label: '조치 중', short: '조치 중', badge: 'badge--revise', step: 1 },
+  resolved: { label: '해결 완료', short: '해결', badge: 'badge--done', step: 2 },
+};
+
+export const COMPLAINT_STATUS_ORDER = ['open', 'handling', 'resolved'];
+
+/** 컴플레인 유형 — 고객이 고르는 불편 사항 종류. */
+export const COMPLAINT_TYPES = {
+  quality: '청소 품질',
+  schedule: '일정 · 시간',
+  staff: '직원 응대',
+  facility: '시설 · 장비',
+  request: '요청 사항',
+  etc: '기타',
+};
+
+export const COMPLAINT_NO_PREFIX = 'CP';
+export const MAX_SITE_COMPLAINTS = 80;
+export const MAX_COMPLAINT_PHOTOS = 4;
+
+export function complaintStatusKey(input) {
+  const key = input && input.status;
+  return COMPLAINT_STATUS[key] ? key : 'open';
+}
+
+export function complaintStatus(input) {
+  return COMPLAINT_STATUS[complaintStatusKey(input)];
+}
+
+/** 아직 해결되지 않은 컴플레인 — 접수 · 조치 중. */
+export function isComplaintOpen(input) {
+  return complaintStatusKey(input) !== 'resolved';
+}
+
+export function complaintTypeLabel(value) {
+  return COMPLAINT_TYPES[value] || COMPLAINT_TYPES.etc;
+}
+
+/** 컴플레인 번호 — `CP-YYYYMM-NNN`(업장을 통틀어 그 달에 중복 없음). */
+export function complaintNoOf(complaint) {
+  const stored = toText(complaint && complaint.no);
+  if (stored) return stored;
+  return nextComplaintNo([], monthKeyOfDate((complaint && (complaint.createdAt || complaint.date)) || ''));
+}
+
+export function nextComplaintNo(complaints, month = todayISO().slice(0, 7).replace('-', '')) {
+  const key = toText(month).replace(/[^0-9]/g, '').slice(0, 6) || todayISO().slice(0, 7).replace('-', '');
+  let max = 0;
+  for (const row of Array.isArray(complaints) ? complaints : []) {
+    const match = toText(row && row.no).match(new RegExp(`^${COMPLAINT_NO_PREFIX}-(\\d{6})-(\\d{3})$`));
+    if (match && match[1] === key) max = Math.max(max, Number(match[2]));
+  }
+  return `${COMPLAINT_NO_PREFIX}-${key}-${pad3(max + 1)}`;
+}
+
+/** 업장 안에 저장되는 컴플레인 한 건. */
+export function normalizeComplaint(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const content = toText(source.content);
+  const title =
+    toText(source.title) ||
+    (content ? content.split(/\r?\n/)[0].trim().slice(0, 60) : '고객 요청');
+  const resolution = source.resolution && typeof source.resolution === 'object' ? source.resolution : {};
+  const photos = (Array.isArray(source.photos) ? source.photos : [])
+    .filter((photo) => photo && typeof photo === 'object')
+    .slice(0, MAX_COMPLAINT_PHOTOS);
+  const status = COMPLAINT_STATUS[source.status] ? source.status : 'open';
+  return {
+    id: toText(source.id) || uid('cmp'),
+    no: toText(source.no),
+    siteId: toText(source.siteId),
+    siteCode: toText(source.siteCode),
+    siteName: toText(source.siteName),
+    title: title.slice(0, 80),
+    content: content.slice(0, 2000),
+    type: COMPLAINT_TYPES[source.type] ? source.type : 'etc',
+    photos,
+    status,
+    source: source.source === 'admin' ? 'admin' : 'customer',
+    reporterName: toText(source.reporterName),
+    reporterAccountId: toText(source.reporterAccountId),
+    reporterPhone: toText(source.reporterPhone),
+    assigneeId: toText(source.assigneeId),
+    assigneeName: toText(source.assigneeName),
+    // 대표가 팀장에게 전달한 조치 요청 — 팀장 화면에는 이 내용만 보입니다.
+    request: toText(source.request).slice(0, 1000),
+    requestedAt: toText(source.requestedAt),
+    requestedBy: toText(source.requestedBy),
+    // 조치 내용(고객에게 안내) · 재발 방지 메모(내부).
+    resolution: {
+      note: toText(resolution.note).slice(0, 1000),
+      prevention: toText(resolution.prevention).slice(0, 1000),
+      by: toText(resolution.by),
+      at: toText(resolution.at),
+    },
+    resolvedAt: toText(source.resolvedAt),
+    createdAt: toText(source.createdAt),
+    updatedAt: toText(source.updatedAt),
+    history: normalizeHistory(source.history),
+  };
+}
+
+/** 업장에 저장된 컴플레인 배열 — 최신이 앞, 같은 id 는 한 번만, 최대 80건. */
+export function normalizeComplaints(list) {
+  const rows = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    if (!item || typeof item !== 'object') continue;
+    const row = normalizeComplaint(item);
+    if (!row.id || !row.content) continue;
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    rows.push(row);
+  }
+  return rows
+    .sort((a, b) => String(b.createdAt || b.resolvedAt).localeCompare(String(a.createdAt || a.resolvedAt)))
+    .slice(0, MAX_SITE_COMPLAINTS);
+}
+
+/** 목록 정렬 — 미해결(접수 → 조치 중)이 먼저, 그 안에서는 최신이 먼저. */
+export function sortComplaints(list) {
+  const rows = Array.isArray(list) ? list.slice() : [];
+  return rows.sort((a, b) => {
+    const orderA = COMPLAINT_STATUS_ORDER.indexOf(complaintStatusKey(a));
+    const orderB = COMPLAINT_STATUS_ORDER.indexOf(complaintStatusKey(b));
+    if (orderA !== orderB) return orderA - orderB;
+    return String(b.createdAt || b.resolvedAt || '').localeCompare(String(a.createdAt || a.resolvedAt || ''));
+  });
+}
+
+/** 컴플레인 합계 — 대표 대시보드 · 패널 머리글. */
+export function complaintStats(list) {
+  const rows = Array.isArray(list) ? list : [];
+  const by = { open: 0, handling: 0, resolved: 0 };
+  for (const row of rows) by[complaintStatusKey(row)] += 1;
+  return {
+    total: rows.length,
+    ...by,
+    unresolved: by.open + by.handling,
+  };
+}
+
+/** 고객에게 보내는 컴플레인 — 조치 내용까지만, 내부 메모 · 담당자 · 이력은 빼고. */
+export function customerComplaintView(complaint) {
+  if (!complaint) return complaint;
+  const status = complaintStatus(complaint);
+  return {
+    id: toText(complaint.id),
+    no: toText(complaint.no),
+    title: toText(complaint.title),
+    content: toText(complaint.content),
+    type: complaint.type,
+    typeLabel: complaintTypeLabel(complaint.type),
+    photos: Array.isArray(complaint.photos) ? complaint.photos.slice() : [],
+    status: complaintStatusKey(complaint),
+    statusLabel: status.label,
+    createdAt: toText(complaint.createdAt),
+    resolvedAt: toText(complaint.resolvedAt),
+    resolutionNote: toText(complaint.resolution && complaint.resolution.note),
+  };
+}
+
+/** 팀장에게 보내는 컴플레인 — 대표가 전달한 조치 요청 내용만. */
+export function leaderComplaintView(complaint) {
+  if (!complaint) return complaint;
+  const status = complaintStatus(complaint);
+  return {
+    id: toText(complaint.id),
+    no: toText(complaint.no),
+    siteId: toText(complaint.siteId),
+    siteName: toText(complaint.siteName),
+    title: toText(complaint.title),
+    content: toText(complaint.content),
+    type: complaint.type,
+    typeLabel: complaintTypeLabel(complaint.type),
+    status: complaintStatusKey(complaint),
+    statusLabel: status.label,
+    createdAt: toText(complaint.createdAt),
+    request: toText(complaint.request),
+    requestedAt: toText(complaint.requestedAt),
+  };
+}
+
+/* ---------------- 직원 100점 평가 ---------------- */
+
+/**
+ * 대표 평가 항목 — 합계 100점. 점수는 대표가 직접 넣고 고칩니다.
+ * 현장 지표(일정 완료율 · GPS · 보고 승인율 · 수정 요청 · 컴플레인)는 참고로만 씁니다.
+ */
+export const EVAL_ITEMS = [
+  { key: 'diligence', label: '성실도', max: 25, hint: '출퇴근 · 일정 준수 · 보고 누락' },
+  { key: 'quality', label: '청소 품질', max: 25, hint: '현장 상태 · 사진 품질' },
+  { key: 'communication', label: '소통', max: 20, hint: '고객 · 대표 소통 · 보고 태도' },
+  { key: 'safety', label: '안전 · 규율', max: 15, hint: '안전수칙 · 출입 · 보안 준수' },
+  { key: 'service', label: '고객 응대', max: 15, hint: '컴플레인 대응 · 재발 방지' },
+];
+
+export const EVAL_TOTAL_MAX = 100;
+export const MAX_STAFF_EVALUATIONS = 36;
+
+/** 컴플레인 감점 — 미해결일수록 크게, 최대 10점. */
+export const COMPLAINT_PENALTY_MAX = 10;
+export const COMPLAINT_PENALTY = { open: 4, handling: 3, resolved: 1 };
+
+/** 100점 → 등급(A~F). 기존 근무태도 등급과 같은 글자를 씁니다. */
+export function evaluationGrade(total) {
+  const score = Number(total);
+  if (!Number.isFinite(score)) return 'F';
+  if (score >= 90) return 'A';
+  if (score >= 80) return 'B';
+  if (score >= 70) return 'C';
+  if (score >= 60) return 'D';
+  if (score >= 50) return 'E';
+  return 'F';
+}
+
+export function evaluationMonthKey(value = '') {
+  return billingMonthKey(value);
+}
+
+/** 항목 점수를 0~항목 만점으로 정리합니다. */
+export function normalizeEvaluationScores(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const scores = {};
+  for (const item of EVAL_ITEMS) {
+    const raw = Number(source[item.key]);
+    scores[item.key] = Number.isFinite(raw) ? Math.min(item.max, Math.max(0, Math.round(raw))) : 0;
+  }
+  return scores;
+}
+
+export function evaluationItemSum(scores) {
+  const rows = normalizeEvaluationScores(scores);
+  return EVAL_ITEMS.reduce((sum, item) => sum + rows[item.key], 0);
+}
+
+/** 총점 = 항목 합계 − 컴플레인 감점 (0~100). */
+export function evaluationTotalOf(scores, penalty = 0) {
+  const raw = evaluationItemSum(scores) - Math.max(0, Number(penalty) || 0);
+  return Math.min(EVAL_TOTAL_MAX, Math.max(0, Math.round(raw)));
+}
+
+/** 지표에서 컴플레인 감점을 계산합니다. */
+export function evaluationPenaltyOf(metrics) {
+  const row = metrics && typeof metrics === 'object' ? metrics : {};
+  const open = Math.max(0, Number(row.complaintOpen) || 0);
+  const handling = Math.max(0, Number(row.complaintHandling) || 0);
+  const resolved = Math.max(0, Number(row.complaintResolved) || 0);
+  return Math.min(
+    COMPLAINT_PENALTY_MAX,
+    open * COMPLAINT_PENALTY.open + handling * COMPLAINT_PENALTY.handling + resolved * COMPLAINT_PENALTY.resolved,
+  );
+}
+
+/**
+ * 현장 지표 → 항목별 참고 점수. 자료가 없는 칸은 80%로 보고 계산합니다
+ * (처음 평가할 때 0점에서 시작하지 않도록). 대표가 그대로 쓰거나 고칩니다.
+ */
+export function evaluationSuggestScores(metrics) {
+  const row = metrics && typeof metrics === 'object' ? metrics : {};
+  const pct = (value, fallback = 80) => {
+    if (value === null || value === undefined || value === '') return fallback;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return fallback;
+    return Math.min(100, Math.max(0, number));
+  };
+  const schedule = pct(row.scheduleRate, 80);
+  const gps = pct(row.gpsRate, 90);
+  const approval = pct(row.approvalRate, 85);
+  const revisions = Math.max(0, Number(row.revisionReports) || 0);
+  const complaints = Math.max(0, Number(row.complaintOpen) || 0) + Math.max(0, Number(row.complaintHandling) || 0);
+  const scores = {
+    diligence: Math.round((25 * (schedule * 0.6 + gps * 0.4)) / 100),
+    quality: Math.round((25 * approval) / 100),
+    communication: Math.max(5, Math.round((20 * approval) / 100) - revisions * 2),
+    safety: Math.max(0, Math.round((15 * gps) / 100)),
+    service: Math.max(0, 12 - complaints * 3),
+  };
+  return normalizeEvaluationScores(scores);
+}
+
+/** 평가 목록 요약 — 평균 · 등급 분포. */
+export function evaluationSummary(list) {
+  const rows = (Array.isArray(list) ? list : []).filter((row) => row && row.kind === 'score');
+  const grades = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
+  let sum = 0;
+  for (const row of rows) {
+    const total = Number(row.total);
+    if (Number.isFinite(total)) sum += total;
+    const grade = evaluationGrade(total);
+    grades[grade] += 1;
+  }
+  return {
+    count: rows.length,
+    average: rows.length ? Math.round((sum / rows.length) * 10) / 10 : null,
+    grades,
+    monthCount: new Set(rows.map((row) => row.month).filter(Boolean)).size,
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* 9단계 — 결제 · 청구 · 미수금 · 도급 정산 (기획서 22·23장)           */
 /*  · 청구는 업장 안 `invoices[]`, 팀장 도급 정산은 `payouts[]` 에 쌓습니다. */
 /*  · 새 서버 컬렉션을 만들지 않아 Supabase 스키마(허용 collection 목록)와  */
@@ -3030,6 +3341,15 @@ export const STAFF_GRADES = ['A', 'B', 'C', 'D', 'E', 'F'];
 export function normalizeStaffCheck(input) {
   const source = input && typeof input === 'object' ? input : {};
   const grade = String(source.grade || '').toUpperCase();
+  // 10단계(v2.15.0) — 같은 staffChecks(attitudeLogs) 안에 100점 평가(kind:'score')를
+  //  함께 보관합니다. 예전 A~F 근무태도 기록은 kind:'grade' 로 그대로 읽힙니다.
+  const scored = source.kind === 'score' || source.total !== undefined || source.itemScores !== undefined;
+  const scores = scored ? normalizeEvaluationScores(source.itemScores) : null;
+  const metrics = source.metrics && typeof source.metrics === 'object' ? source.metrics : {};
+  const total = scored
+    ? Math.min(EVAL_TOTAL_MAX, Math.max(0, Math.round(Number(source.total) || 0)))
+    : null;
+  const computedGrade = scored ? evaluationGrade(total) : '';
   return {
     id: toText(source.id),
     staffContractId: toText(source.staffContractId),
@@ -3037,12 +3357,60 @@ export function normalizeStaffCheck(input) {
     name: toText(source.name),
     siteId: toText(source.siteId),
     date: toText(source.date),
-    grade: STAFF_GRADES.includes(grade) ? grade : 'B',
+    grade: STAFF_GRADES.includes(computedGrade)
+      ? computedGrade
+      : STAFF_GRADES.includes(grade)
+        ? grade
+        : 'B',
     memo: toText(source.memo),
     reviewerId: toText(source.reviewerId),
     reviewerName: toText(source.reviewerName),
     createdAt: toText(source.createdAt),
     source: toText(source.source) || 'app',
+    // 100점 평가 전용 칸 (A~F 기록에는 없음 → kind:'grade')
+    kind: scored ? 'score' : 'grade',
+    month: scored ? evaluationMonthKey(source.month || source.date) : '',
+    itemScores: scores || {},
+    itemSum: scores ? evaluationItemSum(scores) : null,
+    penalty: scored ? Math.max(0, Math.round(Number(source.penalty) || 0)) : null,
+    total,
+    metrics: scores
+      ? {
+          scheduleTotal: Math.max(0, Number(metrics.scheduleTotal) || 0),
+          scheduleDone: Math.max(0, Number(metrics.scheduleDone) || 0),
+          scheduleMissed: Math.max(0, Number(metrics.scheduleMissed) || 0),
+          scheduleUpcoming: Math.max(0, Number(metrics.scheduleUpcoming) || 0),
+          scheduleRate: metrics.scheduleRate === null || metrics.scheduleRate === undefined || metrics.scheduleRate === ''
+            ? null
+            : Number.isFinite(Number(metrics.scheduleRate))
+              ? Number(metrics.scheduleRate)
+              : null,
+          gpsTotal: Math.max(0, Number(metrics.gpsTotal) || 0),
+          gpsVerified: Math.max(0, Number(metrics.gpsVerified) || 0),
+          gpsRate: metrics.gpsRate === null || metrics.gpsRate === undefined || metrics.gpsRate === ''
+            ? null
+            : Number.isFinite(Number(metrics.gpsRate))
+              ? Number(metrics.gpsRate)
+              : null,
+          reportsTotal: Math.max(0, Number(metrics.reportsTotal) || 0),
+          reportsApproved: Math.max(0, Number(metrics.reportsApproved) || 0),
+          reportsPending: Math.max(0, Number(metrics.reportsPending) || 0),
+          approvalRate: metrics.approvalRate === null || metrics.approvalRate === undefined || metrics.approvalRate === ''
+            ? null
+            : Number.isFinite(Number(metrics.approvalRate))
+              ? Number(metrics.approvalRate)
+              : null,
+          revisionReports: Math.max(0, Number(metrics.revisionReports) || 0),
+          complaintTotal: Math.max(0, Number(metrics.complaintTotal) || 0),
+          complaintOpen: Math.max(0, Number(metrics.complaintOpen) || 0),
+          complaintHandling: Math.max(0, Number(metrics.complaintHandling) || 0),
+          complaintResolved: Math.max(0, Number(metrics.complaintResolved) || 0),
+        }
+      : {},
+    evaluatorName: scored ? toText(source.evaluatorName) || toText(source.reviewerName) : '',
+    evaluatedAt: scored ? toText(source.evaluatedAt) || toText(source.createdAt) : '',
+    updatedAt: toText(source.updatedAt),
+    history: scored ? normalizeHistory(source.history) : [],
   };
 }
 
@@ -3075,6 +3443,8 @@ function normalizeSite(site) {
     visits: normalizeVisits(site.visits),
     // 7단계 — 업장 특이사항(발견 → 검토 → 추가 견적 → 작업 → 보류/종결).
     issues: normalizeIssues(site.issues),
+    // 10단계(v2.15.0) — 고객 컴플레인(접수 → 조치 중 → 해결).
+    complaints: normalizeComplaints(site.complaints),
     // 9단계 — 고객 청구(site.invoices[]) · 팀장 도급 정산(site.payouts[]).
     invoices: normalizeInvoices(site.invoices),
     payouts: normalizePayouts(site.payouts),
@@ -8382,6 +8752,9 @@ export class Store {
   /* ---------------- staff checks (근무태도 A~F · 본부장 체크) ---------------- */
 
   async listStaffChecks({ staffContractId = null, accountId = null, siteId = null } = {}, { actor = null } = {}) {
+    if (isCustomerActor(actor)) {
+      throw new StoreError('permission-denied', '직원 평가는 대표(최고관리자)만 볼 수 있습니다.');
+    }
     denyStaff(actor, '직원 평가(근무태도)');
     let rows = (await this.adapter.getAll('staffChecks')).map(normalizeStaffCheck);
     if (staffContractId) rows = rows.filter((row) => row.staffContractId === staffContractId);
@@ -8416,6 +8789,534 @@ export class Store {
     await this.adapter.put('staffChecks', check);
     this._notify();
     return check;
+  }
+
+  /* ---------------- 10단계 — 직원 100점 평가 (대표 전용) ---------------- */
+
+  /**
+   * 100점 평가 목록 — 대표만. (고객·팀장·본부장은 요청 자체가 거절됩니다.)
+   * A~F 근무태도 기록과 같은 staffChecks 안에서 kind:'score' 만 골라 옵니다.
+   */
+  async listStaffEvaluations({ month = '', accountId = '', staffContractId = '', limit = 0 } = {}, { actor = null } = {}) {
+    if (isCustomerActor(actor)) {
+      throw new StoreError('permission-denied', '직원 평가는 대표(최고관리자)만 볼 수 있습니다.');
+    }
+    denyStaff(actor, '직원 100점 평가');
+    let rows = (await this.adapter.getAll('staffChecks'))
+      .map(normalizeStaffCheck)
+      .filter((row) => row.kind === 'score');
+    if (month) {
+      const key = evaluationMonthKey(month);
+      rows = rows.filter((row) => row.month === key);
+    }
+    if (accountId) rows = rows.filter((row) => row.accountId === toText(accountId));
+    if (staffContractId) rows = rows.filter((row) => row.staffContractId === toText(staffContractId));
+    rows.sort(
+      (a, b) =>
+        String(b.month).localeCompare(String(a.month)) ||
+        String(b.evaluatedAt || b.createdAt).localeCompare(String(a.evaluatedAt || a.createdAt)),
+    );
+    return limit > 0 ? rows.slice(0, limit) : rows;
+  }
+
+  /**
+   * 현장 데이터로 만드는 참고 지표 — 일정 완료율 · GPS 준수 · 보고 승인율 · 수정 요청 · 컴플레인.
+   * 점수는 매기지 않고, 대표가 볼 참고 값과 참고 점수만 계산합니다(대표 전용).
+   */
+  async staffEvaluationMetrics(
+    { staffContractId = '', accountId = '', name = '', month = '' } = {},
+    { actor = null } = {},
+  ) {
+    if (isCustomerActor(actor)) {
+      throw new StoreError('permission-denied', '직원 평가 지표는 대표(최고관리자)만 볼 수 있습니다.');
+    }
+    denyStaff(actor, '직원 평가 지표');
+    const key = evaluationMonthKey(month);
+    const [year, monthNumber] = key.split('-').map(Number);
+    const from = `${key}-01`;
+    const lastDay = new Date(year, monthNumber, 0).getDate();
+    const to = `${key}-${String(lastDay).padStart(2, '0')}`;
+    const today = todayISO();
+
+    const contract = staffContractId ? await this.getStaffContract(staffContractId) : null;
+    const staffName = toText(name) || toText(contract && contract.name);
+    const accId = toText(accountId) || toText(contract && contract.accountId);
+    const account = accId ? await this.getAccount(accId) : null;
+
+    const siteIds = new Set();
+    if (contract) (contract.siteIds || []).forEach((id) => siteIds.add(toText(id)));
+    if (account) assignedSiteIdsOf({ accountId: accId, account }).forEach((id) => siteIds.add(id));
+    const allSites = await this.listSites();
+    const sites = allSites.filter(
+      (site) => siteIds.has(site.id) || (staffName && site.manager === staffName),
+    );
+
+    const reports = (await this.adapter.getAll('reports')).map(normalizeReport);
+    const monthReports = reports.filter((report) => monthKeyOfDate(report.date) === key.replace('-', ''));
+    const reportDatesBySite = {};
+    for (const report of monthReports) {
+      if (!report.siteId || !report.date) continue;
+      reportDatesBySite[report.siteId] = reportDatesBySite[report.siteId] || [];
+      reportDatesBySite[report.siteId].push(report.date);
+    }
+
+    // 일정 완료율 — 그 달 지난 예정 일정 중 «현장 보고 또는 도착 기록»이 있는 날의 비율.
+    //  (보고서 날짜가 예정 요일과 어긋나도 실제 이행으로 셉니다. 그 달 예정 일정이 없으면 null.)
+    let schedulePlanned = 0;
+    let scheduleCovered = 0;
+    let scheduleActive = 0;
+    let scheduleUpcoming = 0;
+    let gpsTotal = 0;
+    let gpsVerified = 0;
+    for (const site of sites) {
+      const entries = scheduleEntriesForSite(site, {
+        from,
+        to,
+        today,
+        reportDates: reportDatesBySite[site.id] || [],
+      });
+      const plannedPast = entries.filter((entry) => entry.status !== 'off' && entry.date < today);
+      schedulePlanned += plannedPast.length;
+      scheduleUpcoming += entries.filter((entry) => entry.status !== 'off' && entry.date >= today).length;
+      const covered = new Set();
+      for (const report of monthReports) {
+        if (report.siteId === site.id && report.date && report.date < today) covered.add(report.date);
+      }
+      for (const visit of site.visits || []) {
+        if (visit && visit.kind === 'arrive' && visit.date && visit.date < today) covered.add(visit.date);
+      }
+      scheduleCovered += Math.min(plannedPast.length, covered.size);
+      for (const entry of entries) {
+        if (entry.date > today) continue;
+        if (entry.status === 'active') scheduleActive += 1;
+        if (entry.gps && entry.gps.key) {
+          gpsTotal += 1;
+          if (entry.gps.key === 'verified') gpsVerified += 1;
+        }
+      }
+    }
+    const scheduleDone = scheduleCovered;
+    const scheduleMissed = Math.max(0, schedulePlanned - scheduleCovered);
+    const scheduleRate = schedulePlanned > 0 ? Math.round((scheduleCovered / schedulePlanned) * 100) : null;
+    const scheduleTotal = schedulePlanned;
+    const gpsRate = gpsTotal > 0 ? Math.round((gpsVerified / gpsTotal) * 100) : null;
+
+    const mine = monthReports.filter(
+      (report) =>
+        siteIds.has(report.siteId) &&
+        ((staffName && report.leader === staffName) ||
+          (accId && toText(report.accountId) === accId) ||
+          (contract && toText(report.staffContractId) === contract.id)),
+    );
+    const reportsTotal = mine.length;
+    const reportsApproved = mine.filter((report) => reportStatusKey(report) === 'submitted').length;
+    const reportsPending = mine.filter((report) => {
+      const status = reportStatusKey(report);
+      return status === 'pending' || status === 'returned';
+    }).length;
+    const revisionReports = mine.filter(
+      (report) =>
+        Number(report.revisionCount) > 0 ||
+        (report.revisions || []).some((row) => row && row.action === 'revision-requested'),
+    ).length;
+    const approvalRate = reportsTotal > 0 ? Math.round((reportsApproved / reportsTotal) * 100) : null;
+
+    const complaints = [];
+    for (const site of sites) {
+      for (const complaint of site.complaints || []) {
+        if (monthKeyOfDate(complaint.createdAt || complaint.resolvedAt) === key.replace('-', '')) {
+          complaints.push(complaint);
+        }
+      }
+    }
+    const complaintOpen = complaints.filter((row) => complaintStatusKey(row) === 'open').length;
+    const complaintHandling = complaints.filter((row) => complaintStatusKey(row) === 'handling').length;
+    const complaintResolved = complaints.filter((row) => complaintStatusKey(row) === 'resolved').length;
+
+    const metrics = {
+      month: key,
+      from,
+      to,
+      staffName,
+      staffContractId: contract ? contract.id : '',
+      accountId: accId,
+      siteIds: sites.map((site) => site.id),
+      siteNames: sites.map((site) => site.name),
+      scheduleTotal,
+      scheduleDone,
+      scheduleMissed,
+      scheduleActive,
+      scheduleUpcoming,
+      scheduleRate,
+      gpsTotal,
+      gpsVerified,
+      gpsRate,
+      reportsTotal,
+      reportsApproved,
+      reportsPending,
+      revisionReports,
+      approvalRate,
+      complaintTotal: complaints.length,
+      complaintOpen,
+      complaintHandling,
+      complaintResolved,
+    };
+    metrics.penalty = evaluationPenaltyOf(metrics);
+    metrics.suggestedScores = evaluationSuggestScores(metrics);
+    metrics.suggestedTotal = evaluationTotalOf(metrics.suggestedScores, metrics.penalty);
+    metrics.suggestedGrade = evaluationGrade(metrics.suggestedTotal);
+    return metrics;
+  }
+
+  /**
+   * 100점 평가 저장 — 대표만. 같은 직원·같은 달은 한 건으로 덮어쓰고(월별 평가),
+   * 컴플레인 감점은 저장 시점에 다시 계산합니다.
+   */
+  async saveStaffEvaluation(input = {}, { actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '직원 평가는 대표(최고관리자)만 매길 수 있습니다.');
+    }
+    const contract = await this.getStaffContract(toText(input.staffContractId));
+    if (!contract) throw new StoreError('no-staff-contract', '직원 계약을 찾을 수 없습니다.');
+    const month = evaluationMonthKey(input.month || '');
+    const scores = normalizeEvaluationScores(input.itemScores || input.scores || {});
+    const metrics = await this.staffEvaluationMetrics(
+      { staffContractId: contract.id, month },
+      { actor },
+    );
+    const penalty = evaluationPenaltyOf(metrics);
+    const itemSum = evaluationItemSum(scores);
+    const total = evaluationTotalOf(scores, penalty);
+    const grade = evaluationGrade(total);
+    const now = new Date().toISOString();
+    const rows = (await this.adapter.getAll('staffChecks')).map(normalizeStaffCheck);
+    const existing = rows.find(
+      (row) => row.kind === 'score' && row.staffContractId === contract.id && row.month === month,
+    );
+    const who = toText(input.evaluatorName) || (actor && actor.name) || '대표';
+    const memo = toText(input.memo);
+    const history = existing ? existing.history : [];
+    const changes = existing
+      ? [
+          {
+            field: '총점',
+            from: `${existing.total}점 ${existing.grade}`,
+            to: `${total}점 ${grade}`,
+          },
+        ]
+      : [];
+    const record = normalizeStaffCheck({
+      id: existing ? existing.id : uid('eval'),
+      staffContractId: contract.id,
+      accountId: contract.accountId,
+      name: contract.name,
+      siteId: contract.siteIds[0] || '',
+      date: existing ? existing.date : todayISO(),
+      kind: 'score',
+      month,
+      itemScores: scores,
+      penalty,
+      total,
+      grade,
+      memo,
+      metrics,
+      evaluatorName: who,
+      reviewerName: who,
+      evaluatedAt: existing ? existing.evaluatedAt || now : now,
+      createdAt: existing ? existing.createdAt : now,
+      updatedAt: now,
+      source: 'app',
+      history: withHistory(
+        history,
+        makeHistoryEntry({
+          actor: who,
+          action: existing ? '평가 수정' : '100점 평가',
+          note: `${billingMonthLabel(month)} · 항목 ${itemSum}점 − 감점 ${penalty}점 = ${total}점 ${grade}`,
+          changes,
+        }),
+      ),
+    });
+    await this.adapter.put('staffChecks', record);
+    this._notify();
+    return normalizeStaffCheck(record);
+  }
+
+  /** 평가 한 건 삭제 — 대표만(잘못 매긴 달을 지울 때). */
+  async removeStaffEvaluation(id, { actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '직원 평가는 대표(최고관리자)만 지울 수 있습니다.');
+    }
+    const row = await this.adapter.get('staffChecks', toText(id));
+    if (!row) throw new StoreError('no-evaluation', '평가를 찾을 수 없습니다.');
+    await this.adapter.remove('staffChecks', toText(id));
+    this._notify();
+    return true;
+  }
+
+  /* ---------------- 10단계 — 고객 컴플레인 ---------------- */
+
+  /** 업장의 컴플레인 배열을 저장합니다(업장 레코드 안). */
+  async _saveSiteComplaints(site, list) {
+    const now = new Date().toISOString();
+    const next = normalizeSite({ ...site, complaints: normalizeComplaints(list), updatedAt: now });
+    await this.adapter.put('sites', next);
+    return next;
+  }
+
+  async _complaintSitesFor(actor) {
+    const sites = await this.listSites();
+    if (!actor) return sites;
+    if (isCeoActor(actor)) return sites;
+    if (isCustomerActor(actor)) {
+      const ids = await this._customerSiteIds(actor);
+      return sites.filter((site) => ids.includes(site.id));
+    }
+    if (isStaffActor(actor)) {
+      const mine = new Set(assignedSiteIdsOf(actor));
+      return sites.filter((site) => mine.has(site.id));
+    }
+    return [];
+  }
+
+  /**
+   * 컴플레인 목록.
+   *  · 대표: 전체 업장 · 내부 메모까지
+   *  · 직원·본부장: 본인 배정 업장 중 **대표가 조치 요청을 전달한 건의 요청 내용**만
+   *  · 고객: 자기 업장의 접수·진행 상태·조치 내용만
+   */
+  async listComplaints({ siteId = '', status = '', open = null, limit = 0 } = {}, { actor = null } = {}) {
+    let sites = await this._complaintSitesFor(actor);
+    const wanted = toText(siteId);
+    if (wanted) {
+      if (actor && !sites.some((site) => site.id === wanted)) {
+        throw new StoreError('permission-denied', '다른 업장의 컴플레인은 볼 수 없습니다.');
+      }
+      sites = sites.filter((site) => site.id === wanted);
+    }
+    let rows = [];
+    for (const site of sites) {
+      for (const row of site.complaints || []) {
+        rows.push({
+          ...row,
+          siteId: row.siteId || site.id,
+          siteCode: row.siteCode || site.code,
+          siteName: row.siteName || site.name,
+          typeLabel: complaintTypeLabel(row.type),
+          statusLabel: complaintStatus(row).label,
+        });
+      }
+    }
+    if (isCustomerActor(actor)) {
+      return sortComplaints(rows).slice(0, limit > 0 ? limit : undefined).map(customerComplaintView);
+    }
+    if (isStaffActor(actor)) {
+      rows = rows.filter((row) => toText(row.request));
+      rows = sortComplaints(rows).map(leaderComplaintView);
+      return limit > 0 ? rows.slice(0, limit) : rows;
+    }
+    if (open === true) rows = rows.filter(isComplaintOpen);
+    if (status) rows = rows.filter((row) => complaintStatusKey(row) === status);
+    rows = sortComplaints(rows);
+    return limit > 0 ? rows.slice(0, limit) : rows;
+  }
+
+  /** 컴플레인 한 건 — 업장 · 건 id 로 찾습니다. 권한은 목록과 같습니다. */
+  async getComplaint(siteId, complaintId, { actor = null } = {}) {
+    const site = await this.getSite(siteId);
+    if (!site) return null;
+    if (actor) {
+      const allowed = await this._complaintSitesFor(actor);
+      if (!allowed.some((row) => row.id === site.id)) {
+        throw new StoreError('permission-denied', '다른 업장의 컴플레인은 볼 수 없습니다.');
+      }
+    }
+    const complaint = (site.complaints || []).find((row) => row.id === complaintId);
+    if (!complaint) return null;
+    if (isCustomerActor(actor)) return customerComplaintView(complaint);
+    if (isStaffActor(actor)) return complaint.request ? leaderComplaintView(complaint) : null;
+    return complaint;
+  }
+
+  /**
+   * 컴플레인 접수 — 고객(③ 관리)과 대표가 직접 넣습니다.
+   * 고객은 자기 업장에만, 제목·내용·유형·사진까지. 상태·담당자·내부 메모는 대표만 고칩니다.
+   */
+  async addComplaint(input = {}, { actor = null } = {}) {
+    const customer = isCustomerActor(actor);
+    if (!customer && !isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '컴플레인은 고객과 대표(최고관리자)만 접수할 수 있습니다.');
+    }
+    const allowed = await this._complaintSitesFor(actor);
+    const wanted = toText(input.siteId);
+    let site = wanted ? allowed.find((row) => row.id === wanted) || null : customer ? allowed[0] || null : null;
+    if (!site && wanted && customer && !allowed.some((row) => row.id === wanted)) {
+      throw new StoreError('permission-denied', '다른 업장에는 컴플레인을 접수할 수 없습니다.');
+    }
+    if (!site) {
+      throw new StoreError(
+        'no-site',
+        customer ? '내 업장을 찾을 수 없습니다.' : '컴플레인을 접수할 업장을 고르세요.',
+      );
+    }
+    const content = toText(input.content || input.note).slice(0, 2000);
+    if (!content) throw new StoreError('complaint-empty', '불편 사항 내용을 적어 주세요.');
+    const title =
+      toText(input.title).slice(0, 80) ||
+      (content.split(/\r?\n/)[0] || '').trim().slice(0, 60) ||
+      '고객 요청';
+    const photos = (Array.isArray(input.photos) ? input.photos : [])
+      .filter((photo) => photo && typeof photo === 'object')
+      .slice(0, MAX_COMPLAINT_PHOTOS);
+    const all = [];
+    for (const row of await this.listSites()) all.push(...(row.complaints || []));
+    const monthKey = todayISO().slice(0, 7).replace('-', '');
+    const no = nextComplaintNo(all, monthKey);
+    const now = new Date().toISOString();
+    const who = toText(input.actor) || (actor && actor.name) || (customer ? '고객' : '대표');
+    const complaint = normalizeComplaint({
+      id: uid('cmp'),
+      no,
+      siteId: site.id,
+      siteCode: site.code,
+      siteName: site.name,
+      title,
+      content,
+      type: input.type,
+      photos,
+      status: 'open',
+      source: customer ? 'customer' : 'admin',
+      reporterName: customer ? who : toText(input.reporterName) || '대표 직접 접수',
+      reporterAccountId: customer ? (actor && actor.accountId) || '' : '',
+      reporterPhone: customer ? (actor && actor.phone) || '' : '',
+      createdAt: now,
+      updatedAt: now,
+      history: withHistory(
+        [],
+        makeHistoryEntry({
+          actor: who,
+          action: '컴플레인 접수',
+          note: `${site.name} · ${complaintTypeLabel(input.type)} · ${photos.length ? `사진 ${photos.length}장 · ` : ''}${title}`,
+        }),
+      ),
+    });
+    const saved = await this._saveSiteComplaints(site, [complaint, ...(site.complaints || [])]);
+    await this.recordHistory('sites', site.id, {
+      actor: who,
+      action: '컴플레인 접수',
+      note: `${no} · ${title} · ${complaintTypeLabel(complaint.type)}`,
+    });
+    this._notify();
+    const stored = (saved.complaints || []).find((row) => row.id === complaint.id) || complaint;
+    return customer ? customerComplaintView(stored) : stored;
+  }
+
+  /**
+   * 컴플레인 처리 — 대표만. 담당 팀장 연결 · 조치 요청 전달 · 상태 변경 · 조치 내용/재발 방지 메모.
+   * 상태를 「해결 완료」로 바꿀 때는 조치 내용이 필요합니다.
+   */
+  async updateComplaint(siteId, complaintId, patch = {}, { actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '컴플레인 처리는 대표(최고관리자)만 할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const list = (site.complaints || []).slice();
+    const index = list.findIndex((row) => row.id === complaintId);
+    if (index < 0) throw new StoreError('no-complaint', '컴플레인을 찾을 수 없습니다.');
+    const before = list[index];
+    const now = new Date().toISOString();
+    const who = toText(patch.by) || (actor && actor.name) || '대표';
+
+    let status = complaintStatusKey(before);
+    const fromStatus = status;
+    if (patch.status !== undefined && patch.status !== '') {
+      if (!COMPLAINT_STATUS[patch.status]) {
+        throw new StoreError('status-invalid', '알 수 없는 컴플레인 상태입니다.');
+      }
+      status = patch.status;
+    }
+    let assigneeId = before.assigneeId;
+    let assigneeName = before.assigneeName;
+    if (patch.assigneeName !== undefined) {
+      assigneeName = toText(patch.assigneeName);
+      assigneeId = toText(patch.assigneeId);
+    }
+    let request = before.request;
+    let requestedAt = before.requestedAt;
+    if (patch.request !== undefined) {
+      request = toText(patch.request).slice(0, 1000);
+      requestedAt = request ? now : '';
+      // 조치 요청을 전달하면 접수 → 조치 중으로 넘어갑니다.
+      if (request && status === 'open') status = 'handling';
+    }
+    const resolutionInput = patch.resolution && typeof patch.resolution === 'object' ? patch.resolution : {};
+    const note =
+      patch.resolutionNote !== undefined
+        ? toText(patch.resolutionNote)
+        : resolutionInput.note !== undefined
+          ? toText(resolutionInput.note)
+          : before.resolution.note;
+    const prevention =
+      patch.preventionNote !== undefined
+        ? toText(patch.preventionNote)
+        : resolutionInput.prevention !== undefined
+          ? toText(resolutionInput.prevention)
+          : before.resolution.prevention;
+    if (status === 'resolved' && !note) {
+      throw new StoreError('complaint-note', '해결 완료로 바꾸려면 조치 내용을 적어 주세요.');
+    }
+    const changes = [];
+    if (status !== fromStatus) {
+      changes.push({
+        field: '상태',
+        from: COMPLAINT_STATUS[fromStatus].label,
+        to: COMPLAINT_STATUS[status].label,
+      });
+    }
+    if (assigneeName !== before.assigneeName) {
+      changes.push({ field: '담당', from: before.assigneeName || '미지정', to: assigneeName || '미지정' });
+    }
+    if (request !== before.request) {
+      changes.push({ field: '조치 요청', from: before.request ? '전달됨' : '없음', to: request ? '전달됨' : '없음' });
+    }
+    if (note !== before.resolution.note || prevention !== before.resolution.prevention) {
+      changes.push({ field: '조치 내용', from: before.resolution.note ? '기록됨' : '없음', to: note ? '기록됨' : '없음' });
+    }
+    let action = '컴플레인 수정';
+    if (status === 'resolved' && fromStatus !== 'resolved') action = '해결 완료';
+    else if (request && request !== before.request) action = '조치 요청 전달';
+    else if (status !== fromStatus) action = '상태 변경';
+
+    const next = normalizeComplaint({
+      ...before,
+      status,
+      assigneeId,
+      assigneeName,
+      request,
+      requestedAt,
+      requestedBy: request ? before.requestedBy || who : '',
+      resolution: {
+        note,
+        prevention,
+        by: note ? before.resolution.by || who : '',
+        at: note ? before.resolution.at || now : '',
+      },
+      resolvedAt: status === 'resolved' ? before.resolvedAt || now : '',
+      updatedAt: now,
+      history: withHistory(
+        before.history,
+        makeHistoryEntry({ actor: who, action, note: toText(patch.note) || request || note, changes }),
+      ),
+    });
+    list[index] = next;
+    const saved = await this._saveSiteComplaints(site, list);
+    await this.recordHistory('sites', site.id, {
+      actor: who,
+      action,
+      note: `${before.no} · ${before.title}${status !== fromStatus ? ` · ${COMPLAINT_STATUS[fromStatus].label} → ${COMPLAINT_STATUS[status].label}` : ''}`,
+    });
+    this._notify();
+    return (saved.complaints || []).find((row) => row.id === next.id) || next;
   }
 
   /* ---------------- 청소장비 · 배접봉투 (대표 · 구입 직원) ---------------- */

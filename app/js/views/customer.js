@@ -22,8 +22,9 @@ import {
   daysBetween,
   toISODate,
   fmtWon,
+  localDateOf,
 } from '../ui.js';
-import { store, countReportPhotos, reportNoOf, QUOTE_STATUS, AGREEMENT_STATUS, isExtraQuote, INVOICE_STATUS, billingMonthLabel } from '../store.js';
+import { store, countReportPhotos, reportNoOf, QUOTE_STATUS, AGREEMENT_STATUS, isExtraQuote, INVOICE_STATUS, billingMonthLabel, COMPLAINT_TYPES } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import {
   getSession,
@@ -59,6 +60,9 @@ export function createCustomerView(container) {
     category: '',
     previewCode: '',
     roomTab: '',
+    // 10단계 — 고객이 보내는 불편 사항(컴플레인) 초안 · 접수 목록
+    complaint: { photos: [] },
+    complaints: [],
   };
   const reportsById = new Map();
   let mounted = false;
@@ -910,6 +914,95 @@ export function createCustomerView(container) {
    * 청구 · 입금 — 본인 업장의 청구 내역 · 입금 상태 · 세금계산서 발행 여부만 보입니다.
    * (직원 이름 · 내부 메모 · 팀장 정산 · 다른 업장은 나오지 않습니다.)
    */
+  /* ---------------- 10단계 — 불편 사항 · 요청 (컴플레인) ---------------- */
+
+  const CUSTOMER_COMPLAINT_BADGE = { open: 'badge--wait', handling: 'badge--revise', resolved: 'badge--done' };
+
+  function customerComplaintsTemplate(complaints) {
+    const rows = Array.isArray(complaints) ? complaints : [];
+    const draft = state.complaint || { photos: [] };
+    const openCount = rows.filter((row) => row.status !== 'resolved').length;
+    return `
+      <section class="panel customer-complaints" data-customer-complaints>
+        <div class="section-head">
+          <h2>불편 사항 · 요청</h2>
+          <p>${rows.length ? `진행 ${openCount}건 · 전체 ${rows.length}건` : '접수된 요청 없음'}</p>
+        </div>
+        <p class="tiny muted" style="margin:-6px 0 10px">
+          청소 상태 · 일정 · 직원 응대 등 불편한 점이나 요청 사항을 보내 주세요.
+          접수되면 코리아 에코크린 대표가 확인하고, 조치 내용을 이 화면에서 알려 드립니다.
+        </p>
+        ${
+          rows.length
+            ? `<div class="customer-complaint-list">${rows
+                .map(
+                  (row) => `
+              <article class="customer-complaint" data-customer-complaint="${esc(row.id)}" data-complaint-status="${esc(row.status)}">
+                <div class="customer-complaint__head">
+                  <strong>${esc(row.title || '불편 사항')}</strong>
+                  <span class="badge ${CUSTOMER_COMPLAINT_BADGE[row.status] || 'badge--wait'}">${esc(row.statusLabel || '접수')}</span>
+                </div>
+                <p>${esc(row.content || '')}</p>
+                ${
+                  row.photos && row.photos.length
+                    ? `<div class="doc-thumbs">${row.photos
+                        .map(
+                          (photo, index) =>
+                            `<button class="photo-btn" type="button" data-complaint-photo="${esc(row.id)}" data-complaint-photo-index="${index}" aria-label="불편 사항 사진 크게 보기"><img src="${esc(store.photoThumbUrl(photo))}" alt="불편 사항 사진" loading="lazy" decoding="async"></button>`,
+                        )
+                        .join('')}</div>`
+                    : ''
+                }
+                <p class="tiny muted">
+                  ${esc(row.typeLabel || '')}
+                  ${row.createdAt ? ` · 접수 ${esc(fmtDateLong(localDateOf(row.createdAt)))}` : ''}
+                  ${row.resolvedAt ? ` · 해결 ${esc(fmtDateLong(localDateOf(row.resolvedAt)))}` : ''}
+                </p>
+                ${
+                  row.resolutionNote
+                    ? `<div class="customer-complaint__result"><strong>조치 내용</strong><p>${esc(row.resolutionNote)}</p></div>`
+                    : ''
+                }
+              </article>`,
+                )
+                .join('')}</div>`
+            : ''
+        }
+        <details class="complaint-new" ${rows.length ? '' : 'open'}>
+          <summary>불편 사항 보내기</summary>
+          <form class="form" data-customer-complaint-form novalidate>
+            <div class="field">
+              <label for="cc-title">제목</label>
+              <input class="input" id="cc-title" type="text" maxlength="80" data-customer-complaint-title placeholder="예: 화장실 냄새가 심합니다">
+            </div>
+            <div class="field">
+              <label for="cc-type">유형</label>
+              <select class="select" id="cc-type" data-customer-complaint-type>
+                ${Object.entries(COMPLAINT_TYPES)
+                  .map(([key, label]) => `<option value="${esc(key)}">${esc(label)}</option>`)
+                  .join('')}
+              </select>
+            </div>
+            <div class="field">
+              <label for="cc-content">내용</label>
+              <textarea class="textarea" id="cc-content" rows="4" maxlength="2000" data-customer-complaint-content placeholder="언제 · 어디서 · 어떤 점이 불편했는지 적어 주세요."></textarea>
+            </div>
+            ${
+              draft.photos.length
+                ? `<div class="issue-form__photos">${draft.photos.map((photo) => `<img src="${esc(store.photoThumbUrl(photo))}" alt="첨부 사진">`).join('')}</div>`
+                : ''
+            }
+            <div class="btn-row btn-row--stack">
+              <label class="btn btn--quiet btn--sm">사진 첨부 (최대 4장)
+                <input type="file" accept="image/*" multiple hidden data-customer-complaint-photo>
+              </label>
+              <button class="btn btn--primary btn--sm" type="submit">보내기</button>
+            </div>
+          </form>
+        </details>
+      </section>`;
+  }
+
   function customerBillingTemplate(invoices) {
     const rows = Array.isArray(invoices) ? invoices : [];
     if (!rows.length) return '';
@@ -957,7 +1050,7 @@ export function createCustomerView(container) {
       </section>`;
   }
 
-  function manageTabTemplate(site, stats, viewer, schedule, invoices) {    const last = stats.last;
+  function manageTabTemplate(site, stats, viewer, schedule, invoices, complaints = []) {    const last = stats.last;
     const reports = filterReports(stats.reports);
     const nextLabel = stats.nextDate ? `${fmtDateLong(stats.nextDate)} 예정` : '일정 확인 필요';
     const room = site.room || {};
@@ -968,6 +1061,8 @@ export function createCustomerView(container) {
       ${visitScheduleTemplate(schedule)}
 
       ${customerBillingTemplate(invoices)}
+
+      ${customerComplaintsTemplate(complaints)}
 
       <section class="panel">
         <dl class="kv kv--left">
@@ -1084,7 +1179,7 @@ export function createCustomerView(container) {
 
       ${viewer.preview ? '' : profilePanelTemplate(viewer)}
 
-      ${tab === 'quote' ? quoteTabTemplate(documents) : tab === 'contract' ? contractTabTemplate(documents) : manageTabTemplate(site, stats, viewer, schedule, documents.invoices)}
+      ${tab === 'quote' ? quoteTabTemplate(documents) : tab === 'contract' ? contractTabTemplate(documents) : manageTabTemplate(site, stats, viewer, schedule, documents.invoices, documents.complaints)}
     `;
   }
 
@@ -1148,6 +1243,9 @@ export function createCustomerView(container) {
       return;
     }
 
+    // 방에 들어온 뒤에도 「불편 사항 보내기」가 업장을 알 수 있도록 기억합니다.
+    state.site = site;
+
     const stats = await store.statsForSite(site, { customerFacing: true });
     if (token !== renderToken) return;
     // 5단계 — 자기 업장의 방문 일정만(직원 위치·좌표·거리는 오지 않습니다).
@@ -1168,7 +1266,10 @@ export function createCustomerView(container) {
       issues: await store.listIssues({ siteId: site.id }, { actor: session }).catch(() => []),
       // 9단계 — 본인 업장의 청구 · 입금 · 세금계산서 발행 여부만(금액 · 상태만).
       invoices: await store.listInvoices({ siteId: site.id }, { actor: session }).catch(() => []),
+      // 10단계 — 본인 업장의 불편 사항(접수 · 진행 상태 · 조치 내용). 내부 메모는 오지 않습니다.
+      complaints: await store.listComplaints({ siteId: site.id }, { actor: session }).catch(() => []),
     };
+    state.complaints = documents.complaints;
     if (!['quote', 'contract', 'manage'].includes(state.roomTab)) state.roomTab = 'manage';
     if (token !== renderToken) return;
     container.innerHTML = roomTemplate(site, stats, { ...session, preview: false }, documents, schedule);
@@ -1223,7 +1324,10 @@ export function createCustomerView(container) {
       issues: session.role === 'admin' ? await store.listIssues({ siteId: site.id }, { actor: session }).catch(() => []) : [],
       // 9단계 — 청구 금액은 대표만. 팀장 미리보기에는 넘기지 않습니다.
       invoices: session.role === 'admin' ? await store.listInvoices({ siteId: site.id }, { actor: session }).catch(() => []) : [],
+      // 10단계 — 불편 사항은 대표 · 배정 팀장(요청 내용만) 미리보기.
+      complaints: await store.listComplaints({ siteId: site.id }, { actor: session }).catch(() => []),
     };
+    state.complaints = documents.complaints;
 
     const viewer = {
       name: session.name,
@@ -1303,6 +1407,11 @@ export function createCustomerView(container) {
   }
 
   async function onSubmit(event) {
+    if (event.target.matches('[data-customer-complaint-form]')) {
+      event.preventDefault();
+      await submitComplaint(event.target);
+      return;
+    }
     if (event.target.id === 'customer-profile-form') {
       event.preventDefault();
       const name = $('#cp-name', container)?.value || '';
@@ -1413,11 +1522,96 @@ export function createCustomerView(container) {
   }
 
   async function onChange(event) {
+    const complaintPhoto = event.target.closest('[data-customer-complaint-photo]');
+    if (complaintPhoto) {
+      const files = Array.from(complaintPhoto.files || []);
+      complaintPhoto.value = '';
+      await addComplaintPhotos(files);
+      return;
+    }
     const input = event.target.closest('[data-biz-license-input]');
     if (!input) return;
     const files = Array.from(input.files || []);
     input.value = '';
     await uploadBizLicense(input.dataset.bizLicenseInput, files);
+  }
+
+  /* ---------------- 10단계 — 불편 사항 접수 · 사진 ---------------- */
+
+  async function addComplaintPhotos(files) {
+    const room = 4 - (state.complaint.photos.length || 0);
+    const list = Array.from(files || []).slice(0, Math.max(0, room));
+    if (!list.length) {
+      toast('사진은 최대 4장까지 첨부할 수 있습니다.', { tone: 'error' });
+      return;
+    }
+    try {
+      toast('사진 처리 중…', { duration: 1000 });
+      for (const file of list) {
+        const prepared = await preparePhoto(file);
+        const ref = await store.savePhoto({
+          dataUrl: prepared.dataUrl,
+          thumb: prepared.thumb,
+          width: prepared.width,
+          height: prepared.height,
+          caption: '불편 사항 사진',
+        });
+        state.complaint.photos.push(ref);
+      }
+      await render();
+    } catch (error) {
+      toast(error.message || '사진을 첨부하지 못했습니다.', { tone: 'error' });
+    }
+  }
+
+  async function submitComplaint(form) {
+    const siteId = (state.site && state.site.id) || (state.session && state.session.siteId) || '';
+    if (!state.session || !siteId) return;
+    const title = form.querySelector('[data-customer-complaint-title]')?.value || '';
+    const type = form.querySelector('[data-customer-complaint-type]')?.value || 'etc';
+    const content = form.querySelector('[data-customer-complaint-content]')?.value || '';
+    if (!content.trim()) {
+      toast('불편 사항 내용을 적어 주세요.', { tone: 'error' });
+      return;
+    }
+    const button = form.querySelector('button[type=submit]');
+    if (button) button.disabled = true;
+    try {
+      const saved = await store.addComplaint(
+        {
+          siteId,
+          title,
+          type,
+          content,
+          photos: state.complaint.photos.slice(),
+          actor: state.session.name,
+        },
+        { actor: state.session },
+      );
+      state.complaint = { photos: [] };
+      await render();
+      toast(`불편 사항을 접수했습니다. (${saved.no || ''}) 대표가 확인하고 조치 내용을 알려 드립니다.`, { duration: 9000 });
+      const panel = $('[data-customer-complaints]', container);
+      if (panel) panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    } catch (error) {
+      if (button) button.disabled = false;
+      toast(error.message || '접수하지 못했습니다. 잠시 후 다시 시도해 주세요.', { tone: 'error' });
+    }
+  }
+
+  async function openComplaintPhotos(complaintId, startIndex) {
+    const row = (state.complaints || []).find((item) => item.id === complaintId);
+    if (!row) return;
+    const items = [];
+    for (const photo of row.photos || []) {
+      const url = await store.photoFullUrl(photo);
+      if (url) items.push({ url, caption: row.title || '불편 사항 사진' });
+    }
+    if (!items.length) {
+      toast('사진을 불러오지 못했습니다.', { tone: 'error' });
+      return;
+    }
+    openLightbox(items, Math.min(Number(startIndex) || 0, items.length - 1));
   }
 
   /* ---------------- 7단계 — 추가 견적 승인 / 보류 ---------------- */
@@ -1461,6 +1655,12 @@ export function createCustomerView(container) {
     const extraDecline = event.target.closest('[data-extra-quote-decline]');
     if (extraDecline) {
       await decideExtraQuote(extraDecline.dataset.extraQuoteDecline, 'declined', extraDecline);
+      return;
+    }
+
+    const complaintPhoto = event.target.closest('[data-complaint-photo]');
+    if (complaintPhoto) {
+      await openComplaintPhotos(complaintPhoto.dataset.complaintPhoto, complaintPhoto.dataset.complaintPhotoIndex);
       return;
     }
 

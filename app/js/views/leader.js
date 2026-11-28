@@ -19,6 +19,7 @@ import {
   fmtTime,
   fmtBytes,
   toISODate,
+  localDateOf,
   nowHHMM,
   daysBetween,
   openLightbox,
@@ -444,6 +445,8 @@ export function createLeaderView(container) {
     issueDraft: { note: '', photos: [] },
     // 9단계 — 이 업장의 내 도급 정산(본인 것만)
     sitePayouts: [],
+    // 10단계 — 대표가 전달한 고객 컴플레인 조치 요청(요청 내용만)
+    siteComplaints: [],
   };
   const sampleCursor = { security: 0, cleaning: 0, issue: 0 };
   let mounted = false;
@@ -1975,6 +1978,8 @@ export function createLeaderView(container) {
 
       ${issuePanelTemplate(site)}
 
+      ${siteComplaintsTemplate(site)}
+
       <p class="tiny muted" style="text-align:center;margin:4px 0 8px">
         ${state.editingReportId
           ? '고친 내용을 다시 제출하면 <strong>대표 확인 대기</strong>로 돌아갑니다. 고객에게는 대표가 제출한 뒤에 보입니다.'
@@ -2053,6 +2058,47 @@ export function createLeaderView(container) {
             <button class="btn btn--primary btn--sm" type="button" data-issue-submit="${esc(site.id)}">특이사항 등록</button>
           </div>
         </div>
+      </section>`;
+  }
+
+  /* ---------------- 10단계 — 고객 컴플레인 조치 요청 (본인 업장) ---------------- */
+
+  const COMPLAINT_BADGE = { open: 'badge--wait', handling: 'badge--revise', resolved: 'badge--done' };
+
+  /**
+   * 대표가 전달한 조치 요청만 보입니다.
+   * 다른 업장 · 내부 평가 · 재발 방지 메모 · 접수자 연락처는 넘어오지 않습니다.
+   */
+  function siteComplaintsTemplate(site) {
+    const rows = state.siteComplaints || [];
+    const open = rows.filter((row) => row.status !== 'resolved');
+    return `
+      <section class="panel complaint-site" data-site-complaints="${esc(site.id)}">
+        <div class="section-head">
+          <h2>고객 컴플레인 · 조치 요청</h2>
+          <p>${rows.length ? `진행 ${open.length}건 · 전체 ${rows.length}건` : '전달된 요청 없음'}</p>
+        </div>
+        <p class="tiny muted" style="margin:-6px 0 10px">
+          대표가 전달한 조치 요청만 보입니다. 처리한 내용은 보고서 메모에 남기거나 대표에게 알려 주세요.
+        </p>
+        ${
+          rows.length
+            ? `<div class="complaint-site-list">${rows
+                .map(
+                  (row) => `
+              <div class="complaint-site-row" data-site-complaint="${esc(row.id)}" data-complaint-status="${esc(row.status)}">
+                <div class="complaint-site-row__head">
+                  <strong>${esc(row.title || '고객 요청')}</strong>
+                  <span class="badge ${COMPLAINT_BADGE[row.status] || 'badge--wait'}">${esc(row.statusLabel || '접수')}</span>
+                </div>
+                <span class="tiny muted">${esc(row.typeLabel || '')}${row.createdAt ? ` · 접수 ${esc(fmtDateLong(localDateOf(row.createdAt)))}` : ''}</span>
+                <p class="complaint-site-row__request">${esc(row.request)}</p>
+                ${row.requestedAt ? `<span class="tiny muted">대표 전달 ${esc(fmtDateLong(localDateOf(row.requestedAt)))}</span>` : ''}
+              </div>`,
+                )
+                .join('')}</div>`
+            : '<p class="tiny muted">아직 전달된 컴플레인이 없습니다.</p>'
+        }
       </section>`;
   }
 
@@ -2437,6 +2483,7 @@ export function createLeaderView(container) {
       state.visitForm = { siteId: '', kind: 'arrive', reason: 'indoor', note: '', error: '' };
       state.siteIssues = [];
       state.sitePayouts = [];
+      state.siteComplaints = [];
       closeBaselineSheet();
       container.innerHTML = gateTemplate();
       return;
@@ -2558,6 +2605,8 @@ export function createLeaderView(container) {
     state.siteIssues = await store.listIssues({ siteId: site.id }, { actor: state.session }).catch(() => []);
     // 9단계 — 이 업장의 내 도급 정산(본인 것만 · 금액 있음, 고객 청구 금액 없음).
     state.sitePayouts = await store.listPayouts({ siteId: site.id }, { actor: state.session }).catch(() => []);
+    // 10단계 — 대표가 전달한 컴플레인 조치 요청만(요청 내용 · 상태, 평가·내부 메모 없음).
+    state.siteComplaints = await store.listComplaints({ siteId: site.id }, { actor: state.session }).catch(() => []);
 
 
     container.innerHTML = formTemplate(state.session, site);

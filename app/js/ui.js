@@ -27,6 +27,14 @@ export function toISODate(date = new Date()) {
   return `${y}-${m}-${d}`;
 }
 
+/** 서버 ISO 시각 → 기기 시간대의 YYYY-MM-DD (날짜만). 잘못된 값은 앞 10자. */
+export function localDateOf(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+  return toISODate(date);
+}
+
 export function nowHHMM(date = new Date()) {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
