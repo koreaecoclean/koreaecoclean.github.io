@@ -200,7 +200,7 @@
 | `tests/browser_stage10.py` (신규) | **47/47** — 실제 Chromium 전 과정(고객 접수 + 사진 → 대표 요청 → 팀장 확인 → 해결 → 고객 확인 → 평가 저장), 콘솔·페이지 오류 0 |
 | `tests/live_stage10.py` (신규) | **32/32** — 라이브 배포본 390×844, `?sync=off` |
 | 기존 28종 + `run_tests.py` | **2,217/2,217** |
-| `browser_test` · `browser_stage4`~`8` · `browser_v2111` | 273 · 40 · 50 · 65 · 42 · 35 · 33 |
+| `browser_test` · `browser_stage4` · `stage5` · `stage6` · `stage7` · `v2111` · `stage8` | 273 · 40 · 50 · 65 · 33 · 42 · 35 |
 | `check_static` · `run_views` | ALL PASSED |
 
 합계 **2,217개 파이썬 검사 + 585개 브라우저 검사 + 라이브 32개** 통과. 라이브 DB `ecoclean_items` **63행 그대로**(sha256 동일). 서비스 워커 `CACHE_VERSION` **v2.15.0**, GitHub Pages `built` 확인.
