@@ -568,6 +568,7 @@
 | `tests/test_stage6_render.py` (신규) | **77/77** — 대표 카드, 수정 요청 중 카드, 격자·범례·상세, 팀장 달력·업장 배지, 인쇄 시트(내부/고객), 이스케이프 |
 | `tests/browser_stage6.py` (신규) | **65/65** — 실제 Chromium 전 과정(등록→수정 요청→보완 재제출→인쇄 호출→제출→달력→고객) |
 | 기존 20종 + `run_tests.py` | **1,464/1,464** |
+| `tests/live_stage6.py` (라이브 · `?sync=off`) | **66/66** — 실제 배포본 전 과정 · 서비스워커 v2.12.0 |
 | `browser_test` · `browser_stage4` · `browser_stage5` · `browser_v2111` | 273/273 · 40/40 · 50/50 · 42/42 |
 | `check_static.py` · `run_views.py` | ALL PASSED |
 
