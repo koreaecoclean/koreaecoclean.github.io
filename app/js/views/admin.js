@@ -109,6 +109,7 @@ export function createAdminView(container) {  const state = {
     // 5단계 — 일정 · GPS (대표: 전체 업장/팀장별 필터 · 업장별 설정)
     schedule: { entries: [], days: [], summary: {}, today: '', leaders: [] },
     scheduleLeader: '',
+    scheduleMonth: '',
     scheduleBusy: '',
     scheduleError: '',
   };
@@ -1046,8 +1047,37 @@ export function createAdminView(container) {  const state = {
     return `<span data-sched-gps="${esc(gps.key)}">${parts.map(badgeOf).join(' ')}</span>`;
   }
 
-  /** 오늘 일정 · 이번 주 일정 · 팀장별 필터 — 대표 화면 맨 위에 붙입니다. */
-  function schedulePanelTemplate(schedule) {
+  function monthKeyOf(value) {
+    const date = value ? new Date(`${value}-01T12:00:00`) : new Date();
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  function monthRangeOf(key) {
+    const [year, month] = String(key || monthKeyOf()).split('-').map(Number);
+    const first = `${year}-${String(month).padStart(2, '0')}-01`;
+    const end = new Date(year, month, 0);
+    const last = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+    return { from: first, to: last };
+  }
+
+  function shiftMonthKey(key, delta) {
+    const [year, month] = String(key || monthKeyOf()).split('-').map(Number);
+    const date = new Date(year, month - 1 + Number(delta || 0), 1);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  function monthLabelOf(key) {
+    const [year, month] = String(key || monthKeyOf()).split('-').map(Number);
+    return `${year}년 ${month}월`;
+  }
+
+  /** 오늘 일정 · 다음 일정 · 월간 목록 · 팀장별 필터 — 대표 화면 맨 위에 붙입니다. */
+  function schedulePanelTemplate(schedule, monthSchedule) {
+    const monthKey = state.scheduleMonth || monthKeyOf();
+    // 지난 날은 실제 기록이 있는 날만 보여 줍니다(기능 도입 전 날짜가 모두 ‘미방문’으로 보이지 않게).
+    const monthEntries = ((monthSchedule && monthSchedule.entries) || []).filter(
+      (entry) => entry.date >= (monthSchedule.today || todayStamp()) || entry.arrive || entry.done || entry.reportId,
+    );
     const today = schedule.today || todayStamp();
     const entries = schedule.entries || [];
     const leaders = schedule.leaders || [];
@@ -1097,15 +1127,36 @@ export function createAdminView(container) {  const state = {
             ? upcoming
                 .map(
                   (entry) => `<li data-schedule-upcoming="${esc(entry.siteId)}">
-                    <span>${esc(entry.date.slice(5).replace('-', '.'))} (${esc(entry.weekdayLabel)})</span>
-                    <span>${esc(entry.siteName)}</span>
-                    <span class="tiny muted">${esc(entry.time || '시간 미설정')}</span>
+                    <span class="sched-upcoming__date">${esc(entry.date.slice(5).replace('-', '.'))} (${esc(entry.weekdayLabel)})</span>
+                    <span class="sched-upcoming__what"><strong>${esc(entry.siteName)}</strong><span class="tiny muted">${esc(entry.time || '시간 미설정')}</span></span>
                     ${scheduleStatusBadge(entry)}
                   </li>`,
                 )
                 .join('')
             : '<li class="tiny muted">다음 일정이 없습니다.</li>'}
         </ul>
+        <div class="section-head sched-month-head" style="margin-top:16px">
+          <h2 style="font-size:15px">월간 일정</h2>
+          <div class="sched-month-nav">
+            <button class="link-btn" type="button" data-schedule-month="prev" aria-label="지난달">‹ ${esc(monthLabelOf(shiftMonthKey(monthKey, -1)))}</button>
+            <strong>${esc(monthLabelOf(monthKey))}</strong>
+            <button class="link-btn" type="button" data-schedule-month="next" aria-label="다음달">${esc(monthLabelOf(shiftMonthKey(monthKey, 1)))} ›</button>
+          </div>
+        </div>
+        <div class="sched-month" data-schedule-month-list>
+          ${monthEntries.length
+            ? monthEntries
+                .map(
+                  (entry) => `<div class="sched-month__row" data-schedule-site="${esc(entry.siteId)}" data-schedule-status="${esc(entry.status)}">
+                    <span class="sched-month__date">${esc(entry.date.slice(5).replace('-', '.'))} (${esc(entry.weekdayLabel)})</span>
+                    <span class="sched-month__name">${esc(entry.siteName)}</span>
+                    <span class="tiny muted">${esc(entry.time || '시간 미설정')}</span>
+                    ${scheduleStatusBadge(entry)}
+                  </div>`,
+                )
+                .join('')
+            : '<p class="tiny muted">이 달에는 일정이 없습니다.</p>'}
+        </div>
         <p class="hint">팀장이 현장에서 [현장 도착]을 누르면 거리 · 반경 안 여부가 기록됩니다. 위치를 못 받으면 사유를 남긴 예외 기록이 ‘위치 미인증’으로 표시됩니다.</p>
       </section>`;
   }
@@ -1861,6 +1912,11 @@ export function createAdminView(container) {  const state = {
     // 5단계 — 일정 · 현장 도착/완료 (대표는 전체 업장 · 팀장별 필터)
     const schedule = await store.listSchedule({ leader: state.scheduleLeader }, { actor: session });
     state.schedule = schedule;
+    const monthRange = monthRangeOf(state.scheduleMonth || monthKeyOf());
+    const monthSchedule = await store.listSchedule(
+      { leader: state.scheduleLeader, from: monthRange.from, to: monthRange.to },
+      { actor: session },
+    );
     // 2단계 — 기준표 · 체크리스트 설정과 방문 폼 미리보기
     const quoteSettings = await store.getQuoteSettings();
     const quoteChecklist = await store.getQuoteChecklist();
@@ -1896,7 +1952,9 @@ export function createAdminView(container) {  const state = {
 
       ${reportApprovalPanelTemplate({ pending: pendingReports, recent: recentSubmitted })}
 
-      ${schedulePanelTemplate(schedule)}
+      ${schedulePanelTemplate(schedule, monthSchedule)}
+
+      ${scheduleSettingsTemplate(sites, schedule)}
 
       ${revenueSummaryTemplate(revenue)}
 
@@ -1921,8 +1979,6 @@ export function createAdminView(container) {  const state = {
       ${staffAccountPanelTemplate({ accounts, sites, state })}
 
       ${supplyAdminPanel({ catalog: supplyCatalog, orders: supplyOrders, accounts, state })}
-
-      ${scheduleSettingsTemplate(sites, schedule)}
 
       <section>
         <div class="section-head">
@@ -2737,6 +2793,13 @@ export function createAdminView(container) {  const state = {
     const scheduleLeader = event.target.closest('[data-schedule-leader]');
     if (scheduleLeader) {
       state.scheduleLeader = scheduleLeader.dataset.scheduleLeader || '';
+      await render();
+      return;
+    }
+    const scheduleMonth = event.target.closest('[data-schedule-month]');
+    if (scheduleMonth) {
+      const delta = scheduleMonth.dataset.scheduleMonth === 'prev' ? -1 : 1;
+      state.scheduleMonth = shiftMonthKey(state.scheduleMonth || monthKeyOf(), delta);
       await render();
       return;
     }

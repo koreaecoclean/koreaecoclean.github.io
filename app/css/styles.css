@@ -3505,13 +3505,17 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .sched-upcoming { margin: 6px 0 0; padding: 0; list-style: none; }
 .sched-upcoming li {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 6px 10px;
   padding: 6px 0;
   font-size: 12.5px;
   border-top: 1px dashed var(--line);
 }
+.sched-upcoming__date { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sched-upcoming__what { display: flex; flex: 1 1 auto; min-width: 0; align-items: baseline; gap: 6px; }
+.sched-upcoming__what strong { overflow: hidden; font-size: 12.5px; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
+.sched-upcoming__what .tiny { flex: none; }
+.sched-upcoming li > .badge { flex: none; font-size: 10px; padding: 2px 7px; }
 .sched-upcoming li:first-child { border-top: 0; }
 .sched-filter { margin: 2px 0 10px; }
 
@@ -3570,3 +3574,23 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 
 .room-tabs--compact { gap: 4px; }
 .room-tabs--compact .room-tab { padding: 9px 2px; font-size: 11.5px; letter-spacing: -.04em; }
+
+.sched-month-head { flex-wrap: wrap; gap: 6px; }
+.sched-month-nav { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.sched-month-nav strong { font-size: 12.5px; font-weight: 800; color: var(--brand-700); white-space: nowrap; }
+.sched-month-nav .link-btn { font-size: 11px; color: var(--muted); }
+.sched-month { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; margin-top: 6px; }
+.sched-month__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  font-size: 12.5px;
+  border-top: 1px dashed var(--line);
+}
+.sched-month__row:first-child { border-top: 0; }
+.sched-month__date { flex: none; width: 58px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sched-month__name { flex: 1 1 auto; min-width: 0; overflow: hidden; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
+.sched-month__row .tiny { flex: none; font-size: 10.5px; white-space: nowrap; }
+.sched-month__row .badge { flex: none; font-size: 10px; padding: 2px 6px; white-space: nowrap; }
+.schedule-month .sched-month { max-height: 340px; overflow-y: auto; }

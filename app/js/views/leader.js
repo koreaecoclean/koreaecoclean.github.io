@@ -426,6 +426,8 @@ export function createLeaderView(container) {
     supplyRequestOpen: true,
     // 5단계 — 일정 · GPS 현장 도착/완료
     schedule: { entries: [], days: [], summary: {}, today: '' },
+    scheduleMonth: '',
+    scheduleMonthSchedule: { entries: [] },
     scheduleBusy: '',
     visitForm: { siteId: '', kind: 'arrive', reason: 'indoor', note: '', error: '' },
     busy: false,
@@ -644,6 +646,65 @@ export function createLeaderView(container) {
       </article>`;
   }
 
+  function monthKeyOf(value) {
+    const date = value ? new Date(`${value}-01T12:00:00`) : new Date();
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  function monthRangeOf(key) {
+    const [year, month] = String(key || monthKeyOf()).split('-').map(Number);
+    const first = `${year}-${String(month).padStart(2, '0')}-01`;
+    const end = new Date(year, month, 0);
+    const last = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+    return { from: first, to: last };
+  }
+
+  function shiftMonthKey(key, delta) {
+    const [year, month] = String(key || monthKeyOf()).split('-').map(Number);
+    const date = new Date(year, month - 1 + Number(delta || 0), 1);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  function monthLabelOf(key) {
+    const [year, month] = String(key || monthKeyOf()).split('-').map(Number);
+    return `${year}년 ${month}월`;
+  }
+
+  function scheduleMonthTemplate() {
+    const monthKey = state.scheduleMonth || monthKeyOf();
+    const monthSource = state.scheduleMonthSchedule || { entries: [] };
+    // 지난 날은 실제 기록이 있는 날만 보여 줍니다.
+    const entries = (monthSource.entries || []).filter(
+      (entry) => entry.date >= (monthSource.today || toISODate()) || entry.arrive || entry.done || entry.reportId,
+    );
+    return `
+      <section class="panel schedule-month" data-schedule-month-panel>
+        <div class="section-head sched-month-head">
+          <h2 style="font-size:15px">월간 일정</h2>
+          <div class="sched-month-nav">
+            <button class="link-btn" type="button" data-schedule-month="prev" aria-label="지난달">‹ ${esc(monthLabelOf(shiftMonthKey(monthKey, -1)))}</button>
+            <strong>${esc(monthLabelOf(monthKey))}</strong>
+            <button class="link-btn" type="button" data-schedule-month="next" aria-label="다음달">${esc(monthLabelOf(shiftMonthKey(monthKey, 1)))} ›</button>
+          </div>
+        </div>
+        <div class="sched-month" data-schedule-month-list>
+          ${entries.length
+            ? entries
+                .map(
+                  (entry) => `<div class="sched-month__row" data-schedule-site="${esc(entry.siteId)}" data-schedule-status="${esc(entry.status)}">
+                    <span class="sched-month__date">${esc(entry.date.slice(5).replace('-', '.'))} (${esc(entry.weekdayLabel)})</span>
+                    <span class="sched-month__name">${esc(entry.siteName)}</span>
+                    <span class="tiny muted">${esc(entry.time || '시간 미설정')}</span>
+                    <span class="badge ${esc(entry.statusBadge)}">${esc(entry.statusLabel)}</span>
+                  </div>`,
+                )
+                .join('')
+            : '<p class="tiny muted">이 달에는 일정이 없습니다.</p>'}
+        </div>
+        <p class="tiny muted">정기 청소 요일을 기준으로 만든 한 달 일정입니다. 대표가 휴무 · 보강 · 시간 변경을 넣으면 바로 반영됩니다.</p>
+      </section>`;
+  }
+
   function schedulePanelTemplate() {
     const schedule = state.schedule || {};
     const today = schedule.today || toISODate();
@@ -711,6 +772,7 @@ export function createLeaderView(container) {
         </div>
         ${weekRows || '<p class="tiny muted">이번 주 남은 일정이 없습니다.</p>'}
       </section>
+      ${scheduleMonthTemplate()}
       <section class="panel">
         <div class="section-head"><h2>기록 안내</h2></div>
         <p class="tiny muted">
@@ -1989,6 +2051,11 @@ export function createLeaderView(container) {
     // 5단계 — 본인 일정(대표는 전체) + 오늘 현장 도착/완료 기록. 서버·기기 어느 쪽에서든
     //  배정된 업장만 내려옵니다(store.listSchedule 이 권한별로 거릅니다).
     state.schedule = await store.listSchedule({}, { actor: state.session });
+    const monthRange = monthRangeOf(state.scheduleMonth || monthKeyOf());
+    state.scheduleMonthSchedule = await store.listSchedule(
+      { from: monthRange.from, to: monthRange.to },
+      { actor: state.session },
+    );
 
     // 청소장비 · 봉투: 구입 당사자 직원(부관리자·대표 제외)에게만 열립니다.
     const supplyAllowed = state.session.role === 'leader' && canUseSupply(state.session);
@@ -2369,6 +2436,13 @@ export function createLeaderView(container) {
     const doneButton = event.target.closest('[data-visit-done]');
     if (doneButton) {
       await recordVisitAtSite(doneButton.dataset.visitDone, 'done');
+      return;
+    }
+    const scheduleMonth = event.target.closest('[data-schedule-month]');
+    if (scheduleMonth) {
+      const delta = scheduleMonth.dataset.scheduleMonth === 'prev' ? -1 : 1;
+      state.scheduleMonth = shiftMonthKey(state.scheduleMonth || monthKeyOf(), delta);
+      await render();
       return;
     }
     const visitCancel = event.target.closest('[data-visit-cancel]');
