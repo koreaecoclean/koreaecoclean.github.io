@@ -3683,8 +3683,7 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
   white-space: pre-wrap;
 }
 .approval-reason strong { display: block; font-size: 11px; letter-spacing: .02em; }
-.approval-actions { flex-wrap: wrap; }
-.approval-detail-btn { margin-left: auto; }
+.approval-actions { flex-wrap: wrap; align-items: center; }
 
 .my-report__body { min-width: 0; }
 .my-report__reason {
@@ -3733,7 +3732,7 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
   flex-direction: column;
   align-items: stretch;
   gap: 2px;
-  min-height: 58px;
+  min-height: 66px;
   padding: 4px 3px 5px;
   border: 0;
   border-right: 1px solid var(--line);
@@ -3751,21 +3750,28 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .cal-cell.is-selected { background: #e3efe0; box-shadow: inset 0 0 0 2px var(--brand-700, #14532d); }
 .cal-cell__day { display: flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.2; }
 .cal-cell__today { font-size: 8.5px; font-weight: 800; color: #fff; background: var(--brand-700, #14532d); border-radius: 999px; padding: 0 3px; }
-.cal-cell__marks { display: flex; flex-wrap: wrap; gap: 2px; margin-top: auto; }
+.cal-cell__marks { display: flex; flex-wrap: wrap; gap: 2px; margin-top: auto; max-height: 40px; overflow: hidden; }
 .cal-mark {
-  display: inline-block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
-  height: 5px;
+  height: 9px;
   border-radius: 3px;
   background: var(--line-strong, #cfd6c9);
+  color: #fff;
+  font-size: 7.5px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -.02em;
   overflow: hidden;
-  text-indent: -999px;
 }
-.cal-mark--planned { background: #c9d4c4; }
+.cal-mark--planned { background: #d7e3d1; color: #41523b; }
 .cal-mark--active { background: #d8a13a; }
 .cal-mark--done { background: #3f8a37; }
 .cal-mark--missed { background: #c0564a; }
-.cal-mark--off { background: #9aa39a; }
+.cal-mark--off { background: #e4e7e2; color: #5d655c; }
 .cal-cell__count { font-size: 9px; font-weight: 800; color: var(--muted); text-align: right; line-height: 1.1; }
 
 .cal-detail { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); }
@@ -3837,5 +3843,8 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .revision-banner .sent-card__icon { background: #fdf1dd; color: #8a4b0f; }
 .cal-legend { display: flex; flex-wrap: wrap; gap: 5px 10px; margin: 6px 2px 0; font-size: 10px; color: var(--muted); }
 .cal-legend span { display: inline-flex; align-items: center; gap: 4px; }
-.cal-legend .cal-mark { width: 12px; height: 4px; }
+.cal-legend .cal-mark { width: 14px; height: 6px; font-size: 0; }
 .sched-view[hidden] { display: none !important; }
+/* 승인 카드 상태 배지는 줄바꿈 없이 한 줄로 (모바일에서 '관리자 확인 대기'가 쪼개지지 않게) */
+.approval-card__head { align-items: flex-start; }
+.approval-card__head > .badge { flex: none; white-space: nowrap; }

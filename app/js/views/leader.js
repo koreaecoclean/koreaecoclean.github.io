@@ -847,7 +847,7 @@ export function createLeaderView(container) {
                     <span class="cal-cell__marks">${rows
                       .slice(0, 4)
                       .map(
-                        (entry) => `<i class="cal-mark cal-mark--${esc(entry.status)}" title="${esc(entry.siteName)} · ${esc(entry.statusLabel)}" aria-hidden="true">${esc(entry.siteName)} ${esc(entry.statusLabel)}</i>`,
+                        (entry) => `<i class="cal-mark cal-mark--${esc(entry.status)}" title="${esc(entry.siteName)} · ${esc(entry.statusLabel)}" aria-hidden="true">${esc(String(entry.siteName || '').slice(0, 2))}</i>`,
                       )
                       .join('')}</span>
                     ${rows.length ? `<span class="cal-cell__count">${rows.length}건</span>` : ''}

@@ -1190,7 +1190,7 @@ export function createAdminView(container) {  const state = {
         .slice(0, 4)
         .map(
           (entry) =>
-            `<i class="cal-mark cal-mark--${esc(entry.status)}" title="${esc(entry.siteName)} · ${esc(entry.statusLabel)}" aria-hidden="true">${esc(entry.siteName)} ${esc(entry.statusLabel)}</i>`,
+            `<i class="cal-mark cal-mark--${esc(entry.status)}" title="${esc(entry.siteName)} · ${esc(entry.statusLabel)}" aria-hidden="true">${esc(String(entry.siteName || '').slice(0, 2))}</i>`,
         )
         .join('');
     return `
