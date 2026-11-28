@@ -3848,3 +3848,7 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 /* 승인 카드 상태 배지는 줄바꿈 없이 한 줄로 (모바일에서 '관리자 확인 대기'가 쪼개지지 않게) */
 .approval-card__head { align-items: flex-start; }
 .approval-card__head > .badge { flex: none; white-space: nowrap; }
+/* 날짜 상세 줄 — 업장 이름은 줄바꿈, 상태 배지는 한 줄 */
+.cal-detail .sched-row > span:first-child { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-detail .sched-row .badge { flex: none; white-space: nowrap; }
+.cal-detail .sched-row .tiny { flex: 0 1 auto; min-width: 0; font-size: 11px; }
