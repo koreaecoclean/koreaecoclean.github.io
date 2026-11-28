@@ -5724,7 +5724,8 @@ export class Store {
       })),
     });
     await this.adapter.put('quotes', quote);
-    if (site) {
+    if (site && kind !== 'extra') {
+      // 업장의 대표 견적은 정기 청소 견적만입니다 — 추가 작업 견적으로 덮어쓰지 않습니다.
       const patch = {};
       if (!site.quoteId) patch.quoteId = quote.id;
       if (Object.keys(patch).length) {
