@@ -3496,7 +3496,10 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .sched-row__main { display: grid; gap: 2px; min-width: 0; }
 .sched-row__main strong { font-size: 13px; font-weight: 800; }
 .sched-row__badges { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; justify-content: flex-end; }
-.sched-row--admin { align-items: flex-start; }
+.sched-row--admin { display: grid; gap: 3px; align-items: start; }
+.sched-row__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.sched-row__head strong { font-size: 13px; font-weight: 800; color: var(--ink); }
+.sched-row--admin .sched-row__badges { justify-content: flex-start; }
 .sched-row--admin .badge { font-size: 10px; padding: 2px 7px; white-space: nowrap; }
 
 .sched-upcoming { margin: 6px 0 0; padding: 0; list-style: none; }
@@ -3564,3 +3567,6 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .sched-customer__date { font-weight: 800; color: var(--ink); }
 .schedule-today .hint { margin-top: 4px; }
 .customer-schedule .hint { margin-top: 8px; }
+
+.room-tabs--compact { gap: 4px; }
+.room-tabs--compact .room-tab { padding: 9px 2px; font-size: 11.5px; letter-spacing: -.04em; }

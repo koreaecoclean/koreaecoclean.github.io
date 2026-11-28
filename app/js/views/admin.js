@@ -1033,9 +1033,17 @@ export function createAdminView(container) {  const state = {
 
   function scheduleGpsBadge(entry) {
     const gps = (entry && entry.gps) || { key: '', label: '' };
-    if (!gps.label) return '<span class="badge" data-sched-gps="none">도착 전</span>';
-    const cls = gps.key === 'verified' ? 'badge--done' : gps.key === 'recorded' ? 'badge--wait' : 'badge--stop';
-    return `<span class="badge ${cls}" data-sched-gps="${esc(gps.key)}">${esc(gps.label)}</span>`;
+    const parts = [gps.arriveLabel, gps.doneLabel].filter(Boolean);
+    if (!parts.length) return '<span class="badge" data-sched-gps="none">도착 전</span>';
+    const badgeOf = (text) => {
+      const cls = text.indexOf('위치 인증') === 0
+        ? 'badge--done'
+        : text.indexOf('위치 기록') === 0
+          ? 'badge--wait'
+          : 'badge--stop';
+      return `<span class="badge ${cls}">${esc(text)}</span>`;
+    };
+    return `<span data-sched-gps="${esc(gps.key)}">${parts.map(badgeOf).join(' ')}</span>`;
   }
 
   /** 오늘 일정 · 이번 주 일정 · 팀장별 필터 — 대표 화면 맨 위에 붙입니다. */
@@ -1047,7 +1055,11 @@ export function createAdminView(container) {  const state = {
     const filtered = active ? entries.filter((entry) => entry.manager === active || entry.assigneeName === active) : entries;
     const todayRows = filtered.filter((entry) => entry.date === today);
     const upcoming = filtered.filter((entry) => entry.date > today).slice(0, 12);
-    const summary = schedule.summary || {};
+    // 상태 합계는 오늘 일정 기준(팀장 필터가 있으면 그 팀장 것만).
+    const summary = { planned: 0, active: 0, done: 0, missed: 0, off: 0 };
+    todayRows.forEach((entry) => {
+      if (Object.prototype.hasOwnProperty.call(summary, entry.status)) summary[entry.status] += 1;
+    });
     const cards = [
       ['planned', '예정'],
       ['active', '진행 중'],
@@ -1106,13 +1118,13 @@ export function createAdminView(container) {  const state = {
     const doneAt = entry.done && entry.done.at ? fmtTime(String(entry.done.at).slice(11, 16)) : '';
     return `
       <article class="sched-row sched-row--admin" data-schedule-site="${esc(entry.siteId)}" data-schedule-status="${esc(entry.status)}">
-        <div class="sched-row__main">
+        <div class="sched-row__head">
           <strong>${esc(entry.siteName)}</strong>
-          <span class="tiny muted">${esc(entry.time || '시간 미설정')} · 담당 ${esc(entry.assigneeName || entry.manager || '미지정')}</span>
-          ${overrideLabel ? `<span class="tiny muted">일정 변경 · ${esc(overrideLabel)}${entry.override.note ? ` · ${esc(entry.override.note)}` : ''}</span>` : ''}
-        </div>
-        <div class="sched-row__badges">
           ${scheduleStatusBadge(entry)}
+        </div>
+        <span class="tiny muted">${esc(entry.time || '시간 미설정')} · 담당 ${esc(entry.assigneeName || entry.manager || '미지정')}</span>
+        ${overrideLabel ? `<span class="tiny muted">일정 변경 · ${esc(overrideLabel)}${entry.override.note ? ` · ${esc(entry.override.note)}` : ''}</span>` : ''}
+        <div class="sched-row__badges">
           ${scheduleGpsBadge(entry)}
           ${arriveAt ? `<span class="tiny muted">${esc(arriveAt)} 도착</span>` : ''}
           ${doneAt ? `<span class="tiny muted">${esc(doneAt)} 완료</span>` : ''}
@@ -1251,16 +1263,30 @@ export function createAdminView(container) {  const state = {
     };
   }
 
+  /** 다시 그린 뒤에도 그 업장 설정 상자를 펼치고 그 자리로 돌아옵니다. */
+  function focusScheduleSite(siteId) {
+    try {
+      const details = document.querySelector('[data-schedule-settings]');
+      if (details) details.open = true;
+      const box = document.querySelector(`[data-schedule-site-box="${siteId}"]`);
+      if (box && typeof box.scrollIntoView === 'function') box.scrollIntoView({ block: 'start' });
+    } catch (error) {
+      /* 화면 위치 복원은 실패해도 저장 결과에는 영향이 없습니다. */
+    }
+  }
+
   async function submitScheduleConfig(form) {
     const siteId = form.dataset.scheduleForm;
     try {
       await store.saveSiteSchedule(siteId, scheduleFormValues(form), { actor: state.session });
       state.scheduleError = '';
       await render();
+      focusScheduleSite(siteId);
       toast('일정 · 위치 설정을 저장했습니다.');
     } catch (error) {
       state.scheduleError = { siteId, message: error.message || '저장하지 못했습니다.' };
       await render();
+      focusScheduleSite(siteId);
       toast(error.message || '일정 · 위치 설정을 저장하지 못했습니다.', { tone: 'error' });
     }
   }
@@ -1277,6 +1303,7 @@ export function createAdminView(container) {  const state = {
     try {
       await store.addScheduleOverride(siteId, values, { actor: state.session });
       await render();
+      focusScheduleSite(siteId);
       toast('일정 변경을 저장했습니다. 팀장 화면에 바로 반영됩니다.');
     } catch (error) {
       toast(error.message || '일정 변경을 저장하지 못했습니다.', { tone: 'error' });
@@ -2734,6 +2761,7 @@ export function createAdminView(container) {  const state = {
           { actor: state.session },
         );
         await render();
+        focusScheduleSite(overrideRemove.dataset.scheduleOverrideRemove);
         toast('일정 변경을 취소했습니다.');
       } catch (error) {
         toast(error.message || '일정 변경을 취소하지 못했습니다.', { tone: 'error' });

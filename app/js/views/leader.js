@@ -549,7 +549,7 @@ export function createLeaderView(container) {
       tabs.push({ key: 'supply', label: '장비 · 봉투' });
     }
     return `
-      <nav class="room-tabs" aria-label="내 직원 방">
+      <nav class="room-tabs${tabs.length >= 5 ? ' room-tabs--compact' : ''}" aria-label="내 직원 방">
         ${tabs
           .map(
             (tab) => `<button class="room-tab" type="button" data-leader-tab="${tab.key}"
@@ -569,9 +569,17 @@ export function createLeaderView(container) {
 
   function gpsBadgeTemplate(entry) {
     const gps = (entry && entry.gps) || { key: '', label: '' };
-    if (!gps.label) return '<span class="badge" data-gps-status="none">도착 전</span>';
-    const cls = gps.key === 'verified' ? 'badge--done' : gps.key === 'recorded' ? 'badge--wait' : 'badge--stop';
-    return `<span class="badge ${cls}" data-gps-status="${esc(gps.key)}">${esc(gps.label)}</span>`;
+    const parts = [gps.arriveLabel, gps.doneLabel].filter(Boolean);
+    if (!parts.length) return '<span class="badge" data-gps-status="none">도착 전</span>';
+    const badgeOf = (text) => {
+      const cls = text.indexOf('위치 인증') === 0
+        ? 'badge--done'
+        : text.indexOf('위치 기록') === 0
+          ? 'badge--wait'
+          : 'badge--stop';
+      return `<span class="badge ${cls}">${esc(text)}</span>`;
+    };
+    return `<span data-gps-status="${esc(gps.key)}">${parts.map(badgeOf).join(' ')}</span>`;
   }
 
   function visitFormTemplate(siteId) {
@@ -641,7 +649,11 @@ export function createLeaderView(container) {
     const today = schedule.today || toISODate();
     const entries = schedule.entries || [];
     const todayEntries = entries.filter((entry) => entry.date === today);
-    const summary = schedule.summary || {};
+    // 상태 합계는 ‘오늘’ 기준입니다(이번 주 전체 합계가 아님).
+    const summary = { planned: 0, active: 0, done: 0, missed: 0, off: 0 };
+    todayEntries.forEach((entry) => {
+      if (Object.prototype.hasOwnProperty.call(summary, entry.status)) summary[entry.status] += 1;
+    });
     const week = entries.filter((entry) => entry.date !== today);
     const days = (schedule.days || []).filter((day) => day.date !== today);
     const statusRow = [

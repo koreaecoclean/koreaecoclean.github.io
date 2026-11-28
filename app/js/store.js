@@ -1393,8 +1393,11 @@ function minutesOf(value) {
 /** 오늘 예정 시간이 지나도록 도착 기록이 없으면 미방문(지연)으로 봅니다(2시간 여유). */
 function scheduleOverdue(entry, today, nowMin) {
   if (!entry || entry.date !== today) return false;
-  const end = minutesOf(entry.endTime) ?? minutesOf(entry.startTime);
+  const start = minutesOf(entry.startTime);
+  const end = minutesOf(entry.endTime) ?? start;
   if (end === null || nowMin === null) return false;
+  // 야간 일정(예: 22:30 ~ 05:30)은 다음 날 새벽에 끝나므로 그 날짜가 지나야 미방문으로 봅니다.
+  if (start !== null && end <= start) return false;
   return nowMin > end + 120;
 }
 
@@ -2355,7 +2358,20 @@ export function siteForStaff(site) {
     //  좌표는 업장 위치이고, 기록은 이 업장 것만 넘깁니다(다른 업장·다른 직원 기록 없음).
     schedule: siteSchedule(site),
     scheduleOverrides: normalizeScheduleOverrides(site.scheduleOverrides),
-    visits: normalizeVisits(site.visits),
+    // 기록의 시각 · 거리 · 사유만 넘깁니다(다른 직원의 좌표는 넘기지 않음).
+    visits: normalizeVisits(site.visits).map((visit) => ({
+      id: visit.id,
+      date: visit.date,
+      kind: visit.kind,
+      at: visit.at,
+      distanceM: visit.distanceM,
+      inRange: visit.inRange,
+      mode: visit.mode,
+      reason: visit.reason,
+      reasonLabel: visit.reasonLabel,
+      note: visit.note,
+      name: visit.name,
+    })),
     // 본인 도급 조건 — 이 업장의 도급금액만. (고객 청구일·계약일 등은 넘기지 않습니다.)
     staffPay: { amount: contract.subcontractAmount },
   };
@@ -4476,6 +4492,26 @@ export class Store {
       cursor = addDays(cursor, 1);
     }
 
+    if (isStaffActor(actor)) {
+      // 직원에게는 기록의 시각 · 거리 · 인증 여부만 — 다른 직원의 좌표(개인 위치)는 넘기지 않습니다.
+      const safeVisit = (visit) => {
+        if (!visit) return null;
+        return {
+          id: visit.id,
+          date: visit.date,
+          kind: visit.kind,
+          at: visit.at,
+          distanceM: visit.distanceM,
+          inRange: visit.inRange,
+          mode: visit.mode,
+          reason: visit.reason,
+          reasonLabel: visit.reasonLabel,
+          note: visit.note,
+          name: visit.name,
+        };
+      };
+      entries = entries.map((entry) => ({ ...entry, arrive: safeVisit(entry.arrive), done: safeVisit(entry.done) }));
+    }
     if (isCustomerActor(actor)) {
       // 고객에게는 방문 날짜·시간·상태만 — 직원 위치 · 좌표 · 거리 · 사유는 넘기지 않습니다.
       entries = entries.map((entry) => ({

@@ -775,7 +775,7 @@ export function createCustomerView(container) {
           ? `<ul class="sched-customer">${next
               .map(
                 (entry) => `<li data-customer-schedule-date="${esc(entry.date)}" data-customer-schedule-status="${esc(entry.status)}">
-                  <span class="sched-customer__date">${esc(fmtDateLong(entry.date))} (${esc(entry.weekdayLabel)})</span>
+                  <span class="sched-customer__date">${esc(fmtDateLong(entry.date))}</span>
                   <span class="tiny muted">${esc(entry.time || '시간 협의')}</span>
                   <span class="badge ${cls(entry.status)}">${esc(entry.statusLabel)}</span>
                   ${entry.changed ? '<span class="tiny muted">일정 변경</span>' : ''}
