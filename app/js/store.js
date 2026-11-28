@@ -2249,6 +2249,413 @@ export function quoteKindLabel(quote) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 9단계 — 결제 · 청구 · 미수금 · 도급 정산 (기획서 22·23장)           */
+/*  · 청구는 업장 안 `invoices[]`, 팀장 도급 정산은 `payouts[]` 에 쌓습니다. */
+/*  · 새 서버 컬렉션을 만들지 않아 Supabase 스키마(허용 collection 목록)와  */
+/*    라이브 데이터를 건드리지 않고, 기기 간 동기화도 그대로 됩니다.        */
+/* ------------------------------------------------------------------ */
+
+/** 청구 상태 — 예정 → 청구 → 입금완료, 납기일이 지나면 미수(연체). */
+export const INVOICE_STATUS = {
+  scheduled: { label: '청구 예정', short: '예정', badge: 'badge--wait', step: 0 },
+  billed: { label: '청구 완료', short: '청구', badge: 'badge--revise', step: 1 },
+  paid: { label: '입금 완료', short: '입금', badge: 'badge--done', step: 2 },
+  overdue: { label: '미수 · 연체', short: '미수', badge: 'badge--stop', step: 1 },
+};
+
+/** 목록 정렬 — 미수 · 연체를 먼저, 그다음 청구 · 예정 · 입금. */
+export const INVOICE_STATUS_ORDER = ['overdue', 'billed', 'scheduled', 'paid'];
+
+/** 청구 구분 — 정기청소(월 계약) / 추가 작업(1회). */
+export const INVOICE_KINDS = { regular: '정기청소', extra: '추가 작업' };
+
+/** 세금계산서 발행 여부. */
+export const TAX_INVOICE_STATUS = { none: '미발행', issued: '발행완료' };
+
+/** 팀장 도급 정산 상태 — 정산예정 → 지급완료. */
+export const PAYOUT_STATUS = {
+  scheduled: { label: '정산 예정', short: '예정', badge: 'badge--wait' },
+  paid: { label: '지급 완료', short: '지급', badge: 'badge--done' },
+};
+
+/** 부가세율 — 계약이 ‘부가세 별도’일 때 공급가의 10%를 따로 적습니다. */
+export const VAT_RATE = 0.1;
+
+/** 한 업장에 쌓아 두는 최대 건수 (레코드가 무한히 커지지 않게). */
+export const MAX_SITE_INVOICES = 240;
+export const MAX_SITE_PAYOUTS = 120;
+
+/** 'YYYY-MM' 로 맞춘 청구월. 값이 없으면 이번 달. */
+export function billingMonthKey(value = '') {
+  const text = toText(value);
+  const match = text.match(/^(\d{4})-(\d{1,2})$/);
+  if (match) return `${match[1]}-${String(match[2]).padStart(2, '0')}`;
+  const digits = text.replace(/[^0-9]/g, '');
+  if (digits.length >= 6) return `${digits.slice(0, 4)}-${digits.slice(4, 6)}`;
+  return todayISO().slice(0, 7);
+}
+
+/** '2026년 11월' — 화면·이력 문구. */
+export function billingMonthLabel(value = '') {
+  const key = billingMonthKey(value);
+  const [year, month] = key.split('-').map(Number);
+  return `${year}년 ${month}월`;
+}
+
+/** 청구월을 앞뒤로 옮깁니다(‹ 지난달 · 다음달 ›). */
+export function shiftBillingMonth(value = '', delta = 0) {
+  const key = billingMonthKey(value);
+  const [year, month] = key.split('-').map(Number);
+  const date = new Date(year, month - 1 + Number(delta || 0), 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** 부가세 — 공급가의 10%(원 단위 반올림). */
+export function vatOf(amount) {
+  return Math.round(toAmount(amount) * VAT_RATE);
+}
+
+/**
+ * 청구 납기일 — 업장 계약의 청구일(`billingDay`)에서 만듭니다.
+ *  · '매월 10일' · '10' → 그 달 10일
+ *  · '익월 15일' → 다음 달 15일
+ *  · 숫자가 없으면('협의 중') 납기일 없음 → 미수 판정은 하지 않습니다.
+ */
+export function billingDueDate(month, billingDay) {
+  const key = billingMonthKey(month);
+  const text = toText(billingDay);
+  const match = text.match(/(\d{1,2})\s*일/) || text.match(/^(\d{1,2})$/);
+  if (!match) return '';
+  const day = Number(match[1]);
+  if (!(day >= 1 && day <= 31)) return '';
+  const [year, monthNumber] = key.split('-').map(Number);
+  const next = /익월|다음\s*달|다음달/.test(text);
+  const base = new Date(year, monthNumber - 1 + (next ? 1 : 0), 1);
+  const lastDay = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+  const date = new Date(base.getFullYear(), base.getMonth(), Math.min(day, lastDay));
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * 도급 정산 지급일 — 팀장 도급계약서의 지급일(기본 익월 15일)을 기준으로
+ * 청구월 **다음 달**의 그 날짜를 돌려줍니다. ('당월' 이라고 적힌 계약만 그 달)
+ */
+export function payoutDueDate(month, settlementDay) {
+  const key = billingMonthKey(month);
+  const text = toText(settlementDay);
+  const match = text.match(/(\d{1,2})\s*일/) || text.match(/^(\d{1,2})$/);
+  const day = match ? Math.min(Math.max(Number(match[1]), 1), 31) : 15;
+  const sameMonth = /당월/.test(text);
+  const [year, monthNumber] = key.split('-').map(Number);
+  const base = new Date(year, monthNumber - 1 + (sameMonth ? 0 : 1), 1);
+  const lastDay = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+  const date = new Date(base.getFullYear(), base.getMonth(), Math.min(day, lastDay));
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+/** 청구 구분 이름 — 정기청소 / 추가 작업. */
+export function invoiceKindOf(invoice) {
+  return invoice && invoice.kind === 'extra' ? 'extra' : 'regular';
+}
+
+export function invoiceKindLabel(invoice) {
+  return INVOICE_KINDS[invoiceKindOf(invoice)];
+}
+
+/**
+ * 지금 보이는 청구 상태 — 저장된 상태가 ‘청구’이고 납기일이 지났으면 미수(연체)로 봅니다.
+ * (자동으로 저장 값을 바꾸지 않고, 읽을 때 계산해 기기마다 같은 결과가 나오게 합니다.)
+ */
+export function invoiceStatusKey(invoice, today = todayISO()) {
+  const stored = invoice && invoice.status;
+  if (stored === 'paid') return 'paid';
+  if (stored === 'scheduled') return 'scheduled';
+  const due = isoDateOf(invoice && invoice.dueDate);
+  if (due && today && due < today) return 'overdue';
+  if (stored === 'overdue') return 'overdue';
+  return 'billed';
+}
+
+export function invoiceStatus(invoice, today = todayISO()) {
+  return INVOICE_STATUS[invoiceStatusKey(invoice, today)];
+}
+
+/** 입금 처리된 청구인지. */
+export function isInvoicePaid(invoice) {
+  return invoiceStatusKey(invoice) === 'paid';
+}
+
+/** 미수금(청구했는데 아직 입금되지 않은) 청구인지. */
+export function isInvoiceUnpaid(invoice) {
+  const key = invoiceStatusKey(invoice);
+  return key === 'billed' || key === 'overdue';
+}
+
+/** 청구 한 건 — 금액은 공급가(amount) · 부가세(vat) · 합계(total)로 나눠 둡니다. */
+export function normalizeInvoice(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const amount = toAmount(source.amount);
+  const vat = source.vat === undefined || source.vat === null || source.vat === '' ? vatOf(amount) : toAmount(source.vat);
+  const total = source.total === undefined || source.total === null || source.total === '' ? amount + vat : toAmount(source.total);
+  const status = INVOICE_STATUS[source.status] ? source.status : 'scheduled';
+  return {
+    id: toText(source.id) || uid('inv'),
+    siteId: toText(source.siteId),
+    siteCode: toText(source.siteCode),
+    siteName: toText(source.siteName),
+    invoiceNo: toText(source.invoiceNo),
+    month: billingMonthKey(source.month),
+    kind: source.kind === 'extra' ? 'extra' : 'regular',
+    quoteId: toText(source.quoteId),
+    title: toText(source.title).slice(0, 200),
+    dueDate: isoDateOf(source.dueDate),
+    amount,
+    vat,
+    total,
+    status,
+    taxInvoice: source.taxInvoice === 'issued' ? 'issued' : 'none',
+    taxIssuedAt: toText(source.taxIssuedAt),
+    paidAt: isoDateOf(source.paidAt) || toText(source.paidAt),
+    paidAmount: toAmount(source.paidAmount),
+    note: toText(source.note).slice(0, 400),
+    issuedBy: toText(source.issuedBy),
+    createdAt: toText(source.createdAt),
+    updatedAt: toText(source.updatedAt),
+    history: normalizeHistory(source.history),
+  };
+}
+
+/** 업장에 저장된 청구 배열 — 같은 id 는 한 번만, 청구월 최신이 앞, 최대 240건. */
+export function normalizeInvoices(list) {
+  const rows = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    const row = normalizeInvoice(item);
+    if (!row.id || seen.has(row.id)) continue;
+    seen.add(row.id);
+    rows.push(row);
+  }
+  return rows
+    .sort((a, b) => String(b.month).localeCompare(String(a.month)) || String(b.invoiceNo).localeCompare(String(a.invoiceNo)))
+    .slice(0, MAX_SITE_INVOICES);
+}
+
+/** 목록 정렬 — 미수 · 연체 먼저, 같은 상태에서는 납기일이 빠른 것부터. */
+export function sortInvoices(list, today = todayISO()) {
+  const rows = Array.isArray(list) ? list.slice() : [];
+  return rows.sort((a, b) => {
+    const monthDiff = String(b.month || '').localeCompare(String(a.month || ''));
+    if (monthDiff) return monthDiff;
+    const orderA = INVOICE_STATUS_ORDER.indexOf(invoiceStatusKey(a, today));
+    const orderB = INVOICE_STATUS_ORDER.indexOf(invoiceStatusKey(b, today));
+    if (orderA !== orderB) return orderA - orderB;
+    const dueA = String(a.dueDate || '9999-99-99');
+    const dueB = String(b.dueDate || '9999-99-99');
+    if (dueA !== dueB) return dueA.localeCompare(dueB);
+    return String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || ''));
+  });
+}
+
+/** 청구 묶음 합계 — 대표 화면 머리글 · 매출 정리. */
+export function invoiceStats(list, today = todayISO()) {
+  const rows = Array.isArray(list) ? list : [];
+  const by = { scheduled: 0, billed: 0, paid: 0, overdue: 0 };
+  const sum = { amount: 0, vat: 0, total: 0, paid: 0, unpaid: 0, scheduled: 0, overdue: 0, taxPending: 0 };
+  for (const row of rows) {
+    const key = invoiceStatusKey(row, today);
+    by[key] += 1;
+    sum.amount += toAmount(row.amount);
+    sum.vat += toAmount(row.vat);
+    sum.total += toAmount(row.total);
+    if (key === 'paid') {
+      const got = toAmount(row.paidAmount) || toAmount(row.total);
+      sum.paid += got;
+      // 일부만 입금한 경우 남은 금액은 미수금으로 셉니다.
+      if (got < toAmount(row.total)) sum.unpaid += toAmount(row.total) - got;
+    }
+    if (key === 'billed') sum.unpaid += toAmount(row.total);
+    if (key === 'overdue') {
+      sum.unpaid += toAmount(row.total);
+      sum.overdue += toAmount(row.total);
+    }
+    if (key === 'scheduled') sum.scheduled += toAmount(row.total);
+    if (row.taxInvoice !== 'issued' && (key === 'billed' || key === 'overdue' || key === 'scheduled')) sum.taxPending += 1;
+  }
+  return { total: rows.length, ...by, sum, issued: rows.filter((row) => row.taxInvoice === 'issued').length };
+}
+
+/** 같은 달 청구 번호의 마지막 순번 — 청구 번호는 **모든 업장 통틀어** 한 줄기입니다. */
+export function invoiceNoSequence(invoices, month) {
+  const stamp = billingMonthKey(month).replace('-', '');
+  let max = 0;
+  for (const row of Array.isArray(invoices) ? invoices : []) {
+    const match = toText(row && row.invoiceNo).match(/^I-(\d{6})-(\d{3})$/);
+    if (match && match[1] === stamp) max = Math.max(max, Number(match[2]));
+  }
+  return max;
+}
+
+/** 다음 청구 번호 — 같은 달의 마지막 번호 + 1 (`I-YYYYMM-NNN`). */
+export function nextInvoiceNo(invoices, month) {
+  const stamp = billingMonthKey(month).replace('-', '');
+  return `I-${stamp}-${pad3(invoiceNoSequence(invoices, month) + 1)}`;
+}
+
+/**
+ * 고객에게 보내는 청구 — 본인 업장의 금액 · 입금 상태 · 세금계산서 발행 여부만.
+ * 내부 메모 · 견적 id · 이력 · 도급 정산은 넘기지 않습니다.
+ */
+export function customerInvoiceView(invoice, today = todayISO()) {
+  if (!invoice) return invoice;
+  const key = invoiceStatusKey(invoice, today);
+  return {
+    id: toText(invoice.id),
+    invoiceNo: toText(invoice.invoiceNo),
+    month: billingMonthKey(invoice.month),
+    monthLabel: billingMonthLabel(invoice.month),
+    kind: invoiceKindOf(invoice),
+    kindLabel: invoiceKindLabel(invoice),
+    title: toText(invoice.title),
+    dueDate: toText(invoice.dueDate),
+    amount: toAmount(invoice.amount),
+    vat: toAmount(invoice.vat),
+    total: toAmount(invoice.total),
+    status: key,
+    statusLabel: INVOICE_STATUS[key].label,
+    taxInvoice: invoice.taxInvoice === 'issued' ? 'issued' : 'none',
+    taxInvoiceLabel: TAX_INVOICE_STATUS[invoice.taxInvoice === 'issued' ? 'issued' : 'none'],
+    taxIssuedAt: toText(invoice.taxIssuedAt),
+    paidAt: toText(invoice.paidAt),
+    paidAmount: toAmount(invoice.paidAmount),
+  };
+}
+
+/** 팀장 도급 정산 한 건. */
+export function normalizePayout(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const amount = toAmount(source.amount);
+  const vat = source.vat === undefined || source.vat === null || source.vat === '' ? vatOf(amount) : toAmount(source.vat);
+  const total = source.total === undefined || source.total === null || source.total === '' ? amount + vat : toAmount(source.total);
+  return {
+    id: toText(source.id) || uid('pay'),
+    siteId: toText(source.siteId),
+    siteCode: toText(source.siteCode),
+    siteName: toText(source.siteName),
+    payoutNo: toText(source.payoutNo),
+    month: billingMonthKey(source.month),
+    leaderId: toText(source.leaderId),
+    leaderName: toText(source.leaderName),
+    contractId: toText(source.contractId),
+    dueDate: isoDateOf(source.dueDate),
+    amount,
+    vat,
+    total,
+    status: PAYOUT_STATUS[source.status] ? source.status : 'scheduled',
+    paidAt: isoDateOf(source.paidAt) || toText(source.paidAt),
+    note: toText(source.note).slice(0, 400),
+    createdAt: toText(source.createdAt),
+    updatedAt: toText(source.updatedAt),
+    history: normalizeHistory(source.history),
+  };
+}
+
+/** 업장에 저장된 정산 배열 — 같은 id 는 한 번만, 최신 달이 앞, 최대 120건. */
+export function normalizePayouts(list) {
+  const rows = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    const row = normalizePayout(item);
+    if (!row.id || seen.has(row.id)) continue;
+    seen.add(row.id);
+    rows.push(row);
+  }
+  return rows
+    .sort((a, b) => String(b.month).localeCompare(String(a.month)) || String(b.payoutNo).localeCompare(String(a.payoutNo)))
+    .slice(0, MAX_SITE_PAYOUTS);
+}
+
+export function payoutStatusKey(payout) {
+  const key = payout && payout.status;
+  return PAYOUT_STATUS[key] ? key : 'scheduled';
+}
+
+/** 목록 정렬 — 정산예정 먼저, 그다음 지급완료. */
+export function sortPayouts(list) {
+  const rows = Array.isArray(list) ? list.slice() : [];
+  return rows.sort((a, b) => {
+    const monthDiff = String(b.month || '').localeCompare(String(a.month || ''));
+    if (monthDiff) return monthDiff;
+    const aSched = payoutStatusKey(a) === 'scheduled' ? 0 : 1;
+    const bSched = payoutStatusKey(b) === 'scheduled' ? 0 : 1;
+    if (aSched !== bSched) return aSched - bSched;
+    return String(a.leaderName || '').localeCompare(String(b.leaderName || ''), 'ko');
+  });
+}
+
+/** 정산 묶음 합계 — 정산예정 · 지급완료 금액. */
+export function payoutStats(list) {
+  const rows = Array.isArray(list) ? list : [];
+  let scheduled = 0;
+  let paid = 0;
+  let scheduledCount = 0;
+  let paidCount = 0;
+  for (const row of rows) {
+    if (payoutStatusKey(row) === 'paid') {
+      paid += toAmount(row.total);
+      paidCount += 1;
+    } else {
+      scheduled += toAmount(row.total);
+      scheduledCount += 1;
+    }
+  }
+  return {
+    total: rows.length,
+    scheduled,
+    paid,
+    scheduledCount,
+    paidCount,
+    leaders: [...new Set(rows.map((row) => toText(row.leaderId) || toText(row.leaderName)).filter(Boolean))].length,
+  };
+}
+
+/** 같은 달 정산 번호의 마지막 순번 — 정산 번호도 모든 업장 통틀어 한 줄기입니다. */
+export function payoutNoSequence(payouts, month) {
+  const stamp = billingMonthKey(month).replace('-', '');
+  let max = 0;
+  for (const row of Array.isArray(payouts) ? payouts : []) {
+    const match = toText(row && row.payoutNo).match(/^P-(\d{6})-(\d{3})$/);
+    if (match && match[1] === stamp) max = Math.max(max, Number(match[2]));
+  }
+  return max;
+}
+
+/** 다음 정산 번호 — 같은 달의 마지막 번호 + 1 (`P-YYYYMM-NNN`). */
+export function nextPayoutNo(payouts, month) {
+  const stamp = billingMonthKey(month).replace('-', '');
+  return `P-${stamp}-${pad3(payoutNoSequence(payouts, month) + 1)}`;
+}
+
+/** 팀장에게 보여 주는 정산 — 본인 금액 · 지급일 · 상태만(내부 메모 없음). */
+export function leaderPayoutView(payout) {
+  if (!payout) return payout;
+  return {
+    id: toText(payout.id),
+    payoutNo: toText(payout.payoutNo),
+    month: billingMonthKey(payout.month),
+    monthLabel: billingMonthLabel(payout.month),
+    siteId: toText(payout.siteId),
+    siteName: toText(payout.siteName),
+    dueDate: toText(payout.dueDate),
+    amount: toAmount(payout.amount),
+    vat: toAmount(payout.vat),
+    total: toAmount(payout.total),
+    status: payoutStatusKey(payout),
+    statusLabel: PAYOUT_STATUS[payoutStatusKey(payout)].label,
+    paidAt: toText(payout.paidAt),
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* quotes (견적) · contracts (도급 계약서) — 대표 전용                */
 /* ------------------------------------------------------------------ */
 
@@ -2668,6 +3075,9 @@ function normalizeSite(site) {
     visits: normalizeVisits(site.visits),
     // 7단계 — 업장 특이사항(발견 → 검토 → 추가 견적 → 작업 → 보류/종결).
     issues: normalizeIssues(site.issues),
+    // 9단계 — 고객 청구(site.invoices[]) · 팀장 도급 정산(site.payouts[]).
+    invoices: normalizeInvoices(site.invoices),
+    payouts: normalizePayouts(site.payouts),
     // 업장(siteId) 중심 연결 고리 — 이 업장이 어느 견적/계약/팀장 계약에서 왔는지.
     quoteId: toText(site.quoteId),
     contractId: toText(site.contractId),
@@ -4376,6 +4786,731 @@ export class Store {
     denyStaff(actor, '매출 정리');
     const sites = (await this.listSites()).filter((site) => site.active !== false);
     return { rows: sites.map(contractRow), totals: revenueTotals(sites) };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 9단계 — 청구 · 입금 · 미수금 · 팀장 도급 정산 (기획서 22·23장)      */
+  /* ------------------------------------------------------------------ */
+
+  /** 업장의 청구 배열을 저장합니다(업장 레코드 안 `invoices[]`). */
+  async _saveSiteInvoices(site, invoices) {
+    const now = new Date().toISOString();
+    const next = normalizeSite({ ...site, invoices: normalizeInvoices(invoices), updatedAt: now });
+    await this.adapter.put('sites', next);
+    return next;
+  }
+
+  /** 업장의 도급 정산 배열을 저장합니다(업장 레코드 안 `payouts[]`). */
+  async _saveSitePayouts(site, payouts) {
+    const now = new Date().toISOString();
+    const next = normalizeSite({ ...site, payouts: normalizePayouts(payouts), updatedAt: now });
+    await this.adapter.put('sites', next);
+    return next;
+  }
+
+  /** 업장마다 쌓인 청구를 한 줄기로 모읍니다(대표 화면 · 매출 정리). */
+  async _collectInvoices(month = '', { siteId = '' } = {}) {
+    const key = month ? billingMonthKey(month) : '';
+    const target = toText(siteId);
+    const sites = await this.listSites();
+    const rows = [];
+    for (const site of sites) {
+      if (target && site.id !== target) continue;
+      for (const invoice of site.invoices || []) {
+        if (key && invoice.month !== key) continue;
+        rows.push({
+          ...invoice,
+          siteId: invoice.siteId || site.id,
+          siteCode: invoice.siteCode || site.code,
+          siteName: invoice.siteName || site.name,
+        });
+      }
+    }
+    return rows;
+  }
+
+  /** 팀장 도급 정산도 같은 방식으로 모읍니다. */
+  async _collectPayouts(month = '', { siteId = '' } = {}) {
+    const key = month ? billingMonthKey(month) : '';
+    const target = toText(siteId);
+    const sites = await this.listSites();
+    const rows = [];
+    for (const site of sites) {
+      if (target && site.id !== target) continue;
+      for (const payout of site.payouts || []) {
+        if (key && payout.month !== key) continue;
+        rows.push({
+          ...payout,
+          siteId: payout.siteId || site.id,
+          siteCode: payout.siteCode || site.code,
+          siteName: payout.siteName || site.name,
+        });
+      }
+    }
+    return rows;
+  }
+
+  /**
+   * 청구 목록 — 업장 안 `invoices[]` 를 모아 상태(납기일 기준 미수 포함)를 계산합니다.
+   *  · 대표: 전체 (금액 · 세금계산서 · 내부 메모 · 이력 모두)
+   *  · 고객: 본인 업장의 청구 금액 · 입금 상태 · 세금계산서 발행 여부만
+   *  · 팀장 · 본부장: 고객 청구 금액은 **비노출** (요청 자체를 거절)
+   */
+  async listInvoices({ siteId = null, month = null, status = null, unpaid = false, limit = 0 } = {}, { actor = null } = {}) {
+    if (isStaffActor(actor)) {
+      throw new StoreError('permission-denied', '고객 청구 · 미수금은 대표(최고관리자)만 볼 수 있습니다.');
+    }
+    let sites = await this.listSites();
+    if (isCustomerActor(actor)) {
+      const mine = await this._customerSiteIds(actor);
+      sites = sites.filter((site) => mine.includes(site.id));
+    }
+    if (siteId) {
+      if (isCustomerActor(actor) && !sites.some((site) => site.id === siteId)) {
+        throw new StoreError('permission-denied', '다른 업장의 청구 내역은 볼 수 없습니다.');
+      }
+      sites = sites.filter((site) => site.id === siteId);
+    }
+
+    const today = todayISO();
+    const wantedMonth = month ? billingMonthKey(month) : '';
+    let rows = [];
+    for (const site of sites) {
+      for (const invoice of site.invoices || []) {
+        if (wantedMonth && invoice.month !== wantedMonth) continue;
+        const key = invoiceStatusKey(invoice, today);
+        rows.push({
+          ...invoice,
+          siteCode: invoice.siteCode || site.code,
+          siteName: invoice.siteName || site.name,
+          status: key,
+          statusLabel: INVOICE_STATUS[key].label,
+          kindLabel: invoiceKindLabel(invoice),
+          taxInvoiceLabel: TAX_INVOICE_STATUS[invoice.taxInvoice === 'issued' ? 'issued' : 'none'],
+        });
+      }
+    }
+    if (status) rows = rows.filter((row) => row.status === status);
+    if (unpaid) rows = rows.filter((row) => row.status === 'billed' || row.status === 'overdue');
+    if (isCustomerActor(actor)) {
+      rows = sortInvoices(rows, today).map((row) => customerInvoiceView(row, today));
+    } else {
+      rows = sortInvoices(rows, today);
+    }
+    return limit > 0 ? rows.slice(0, limit) : rows;
+  }
+
+  /** 청구 한 건 — 업장 · 청구 id 로 찾습니다. */
+  async getInvoice(siteId, invoiceId, { actor = null } = {}) {
+    if (isStaffActor(actor)) {
+      throw new StoreError('permission-denied', '고객 청구 · 미수금은 대표(최고관리자)만 볼 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) return null;
+    if (isCustomerActor(actor)) {
+      const mine = await this._customerSiteIds(actor);
+      if (!mine.includes(site.id)) throw new StoreError('permission-denied', '다른 업장의 청구 내역은 볼 수 없습니다.');
+    }
+    const invoice = (site.invoices || []).find((row) => row.id === invoiceId);
+    if (!invoice) return null;
+    if (isCustomerActor(actor)) return customerInvoiceView(invoice);
+    const key = invoiceStatusKey(invoice);
+    return {
+      ...invoice,
+      siteCode: invoice.siteCode || site.code,
+      siteName: invoice.siteName || site.name,
+      status: key,
+      statusLabel: INVOICE_STATUS[key].label,
+      kindLabel: invoiceKindLabel(invoice),
+      taxInvoiceLabel: TAX_INVOICE_STATUS[invoice.taxInvoice === 'issued' ? 'issued' : 'none'],
+    };
+  }
+
+  /**
+   * 이 달 청구 일괄 생성 — 업장 계약금(`site.contract.contractAmount`)과 청구일로
+   * 정기청소 청구를 만듭니다. 이미 그 달 정기청구가 있으면 건너뜁니다(중복 없음).
+   * 계약금이 비어 있는 업장은 만들지 않고 `missing` 으로 돌려줍니다.
+   */
+  async generateMonthlyInvoices({ month = '', siteIds = null, by = '', actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '청구 생성은 대표(최고관리자)만 할 수 있습니다.');
+    }
+    const key = billingMonthKey(month);
+    const label = billingMonthLabel(key);
+    const only = Array.isArray(siteIds) ? new Set(siteIds.map((id) => toText(id)).filter(Boolean)) : null;
+    const who = toText(by) || (actor && actor.name) || '대표';
+    const sites = (await this.listSites()).filter((site) => site.active !== false);
+    const created = [];
+    const skipped = [];
+    const missing = [];
+    // 청구 번호는 모든 업장을 통틀어 한 줄기입니다(같은 달에 중복 번호가 생기지 않게).
+    let seq = invoiceNoSequence(await this._collectInvoices(key), key);
+    for (const site of sites) {
+      if (only && !only.has(site.id)) continue;
+      const contract = normalizeContract(site.contract);
+      const list = (site.invoices || []).slice();
+      if (list.some((row) => row.month === key && row.kind === 'regular')) {
+        skipped.push({ siteId: site.id, name: site.name, reason: '이미 청구 있음' });
+        continue;
+      }
+      if (contract.contractAmount <= 0) {
+        missing.push({ siteId: site.id, name: site.name, reason: '계약금 미등록' });
+        continue;
+      }
+      const vatIncluded = /부가세\s*포함/.test(contract.note || '');
+      const amount = contract.contractAmount;
+      const vat = vatIncluded ? 0 : vatOf(amount);
+      const now = new Date().toISOString();
+      seq += 1;
+      const invoice = normalizeInvoice({
+        id: uid('inv'),
+        siteId: site.id,
+        siteCode: site.code,
+        siteName: site.name,
+        invoiceNo: `I-${key.replace('-', '')}-${pad3(seq)}`,
+        month: key,
+        kind: 'regular',
+        title: `${label} 정기청소`,
+        dueDate: billingDueDate(key, contract.billingDay),
+        amount,
+        vat,
+        total: amount + vat,
+        status: 'scheduled',
+        note: vatIncluded ? '부가세 포함 계약' : '부가세 별도',
+        createdAt: now,
+        updatedAt: now,
+        history: withHistory([], makeHistoryEntry({
+          actor: who,
+          action: '청구 생성',
+          note: `${label} 정기청소 · ${amount + vat}원 · 납기 ${billingDueDate(key, contract.billingDay) || '미정'}`,
+        })),
+      });
+      await this._saveSiteInvoices(site, [invoice, ...list]);
+      await this.recordHistory('sites', site.id, {
+        actor: who,
+        action: '청구 생성',
+        note: `${invoice.invoiceNo} · ${invoice.title} · ${invoice.total}원`,
+      });
+      created.push(invoice);
+    }
+    if (created.length) this._notify();
+    return {
+      month: key,
+      created: created.length,
+      skipped: skipped.length,
+      missing: missing.length,
+      invoices: created,
+      skippedRows: skipped,
+      missingRows: missing,
+    };
+  }
+
+  /**
+   * 추가 작업 청구 — 고객이 승인한 추가 작업 견적(`quotes.kind:'extra'`)을 그 달 청구로 만듭니다.
+   * 같은 견적으로 두 번 만들지 않습니다.
+   */
+  async createExtraInvoice(siteId, { quoteId = '', month = '', amount = null, dueDate = '', note = '', by = '', actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '추가 청구는 대표(최고관리자)만 만들 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const quote = (await this.adapter.getAll('quotes')).map(normalizeQuote).find((row) => row.id === toText(quoteId));
+    if (!quote) throw new StoreError('no-quote', '추가 작업 견적을 찾을 수 없습니다.');
+    if (!isExtraQuote(quote)) throw new StoreError('quote-kind', '추가 작업 견적만 청구할 수 있습니다.');
+    if (quote.customerDecision !== 'approved') {
+      throw new StoreError('quote-not-approved', '고객이 승인한 추가 작업만 청구할 수 있습니다.');
+    }
+    const list = (site.invoices || []).slice();
+    if (list.some((row) => row.quoteId === quote.id)) {
+      throw new StoreError('invoice-exists', '이 추가 작업은 이미 청구가 있습니다.');
+    }
+    const key = billingMonthKey(month);
+    const value = amount === null || amount === undefined || amount === '' ? toAmount(quote.amount) : toAmount(amount);
+    if (value <= 0) throw new StoreError('amount-empty', '청구 금액을 입력해 주세요.');
+    const vat = /부가세\s*포함/.test(quote.vatIncluded ? '부가세 포함' : '') ? 0 : vatOf(value);
+    const contract = normalizeContract(site.contract);
+    const now = new Date().toISOString();
+    const who = toText(by) || (actor && actor.name) || '대표';
+    const invoice = normalizeInvoice({
+      id: uid('inv'),
+      siteId: site.id,
+      siteCode: site.code,
+      siteName: site.name,
+      invoiceNo: nextInvoiceNo(await this._collectInvoices(key), key),
+      month: key,
+      kind: 'extra',
+      quoteId: quote.id,
+      title: toText(quote.scope) || toText(quote.issueTitle) || '추가 작업',
+      dueDate: isoDateOf(dueDate) || billingDueDate(key, contract.billingDay),
+      amount: value,
+      vat,
+      total: value + vat,
+      status: 'scheduled',
+      note: toText(note),
+      createdAt: now,
+      updatedAt: now,
+      history: withHistory([], makeHistoryEntry({
+        actor: who,
+        action: '청구 생성',
+        note: `추가 작업 · ${quote.no} · ${value + vat}원`,
+      })),
+    });
+    await this._saveSiteInvoices(site, [invoice, ...list]);
+    await this.recordHistory('sites', site.id, {
+      actor: who,
+      action: '청구 생성',
+      note: `${invoice.invoiceNo} · 추가 작업(${quote.no}) · ${invoice.total}원`,
+    });
+    this._notify();
+    return invoice;
+  }
+
+  /** 청구 한 건을 고칩니다 — 입금 완료된 청구는 금액을 바꾸지 않습니다. */
+  async updateInvoice(siteId, invoiceId, { amount = null, vat = null, dueDate = null, title = null, note = null, by = '', actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '청구 수정은 대표(최고관리자)만 할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const list = (site.invoices || []).slice();
+    const index = list.findIndex((row) => row.id === invoiceId);
+    if (index < 0) throw new StoreError('no-invoice', '청구를 찾을 수 없습니다.');
+    const invoice = list[index];
+    if (invoiceStatusKey(invoice) === 'paid') {
+      throw new StoreError('already-paid', '입금 완료된 청구는 금액을 바꿀 수 없습니다.');
+    }
+    const patch = { ...invoice };
+    const amountGiven = amount !== null && amount !== undefined && amount !== '';
+    const vatGiven = vat !== null && vat !== undefined && vat !== '';
+    if (amountGiven) patch.amount = toAmount(amount);
+    if (vatGiven) patch.vat = toAmount(vat);
+    // 부가세를 따로 안 넣었으면: 부가세 포함 계약(0원)은 그대로, 아니면 공급가의 10%로 맞춥니다.
+    if (amountGiven && !vatGiven) patch.vat = toAmount(invoice.vat) === 0 ? 0 : vatOf(patch.amount);
+    patch.total = toAmount(patch.amount) + toAmount(patch.vat);
+    if (dueDate !== null && dueDate !== undefined) patch.dueDate = isoDateOf(dueDate) || '';
+    if (title !== null && title !== undefined) patch.title = toText(title).slice(0, 200);
+    if (note !== null && note !== undefined) patch.note = toText(note).slice(0, 400);
+    const changes = diffFields(
+      { amount: invoice.amount, vat: invoice.vat, dueDate: invoice.dueDate, title: invoice.title, note: invoice.note },
+      { amount: patch.amount, vat: patch.vat, dueDate: patch.dueDate, title: patch.title, note: patch.note },
+      { amount: '공급가', vat: '부가세', dueDate: '납기일', title: '내용', note: '메모' },
+    );
+    const who = toText(by) || (actor && actor.name) || '대표';
+    const next = normalizeInvoice({
+      ...patch,
+      updatedAt: new Date().toISOString(),
+      history: changes.length
+        ? withHistory(invoice.history, makeHistoryEntry({ actor: who, action: '청구 수정', note: changes.map((row) => `${row.field} ${row.from || '없음'} → ${row.to || '없음'}`).join(' · '), changes }))
+        : invoice.history,
+    });
+    list[index] = next;
+    await this._saveSiteInvoices(site, list);
+    if (changes.length) {
+      await this.recordHistory('sites', site.id, {
+        actor: who,
+        action: '청구 수정',
+        note: `${next.invoiceNo} · ${changes.map((row) => `${row.field} ${row.to}`).join(' · ')}`,
+      });
+    }
+    this._notify();
+    return next;
+  }
+
+  /** 청구 완료 — 고객에게 청구서를 보낸 것으로 기록합니다(예정 → 청구). */
+  async markInvoiceBilled(siteId, invoiceId, { dueDate = null, by = '', actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '청구 처리는 대표(최고관리자)만 할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const list = (site.invoices || []).slice();
+    const index = list.findIndex((row) => row.id === invoiceId);
+    if (index < 0) throw new StoreError('no-invoice', '청구를 찾을 수 없습니다.');
+    const invoice = list[index];
+    const from = invoiceStatusKey(invoice);
+    if (from === 'paid') throw new StoreError('already-paid', '입금 완료된 청구입니다.');
+    const who = toText(by) || (actor && actor.name) || '대표';
+    const next = normalizeInvoice({
+      ...invoice,
+      status: 'billed',
+      dueDate: dueDate !== null && dueDate !== undefined && dueDate !== '' ? isoDateOf(dueDate) || invoice.dueDate : invoice.dueDate,
+      updatedAt: new Date().toISOString(),
+      history: from === 'billed' || from === 'overdue'
+        ? invoice.history
+        : withHistory(invoice.history, makeHistoryEntry({
+            actor: who,
+            action: '청구 완료',
+            note: `${invoice.invoiceNo} · ${invoice.total}원 · 납기 ${invoice.dueDate || '미정'}`,
+            changes: [{ field: '상태', from: INVOICE_STATUS[from].label, to: INVOICE_STATUS.billed.label }],
+          })),
+    });
+    list[index] = next;
+    await this._saveSiteInvoices(site, list);
+    await this.recordHistory('sites', site.id, {
+      actor: who,
+      action: '청구 완료',
+      note: `${next.invoiceNo} · ${next.siteName || site.name} · ${next.total}원`,
+    });
+    this._notify();
+    return next;
+  }
+
+  /** 입금 완료 — 실입금일 · 입금액 · 메모를 남기고 청구를 닫습니다. */
+  async markInvoicePaid(siteId, invoiceId, { paidAt = '', paidAmount = null, note = null, by = '', actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '입금 처리는 대표(최고관리자)만 할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const list = (site.invoices || []).slice();
+    const index = list.findIndex((row) => row.id === invoiceId);
+    if (index < 0) throw new StoreError('no-invoice', '청구를 찾을 수 없습니다.');
+    const invoice = list[index];
+    const from = invoiceStatusKey(invoice);
+    if (from === 'paid') throw new StoreError('already-paid', '이미 입금 완료된 청구입니다.');
+    const day = isoDateOf(paidAt) || todayISO();
+    const paid = paidAmount === null || paidAmount === undefined || paidAmount === '' ? invoice.total : toAmount(paidAmount);
+    if (paid <= 0) throw new StoreError('amount-empty', '입금액을 입력해 주세요.');
+    const who = toText(by) || (actor && actor.name) || '대표';
+    const next = normalizeInvoice({
+      ...invoice,
+      status: 'paid',
+      paidAt: day,
+      paidAmount: paid,
+      note: note !== null && note !== undefined && toText(note) ? toText(note).slice(0, 400) : invoice.note,
+      updatedAt: new Date().toISOString(),
+      history: withHistory(invoice.history, makeHistoryEntry({
+        actor: who,
+        action: '입금 완료',
+        note: `${paid}원 · ${day}${paid !== invoice.total ? ` (청구 ${invoice.total}원)` : ''}`,
+        changes: [{ field: '상태', from: INVOICE_STATUS[from].label, to: INVOICE_STATUS.paid.label }],
+      })),
+    });
+    list[index] = next;
+    await this._saveSiteInvoices(site, list);
+    await this.recordHistory('sites', site.id, {
+      actor: who,
+      action: '입금 완료',
+      note: `${next.invoiceNo} · ${next.siteName || site.name} · ${paid}원`,
+    });
+    this._notify();
+    return next;
+  }
+
+  /** 세금계산서 발행 여부 — 발행 · 발행 취소를 기록합니다. */
+  async setInvoiceTaxInvoice(siteId, invoiceId, { issued = true, by = '', actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '세금계산서 발행 처리는 대표(최고관리자)만 할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const list = (site.invoices || []).slice();
+    const index = list.findIndex((row) => row.id === invoiceId);
+    if (index < 0) throw new StoreError('no-invoice', '청구를 찾을 수 없습니다.');
+    const invoice = list[index];
+    const want = !!issued;
+    const from = invoice.taxInvoice === 'issued';
+    if (from === want) return invoice;
+    const who = toText(by) || (actor && actor.name) || '대표';
+    const now = new Date().toISOString();
+    const next = normalizeInvoice({
+      ...invoice,
+      taxInvoice: want ? 'issued' : 'none',
+      taxIssuedAt: want ? todayISO() : '',
+      issuedBy: want ? who : '',
+      updatedAt: now,
+      history: withHistory(invoice.history, makeHistoryEntry({
+        actor: who,
+        action: want ? '세금계산서 발행' : '세금계산서 발행 취소',
+        note: `${invoice.invoiceNo} · ${invoice.siteName || site.name}`,
+        changes: [{ field: '세금계산서', from: TAX_INVOICE_STATUS[from ? 'issued' : 'none'], to: TAX_INVOICE_STATUS[want ? 'issued' : 'none'] }],
+      })),
+    });
+    list[index] = next;
+    await this._saveSiteInvoices(site, list);
+    await this.recordHistory('sites', site.id, {
+      actor: who,
+      action: want ? '세금계산서 발행' : '세금계산서 발행 취소',
+      note: `${next.invoiceNo} · ${next.total}원`,
+    });
+    this._notify();
+    return next;
+  }
+
+  /** 청구 취소 — 아직 청구하지 않은(예정) 청구만 지웁니다. 기록은 업장 이력에 남깁니다. */
+  async cancelInvoice(siteId, invoiceId, { by = '', actor = null, reason = '' } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '청구 취소는 대표(최고관리자)만 할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const list = (site.invoices || []).slice();
+    const index = list.findIndex((row) => row.id === invoiceId);
+    if (index < 0) throw new StoreError('no-invoice', '청구를 찾을 수 없습니다.');
+    const invoice = list[index];
+    if (invoiceStatusKey(invoice) !== 'scheduled') {
+      throw new StoreError('invoice-locked', '아직 청구하지 않은 예정 청구만 취소할 수 있습니다.');
+    }
+    list.splice(index, 1);
+    await this._saveSiteInvoices(site, list);
+    const who = toText(by) || (actor && actor.name) || '대표';
+    await this.recordHistory('sites', site.id, {
+      actor: who,
+      action: '청구 취소',
+      note: `${invoice.invoiceNo} · ${invoice.total}원${toText(reason) ? ` · ${toText(reason)}` : ''}`,
+    });
+    this._notify();
+    return { removed: invoice.id, invoiceNo: invoice.invoiceNo };
+  }
+
+  /** 업장을 맡은 팀장 계정 — 배정 → 팀장 도급계약서 → 담당 팀장 이름 순으로 찾습니다. */
+  async _resolveSiteLeader(site, { staffContracts = null, accounts = null } = {}) {
+    const contracts = staffContracts || (await this.adapter.getAll('staffContracts')).map(normalizeStaffContract);
+    const people = accounts || (await this.adapter.getAll('accounts')).map((row) => ({ ...row }));
+    const byId = (id) => people.find((row) => row.id === id && row.role === 'leader') || null;
+    const siteContracts = contracts.filter(
+      (row) => row.siteIds.includes(site.id) || (site.staffContractIds || []).includes(row.id),
+    );
+    const linked = siteContracts.filter((row) => row.accountId && byId(row.accountId));
+    if (linked.length) {
+      const signed = linked.find((row) => row.status === 'signed') || linked[0];
+      const account = byId(signed.accountId);
+      return {
+        leaderId: account.id,
+        leaderName: account.name,
+        contractId: signed.id,
+        settlementDay: signed.settlementDay || '15',
+      };
+    }
+    const assigneeId = toText(site.assignee && site.assignee.accountId);
+    if (assigneeId && byId(assigneeId)) {
+      const account = byId(assigneeId);
+      return { leaderId: account.id, leaderName: account.name, contractId: '', settlementDay: '15' };
+    }
+    const name = toText(site.manager);
+    if (name) {
+      const match = people.find(
+        (row) => row.role === 'leader' && row.active !== false && row.name === name
+          && !(row.account && row.account.canManageStaff) && !/본부장/.test(row.title || ''),
+      );
+      if (match) {
+        const contract = siteContracts.find((row) => row.accountId === match.id) || null;
+        return {
+          leaderId: match.id,
+          leaderName: match.name,
+          contractId: contract ? contract.id : '',
+          settlementDay: (contract && contract.settlementDay) || '15',
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 이 달 팀장 도급 정산 일괄 생성 — 업장 도급금액(`site.contract.subcontractAmount`)과
+   * 팀장 도급계약서 지급일로 정산 내역을 만듭니다. 이미 그 달 정산이 있으면 건너뜁니다.
+   */
+  async generateMonthlyPayouts({ month = '', siteIds = null, by = '', actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '도급 정산 생성은 대표(최고관리자)만 할 수 있습니다.');
+    }
+    const key = billingMonthKey(month);
+    const label = billingMonthLabel(key);
+    const only = Array.isArray(siteIds) ? new Set(siteIds.map((id) => toText(id)).filter(Boolean)) : null;
+    const who = toText(by) || (actor && actor.name) || '대표';
+    const sites = (await this.listSites()).filter((site) => site.active !== false);
+    const staffContracts = (await this.adapter.getAll('staffContracts')).map(normalizeStaffContract);
+    const accounts = await this.adapter.getAll('accounts');
+    const created = [];
+    const skipped = [];
+    const missing = [];
+    const existingPayouts = await this._collectPayouts(key);
+    let seq = payoutNoSequence(existingPayouts, key);
+    for (const site of sites) {
+      if (only && !only.has(site.id)) continue;
+      const contract = normalizeContract(site.contract);
+      const list = (site.payouts || []).slice();
+      const leader = await this._resolveSiteLeader(site, { staffContracts, accounts });
+      if (!leader) {
+        missing.push({ siteId: site.id, name: site.name, reason: '담당 팀장 계정 없음' });
+        continue;
+      }
+      if (list.some((row) => row.month === key && row.leaderId === leader.leaderId)) {
+        skipped.push({ siteId: site.id, name: site.name, reason: '이미 정산 있음' });
+        continue;
+      }
+      if (contract.subcontractAmount <= 0) {
+        missing.push({ siteId: site.id, name: site.name, reason: '도급금액 미등록' });
+        continue;
+      }
+      const amount = contract.subcontractAmount;
+      const vat = vatOf(amount);
+      const now = new Date().toISOString();
+      seq += 1;
+      const payout = normalizePayout({
+        id: uid('pay'),
+        siteId: site.id,
+        siteCode: site.code,
+        siteName: site.name,
+        payoutNo: `P-${key.replace('-', '')}-${pad3(seq)}`,
+        month: key,
+        leaderId: leader.leaderId,
+        leaderName: leader.leaderName,
+        contractId: leader.contractId,
+        dueDate: payoutDueDate(key, leader.settlementDay),
+        amount,
+        vat,
+        total: amount + vat,
+        status: 'scheduled',
+        createdAt: now,
+        updatedAt: now,
+        history: withHistory([], makeHistoryEntry({
+          actor: who,
+          action: '도급 정산 생성',
+          note: `${label} · ${site.name} · ${amount + vat}원`,
+        })),
+      });
+      await this._saveSitePayouts(site, [payout, ...list]);
+      await this.recordHistory('sites', site.id, {
+        actor: who,
+        action: '도급 정산 생성',
+        note: `${payout.payoutNo} · ${leader.leaderName} · ${payout.total}원`,
+      });
+      created.push(payout);
+    }
+    if (created.length) this._notify();
+    return {
+      month: key,
+      created: created.length,
+      skipped: skipped.length,
+      missing: missing.length,
+      payouts: created,
+      skippedRows: skipped,
+      missingRows: missing,
+    };
+  }
+
+  /**
+   * 도급 정산 목록 — 대표는 전체, 팀장은 **본인 정산만**(다른 팀장 · 고객 청구 금액 없음).
+   * 고객에게는 도급 정산을 보여 주지 않습니다.
+   */
+  async listPayouts({ siteId = null, month = null, status = null, leaderId = null, limit = 0 } = {}, { actor = null } = {}) {
+    if (isCustomerActor(actor)) {
+      throw new StoreError('permission-denied', '도급 정산은 고객에게 표시되지 않습니다.');
+    }
+    let sites = await this.listSites();
+    const wantedMonth = month ? billingMonthKey(month) : '';
+    const who = isStaffActor(actor) ? toText(actor.accountId) : toText(leaderId);
+    const name = isStaffActor(actor) ? toText(actor.name) : '';
+    // 팀장·본부장은 **본인 정산 줄만** 남깁니다. (배정이 바뀌어도 지난 정산 기록은 본인이 봐야 합니다.)
+    const isMine = (payout) => (who && payout.leaderId === who) || (!!name && payout.leaderName === name);
+    if (siteId) {
+      const target = sites.find((site) => site.id === siteId) || null;
+      if (isStaffActor(actor)) {
+        const assigned = assignedSiteIdsOf(actor).includes(siteId);
+        const hasOwn = target && (target.payouts || []).some(isMine);
+        if (!assigned && !hasOwn) {
+          throw new StoreError('permission-denied', '다른 업장의 도급 정산은 볼 수 없습니다.');
+        }
+      }
+      sites = target ? [target] : [];
+    }
+    let rows = [];
+    for (const site of sites) {
+      for (const payout of site.payouts || []) {
+        if (wantedMonth && payout.month !== wantedMonth) continue;
+        if (isStaffActor(actor)) {
+          if (!isMine(payout)) continue;
+        } else if (who && payout.leaderId !== who) {
+          continue;
+        }
+        rows.push({
+          ...payout,
+          siteCode: payout.siteCode || site.code,
+          siteName: payout.siteName || site.name,
+          statusLabel: PAYOUT_STATUS[payoutStatusKey(payout)].label,
+          monthLabel: billingMonthLabel(payout.month),
+        });
+      }
+    }
+    if (status) rows = rows.filter((row) => payoutStatusKey(row) === status);
+    rows = sortPayouts(rows);
+    if (isStaffActor(actor)) rows = rows.map((row) => leaderPayoutView(row));
+    return limit > 0 ? rows.slice(0, limit) : rows;
+  }
+
+  /** 도급 지급 완료 — 실지급일 · 메모를 남깁니다. */
+  async markPayoutPaid(siteId, payoutId, { paidAt = '', note = null, by = '', actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '도급 지급 처리는 대표(최고관리자)만 할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const list = (site.payouts || []).slice();
+    const index = list.findIndex((row) => row.id === payoutId);
+    if (index < 0) throw new StoreError('no-payout', '도급 정산을 찾을 수 없습니다.');
+    const payout = list[index];
+    if (payoutStatusKey(payout) === 'paid') throw new StoreError('already-paid', '이미 지급 완료된 정산입니다.');
+    const day = isoDateOf(paidAt) || todayISO();
+    const who = toText(by) || (actor && actor.name) || '대표';
+    const next = normalizePayout({
+      ...payout,
+      status: 'paid',
+      paidAt: day,
+      note: note !== null && note !== undefined && toText(note) ? toText(note).slice(0, 400) : payout.note,
+      updatedAt: new Date().toISOString(),
+      history: withHistory(payout.history, makeHistoryEntry({
+        actor: who,
+        action: '도급 지급 완료',
+        note: `${payout.leaderName} · ${payout.total}원 · ${day}`,
+        changes: [{ field: '상태', from: PAYOUT_STATUS.scheduled.label, to: PAYOUT_STATUS.paid.label }],
+      })),
+    });
+    list[index] = next;
+    await this._saveSitePayouts(site, list);
+    await this.recordHistory('sites', site.id, {
+      actor: who,
+      action: '도급 지급 완료',
+      note: `${next.payoutNo} · ${next.leaderName} · ${next.total}원 · ${day}`,
+    });
+    this._notify();
+    return next;
+  }
+
+  /**
+   * 이 달 청구 · 입금 · 미수금 · 도급 정산 요약 — 「전체 매출 정리」와 청구 패널 머리글.
+   * 계약 매출(월) · 청구 합계 · 입금 완료 · 미수금을 따로 셉니다.
+   */
+  async billingSummary({ month = '' } = {}, { actor = null } = {}) {
+    denyStaff(actor, '청구 · 미수금 정리');
+    if (isCustomerActor(actor)) {
+      throw new StoreError('permission-denied', '청구 · 미수금 정리는 대표(최고관리자)만 볼 수 있습니다.');
+    }
+    const key = billingMonthKey(month);
+    const sites = (await this.listSites()).filter((site) => site.active !== false);
+    const rows = await this._collectInvoices(key);
+    const payouts = await this._collectPayouts(key);
+    const stats = invoiceStats(rows);
+    const settled = payoutStats(payouts);
+    return {
+      month: key,
+      monthLabel: billingMonthLabel(key),
+      sites: sites.length,
+      contractMonthly: sites.reduce((sum, site) => sum + normalizeContract(site.contract).contractAmount, 0),
+      contractWithAmount: sites.filter((site) => normalizeContract(site.contract).contractAmount > 0).length,
+      subcontractMonthly: sites.reduce((sum, site) => sum + normalizeContract(site.contract).subcontractAmount, 0),
+      invoice: stats,
+      invoicedTotal: stats.sum.total - stats.sum.scheduled,
+      paidTotal: stats.sum.paid,
+      unpaidTotal: stats.sum.unpaid,
+      overdueTotal: stats.sum.overdue,
+      scheduledTotal: stats.sum.scheduled,
+      taxPending: stats.sum.taxPending,
+      payout: settled,
+      payoutScheduled: settled.scheduled,
+      payoutPaid: settled.paid,
+    };
   }
 
   /** Give the chosen team leaders this site (never removes their other sites). */

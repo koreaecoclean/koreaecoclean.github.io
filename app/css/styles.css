@@ -3949,3 +3949,151 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .customer-issue__head strong { font-size: 12.5px; line-height: 1.35; }
 .customer-issue__head > .badge { flex: none; white-space: nowrap; }
 .customer-issue p { margin: 6px 0 0; font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+
+/* ---------- 9단계 — 청구 · 입금 · 미수금 · 도급 정산 ---------- */
+.rev-totals--billing { margin-bottom: 8px; }
+.rev-totals--billing div { background: #fff; }
+.rev-totals__unpaid { background: #fdf1dd !important; border-color: #f0d7ad !important; }
+.rev-totals__unpaid strong { color: #8a4b0f; }
+
+.billing-panel .section-head, .payout-panel .section-head { align-items: flex-start; }
+.billing-month {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2, #f7f8f5);
+}
+.billing-month strong { font-size: 13px; font-weight: 800; color: var(--brand-800); }
+.billing-month .link-btn { font-size: 11.5px; }
+.billing-totals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.billing-totals > div {
+  padding: 9px 10px;
+  background: var(--surface-2, #f7f8f5);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.billing-totals span { display: block; font-size: 10.5px; font-weight: 700; color: var(--muted); }
+.billing-totals strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -.03em;
+  color: var(--brand-800);
+  font-variant-numeric: tabular-nums;
+}
+.billing-totals__unpaid { background: #fdf1dd !important; border-color: #f0d7ad !important; }
+.billing-totals__unpaid strong { color: #8a4b0f; }
+.billing-actions { margin: 4px 0 2px; }
+.billing-actions__hint { margin: 0 0 10px; }
+.billing-filters { margin: 0 0 10px; }
+
+.billing-card {
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+.billing-card--overdue { border-color: #e7bdb1; background: #fffaf8; }
+.billing-card--scheduled { background: #fdfcf7; }
+.billing-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.billing-card__head > div { min-width: 0; }
+.billing-card__head strong { display: block; font-size: 12.5px; font-weight: 800; line-height: 1.3; }
+.billing-card__head span { display: block; margin-top: 2px; font-size: 10.5px; color: var(--muted); }
+.billing-card__head > .badge { flex: none; white-space: nowrap; }
+.billing-card__money {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 8px 0 4px;
+  font-size: 11.5px;
+  color: var(--ink-soft, #4b554c);
+  font-variant-numeric: tabular-nums;
+}
+.billing-card__money strong { font-weight: 800; color: var(--ink, #24301f); }
+.billing-card__total strong { color: var(--brand-700); }
+.billing-card__late { color: #8a2b20; font-weight: 800; }
+.billing-card .tiny.muted { margin: 0 0 6px; }
+.billing-card .btn-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.billing-edit { margin-top: 6px; }
+.billing-edit .link-btn { font-size: 11px; }
+.billing-edit__box {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 9px;
+  border-radius: 10px;
+  background: var(--surface-2, #f7f8f5);
+}
+.billing-edit__box .field-row { display: flex; gap: 6px; }
+.billing-edit__box .field { flex: 1 1 0; }
+.billing-edit__box .btn-row { display: flex; gap: 6px; }
+.billing-history { margin-top: 8px; }
+.billing-history summary { font-size: 11px; font-weight: 700; color: var(--muted); cursor: pointer; }
+.billing-history ul { margin: 6px 0 0; padding-left: 16px; font-size: 10.5px; color: var(--muted); line-height: 1.5; }
+.billing-history strong { color: var(--body, #2a352b); }
+.billing-extra {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: #fbfdf8;
+}
+.billing-extra .details-head { margin: 0 0 4px; }
+
+/* 팀장 — 내 도급 정산 */
+.payout-list { display: grid; gap: 6px; margin-bottom: 8px; }
+.payout-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 9px;
+  border-radius: 10px;
+  background: var(--surface-2, #f7f8f5);
+}
+.payout-row__body { min-width: 0; flex: 1 1 auto; }
+.payout-row__body strong { display: block; font-size: 12px; font-weight: 800; }
+.payout-row__body span { display: block; margin-top: 2px; font-size: 10.5px; color: var(--muted); }
+.payout-row__right { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.payout-row__right strong { font-size: 12.5px; font-weight: 800; color: var(--brand-700); font-variant-numeric: tabular-nums; }
+.payout-row__right .badge { white-space: nowrap; }
+
+/* 고객 — 청구 · 입금 */
+.customer-billing__sum {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: var(--surface-2, #f7f8f5);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.customer-billing__sum strong { font-size: 13px; font-weight: 800; color: var(--brand-800); }
+.customer-billing__list { display: grid; gap: 8px; }
+.customer-billing__row { padding: 9px 10px; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+.customer-billing__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.customer-billing__head strong { font-size: 12.5px; font-weight: 800; }
+.customer-billing__head > .badge { flex: none; white-space: nowrap; }
+.customer-billing__money {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--ink-soft, #4b554c);
+  font-variant-numeric: tabular-nums;
+}
+.customer-billing__money strong { color: var(--brand-700); font-weight: 800; }
+.customer-billing__row p { margin: 5px 0 0; }

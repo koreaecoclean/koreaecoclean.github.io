@@ -23,7 +23,7 @@ import {
   toISODate,
   fmtWon,
 } from '../ui.js';
-import { store, countReportPhotos, reportNoOf, QUOTE_STATUS, AGREEMENT_STATUS, isExtraQuote } from '../store.js';
+import { store, countReportPhotos, reportNoOf, QUOTE_STATUS, AGREEMENT_STATUS, isExtraQuote, INVOICE_STATUS, billingMonthLabel } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import {
   getSession,
@@ -906,8 +906,58 @@ export function createCustomerView(container) {
       </section>`;
   }
 
-  function manageTabTemplate(site, stats, viewer, schedule) {
-    const last = stats.last;
+  /**
+   * 청구 · 입금 — 본인 업장의 청구 내역 · 입금 상태 · 세금계산서 발행 여부만 보입니다.
+   * (직원 이름 · 내부 메모 · 팀장 정산 · 다른 업장은 나오지 않습니다.)
+   */
+  function customerBillingTemplate(invoices) {
+    const rows = Array.isArray(invoices) ? invoices : [];
+    if (!rows.length) return '';
+    const paidTotal = rows.filter((row) => row.status === 'paid').reduce((sum, row) => sum + (Number(row.paidAmount) || Number(row.total) || 0), 0);
+    const waiting = rows
+      .filter((row) => row.status === 'billed' || row.status === 'overdue' || row.status === 'scheduled')
+      .reduce((sum, row) => sum + (Number(row.total) || 0), 0);
+    return `
+      <section class="panel customer-billing" data-customer-billing>
+        <div class="section-head">
+          <h2>청구 · 입금</h2>
+          <p>${rows.length}건</p>
+        </div>
+        <div class="customer-billing__sum">
+          <span>입금 완료 <strong data-customer-billing-total="paid">${esc(fmtWon(paidTotal))}</strong></span>
+          <span>입금 전 <strong data-customer-billing-total="waiting">${esc(fmtWon(waiting))}</strong></span>
+        </div>
+        <p class="tiny muted" style="margin:6px 0 10px">
+          정기청소 청구와 입금 상태입니다. 부가세는 공급가와 따로 표시됩니다.
+        </p>
+        <div class="customer-billing__list">
+          ${rows
+            .map((row) => {
+              const status = INVOICE_STATUS[row.status] || INVOICE_STATUS.scheduled;
+              return `
+                <div class="customer-billing__row" data-customer-invoice="${esc(row.id)}" data-invoice-status="${esc(row.status)}">
+                  <div class="customer-billing__head">
+                    <strong>${esc(row.monthLabel || billingMonthLabel(row.month))} ${esc(row.kindLabel || '')}</strong>
+                    <span class="badge ${status.badge}">${esc(row.statusLabel || status.label)}</span>
+                  </div>
+                  <div class="customer-billing__money">
+                    <span>공급가 ${esc(fmtWon(row.amount))}</span>
+                    <span>부가세 ${esc(fmtWon(row.vat))}</span>
+                    <strong>합계 ${esc(fmtWon(row.total))}</strong>
+                  </div>
+                  <p class="tiny muted">
+                    ${row.dueDate ? `납기 ${esc(fmtDateLong(row.dueDate))}` : '납기 협의'}
+                    · 세금계산서 ${esc(row.taxInvoiceLabel || '미발행')}${row.taxIssuedAt ? ` (${esc(String(row.taxIssuedAt).slice(0, 10))})` : ''}
+                    ${row.status === 'paid' && row.paidAt ? ` · 입금 ${esc(fmtDateLong(row.paidAt))}` : ''}
+                  </p>
+                </div>`;
+            })
+            .join('')}
+        </div>
+      </section>`;
+  }
+
+  function manageTabTemplate(site, stats, viewer, schedule, invoices) {    const last = stats.last;
     const reports = filterReports(stats.reports);
     const nextLabel = stats.nextDate ? `${fmtDateLong(stats.nextDate)} 예정` : '일정 확인 필요';
     const room = site.room || {};
@@ -916,6 +966,8 @@ export function createCustomerView(container) {
       ${compareTemplate(site, stats)}
 
       ${visitScheduleTemplate(schedule)}
+
+      ${customerBillingTemplate(invoices)}
 
       <section class="panel">
         <dl class="kv kv--left">
@@ -1032,7 +1084,7 @@ export function createCustomerView(container) {
 
       ${viewer.preview ? '' : profilePanelTemplate(viewer)}
 
-      ${tab === 'quote' ? quoteTabTemplate(documents) : tab === 'contract' ? contractTabTemplate(documents) : manageTabTemplate(site, stats, viewer, schedule)}
+      ${tab === 'quote' ? quoteTabTemplate(documents) : tab === 'contract' ? contractTabTemplate(documents) : manageTabTemplate(site, stats, viewer, schedule, documents.invoices)}
     `;
   }
 
@@ -1114,6 +1166,8 @@ export function createCustomerView(container) {
       agreements: await store.listAgreements({ siteId: site.id }, { actor: session }),
       // 7단계 — 본인 업장의 공개된 추가 작업 안내만(서버가 걸러서 넘깁니다).
       issues: await store.listIssues({ siteId: site.id }, { actor: session }).catch(() => []),
+      // 9단계 — 본인 업장의 청구 · 입금 · 세금계산서 발행 여부만(금액 · 상태만).
+      invoices: await store.listInvoices({ siteId: site.id }, { actor: session }).catch(() => []),
     };
     if (!['quote', 'contract', 'manage'].includes(state.roomTab)) state.roomTab = 'manage';
     if (token !== renderToken) return;
@@ -1167,6 +1221,8 @@ export function createCustomerView(container) {
       quotes: session.role === 'admin' ? await store.listQuotes({ siteId: site.id }) : [],
       agreements: session.role === 'admin' ? await store.listAgreements({ siteId: site.id }) : [],
       issues: session.role === 'admin' ? await store.listIssues({ siteId: site.id }, { actor: session }).catch(() => []) : [],
+      // 9단계 — 청구 금액은 대표만. 팀장 미리보기에는 넘기지 않습니다.
+      invoices: session.role === 'admin' ? await store.listInvoices({ siteId: site.id }, { actor: session }).catch(() => []) : [],
     };
 
     const viewer = {

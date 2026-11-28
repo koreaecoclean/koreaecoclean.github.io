@@ -24,7 +24,7 @@ import {
   openLightbox,
   modeSwitchTemplate,
 } from '../ui.js';
-import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, reportStatusKey, reportNoOf, canUseSupply, MAX_BASELINE_PHOTOS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, HANDOVER_ACCESS_TYPES, SCHEDULE_STATUS, SCHEDULE_DAYS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, scheduleDayText, scheduleTimeText, durationText, monthGrid, entriesByDate, CALENDAR_WEEKDAYS, ISSUE_STATUS, issueTitleOf, issueStatusKey } from '../store.js';
+import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, reportStatusKey, reportNoOf, canUseSupply, MAX_BASELINE_PHOTOS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, HANDOVER_ACCESS_TYPES, SCHEDULE_STATUS, SCHEDULE_DAYS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, scheduleDayText, scheduleTimeText, durationText, monthGrid, entriesByDate, CALENDAR_WEEKDAYS, ISSUE_STATUS, issueTitleOf, issueStatusKey, PAYOUT_STATUS, billingMonthLabel } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
 import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
@@ -442,6 +442,8 @@ export function createLeaderView(container) {
     // 7단계 — 이 업장의 특이사항 · 현장에서 직접 등록하는 입력값
     siteIssues: [],
     issueDraft: { note: '', photos: [] },
+    // 9단계 — 이 업장의 내 도급 정산(본인 것만)
+    sitePayouts: [],
   };
   const sampleCursor = { security: 0, cleaning: 0, issue: 0 };
   let mounted = false;
@@ -1135,6 +1137,49 @@ export function createLeaderView(container) {
           <dd>내 도급계약서 확인</dd>
         </dl>
         <p class="hint">고객과의 계약 조건은 이 화면에 나오지 않습니다. 문의는 대표에게 해 주세요.</p>
+      </section>`;
+  }
+
+  /* ---------------- 9단계 — 내 도급 정산 (본인 것만) ---------------- */
+
+  /**
+   * 이 업장에서 정해진 **본인 도급 정산** 내역 — 금액 · 지급일 · 지급 여부만 봅니다.
+   * 고객 청구 금액 · 다른 팀장 정산 · 회사 내부 조건은 나오지 않습니다.
+   */
+  function payoutPanelTemplate(site, session) {
+    if (!session || session.role !== 'leader') return '';
+    if (session.account && session.account.canManageStaff) return '';
+    if (/본부장/.test(session.title || '')) return '';
+    const rows = state.sitePayouts || [];
+    const paid = rows.filter((row) => row.status === 'paid').length;
+    return `
+      <section class="panel staff-pay-card staff-payout" data-site-payouts="${esc(site.id)}">
+        <div class="section-head">
+          <h2>내 도급 정산</h2>
+          <p>${rows.length ? `${rows.length}건${paid ? ` · 지급 ${paid}건` : ''}` : '내역 없음'}</p>
+        </div>
+        ${
+          rows.length
+            ? `<div class="payout-list">${rows
+                .slice(0, 12)
+                .map((row) => {
+                  const meta = PAYOUT_STATUS[row.status] || PAYOUT_STATUS.scheduled;
+                  return `
+                    <div class="payout-row" data-payout-row="${esc(row.id)}" data-payout-status="${esc(row.status)}">
+                      <div class="payout-row__body">
+                        <strong>${esc(row.monthLabel || billingMonthLabel(row.month))}</strong>
+                        <span>${esc(row.payoutNo)}${row.dueDate ? ` · 지급일 ${esc(fmtDateLong(row.dueDate))}` : ''}${row.status === 'paid' && row.paidAt ? ` · 지급 ${esc(fmtDateLong(row.paidAt))}` : ''}</span>
+                      </div>
+                      <div class="payout-row__right">
+                        <strong>${esc(wonText(row.total))}</strong>
+                        <span class="badge ${meta.badge}">${esc(row.statusLabel || meta.label)}</span>
+                      </div>
+                    </div>`;
+                })
+                .join('')}</div>`
+            : '<p class="tiny muted">아직 정산 내역이 없습니다. 대표가 정산을 만들면 이곳에 표시됩니다.</p>'
+        }
+        <p class="hint">이 업장에서 정해진 내 도급 정산만 보입니다. 고객 청구 금액 · 다른 팀장 정산은 표시되지 않습니다.</p>
       </section>`;
   }
 
@@ -1837,6 +1882,8 @@ export function createLeaderView(container) {
 
       ${staffPayTemplate(site, session)}
 
+      ${payoutPanelTemplate(site, session)}
+
       ${handoverCardTemplate(site)}
 
       ${
@@ -2388,6 +2435,8 @@ export function createLeaderView(container) {
       state.teamLeadId = '';
       state.schedule = { entries: [], days: [], summary: {}, today: '' };
       state.visitForm = { siteId: '', kind: 'arrive', reason: 'indoor', note: '', error: '' };
+      state.siteIssues = [];
+      state.sitePayouts = [];
       closeBaselineSheet();
       container.innerHTML = gateTemplate();
       return;
@@ -2507,6 +2556,8 @@ export function createLeaderView(container) {
       : [];
     // 7단계 — 이 업장의 특이사항(본인 업장 · 진행 상태만, 금액 없음).
     state.siteIssues = await store.listIssues({ siteId: site.id }, { actor: state.session }).catch(() => []);
+    // 9단계 — 이 업장의 내 도급 정산(본인 것만 · 금액 있음, 고객 청구 금액 없음).
+    state.sitePayouts = await store.listPayouts({ siteId: site.id }, { actor: state.session }).catch(() => []);
 
 
     container.innerHTML = formTemplate(state.session, site);

@@ -7,7 +7,7 @@
  */
 
 import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate, fmtDateLong, fmtTime, openLightbox, modeSwitchTemplate } from '../ui.js';
-import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, reportNoOf, countReportPhotos, reportStatusKey, monthGrid, entriesByDate, CALENDAR_WEEKDAYS, QUOTE_STATUS, AGREEMENT_STATUS, SURVEY_PHOTO_AREAS, QUOTE_TEAM_SIZES, QUOTE_DIFFICULTIES, parsePyeong, estimateQuote, handoverPhotoCatalog, HANDOVER_ACCESS_TYPES, HANDOVER_CHECK_KEYS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, SCHEDULE_DAYS, SCHEDULE_STATUS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, DEFAULT_GPS_RADIUS_M, siteSchedule, scheduleDayText, scheduleTimeText, visitWorkOf, clockOfISO, clockLabel, ISSUE_STATUS, issueStatus, issueStatusKey, issueTitleOf, issueStats, isIssueOpen, isExtraQuote } from '../store.js';
+import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, reportNoOf, countReportPhotos, reportStatusKey, monthGrid, entriesByDate, CALENDAR_WEEKDAYS, QUOTE_STATUS, AGREEMENT_STATUS, SURVEY_PHOTO_AREAS, QUOTE_TEAM_SIZES, QUOTE_DIFFICULTIES, parsePyeong, estimateQuote, handoverPhotoCatalog, HANDOVER_ACCESS_TYPES, HANDOVER_CHECK_KEYS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, SCHEDULE_DAYS, SCHEDULE_STATUS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, DEFAULT_GPS_RADIUS_M, siteSchedule, scheduleDayText, scheduleTimeText, visitWorkOf, clockOfISO, clockLabel, ISSUE_STATUS, issueStatus, issueStatusKey, issueTitleOf, issueStats, isIssueOpen, isExtraQuote, INVOICE_STATUS, INVOICE_STATUS_ORDER, TAX_INVOICE_STATUS, PAYOUT_STATUS, billingMonthKey, billingMonthLabel, shiftBillingMonth, invoiceStatusKey, invoiceStats, payoutStats, payoutStatusKey } from '../store.js';
 import { openReportSheet } from './report-sheet.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import { preparePhoto } from '../photos.js';
@@ -120,6 +120,8 @@ export function createAdminView(container) {  const state = {
     calendarDate: '',
     // 7단계 — 특이사항 · 추가 영업 (처리/보류 사유 입력 상자)
     issueClose: null,
+    // 9단계 — 청구 · 입금 · 미수금 · 도급 정산
+    billing: { month: '', filter: '', open: '', extraQuoteId: '' },
   };
   let mounted = false;
   let renderToken = 0;
@@ -363,8 +365,9 @@ export function createAdminView(container) {  const state = {
 
   /* ---------------- contract · field ops (admin only) ---------------- */
 
-  function revenueSummaryTemplate(summary) {
+  function revenueSummaryTemplate(summary, billing = null) {
     const { rows, totals } = summary;
+    const bill = billing || null;
     return `
       <section class="panel rev-panel" data-revenue-summary>
         <div class="section-head">
@@ -377,6 +380,21 @@ export function createAdminView(container) {  const state = {
           <div><span>수수료 합계</span><strong data-revenue-total="feeAmount">${esc(fmtWon(totals.feeAmount))}</strong></div>
           <div class="rev-totals__net"><span>순수 매출금 합계</span><strong data-revenue-total="netProfit">${esc(fmtWon(totals.netProfit))}</strong></div>
         </div>
+        ${
+          bill
+            ? `<p class="details-head" style="margin:14px 0 6px">${esc(bill.monthLabel)} — 계약 매출 · 청구 · 입금 · 미수금</p>
+               <div class="rev-totals rev-totals--billing" data-revenue-billing>
+                 <div><span>계약 매출 (월)</span><strong data-revenue-billing="contract">${esc(fmtWon(bill.contractMonthly))}</strong></div>
+                 <div><span>청구 합계</span><strong data-revenue-billing="invoiced">${esc(fmtWon(bill.invoicedTotal))}</strong></div>
+                 <div><span>입금 완료</span><strong data-revenue-billing="paid">${esc(fmtWon(bill.paidTotal))}</strong></div>
+                 <div class="rev-totals__unpaid"><span>미수금</span><strong data-revenue-billing="unpaid">${esc(fmtWon(bill.unpaidTotal))}</strong></div>
+               </div>
+               <p class="hint" style="margin-top:8px">
+                 계약 매출은 월 계약금, 청구 합계는 이 달 내보낸 청구서(예정 제외), 입금 완료는 실입금, 미수금은 납기 지난 금액과 아직 안 받은 금액입니다.
+                 건별 처리는 아래 <strong>「청구 · 입금 · 미수금」</strong>에서 합니다.
+               </p>`
+            : ''
+        }
         <div class="rev-table">
           <div class="rev-row rev-row--head" role="row">
             <span>고객사 · 현장</span><span>계약금</span><span>도급액</span><span>수수료</span><span>순수 매출</span>
@@ -1184,8 +1202,465 @@ export function createAdminView(container) {  const state = {
       </section>`;
   }
 
-  async function findIssue(siteId, issueId) {
-    const rows = await store.listIssues({ siteId }, { actor: state.session });
+  /* ---------------- 9단계 — 청구 · 입금 · 미수금 · 도급 정산 (기획서 22·23장) ---------------- */
+
+  function billingFilterRows(rows, filter) {
+    const list = Array.isArray(rows) ? rows : [];
+    if (filter === 'unpaid') return list.filter((row) => row.status === 'billed' || row.status === 'overdue');
+    if (filter === 'overdue') return list.filter((row) => row.status === 'overdue');
+    if (filter === 'scheduled') return list.filter((row) => row.status === 'scheduled');
+    if (filter === 'paid') return list.filter((row) => row.status === 'paid');
+    return list;
+  }
+
+  /** 청구 한 건 — 금액 · 납기 · 세금계산서 · 상태, 바로 처리 버튼. */
+  function invoiceCardTemplate(invoice) {
+    const key = invoice.status || invoiceStatusKey(invoice);
+    const meta = INVOICE_STATUS[key] || INVOICE_STATUS.scheduled;
+    const paidLine = key === 'paid' && invoice.paidAt
+      ? ` · 입금 ${fmtDateLong(invoice.paidAt)}${invoice.paidAmount && invoice.paidAmount !== invoice.total ? ` (${fmtWon(invoice.paidAmount)})` : ''}`
+      : '';
+    const taxLine = invoice.taxInvoice === 'issued'
+      ? ` · 세금계산서 발행${invoice.taxIssuedAt ? ` ${String(invoice.taxIssuedAt).slice(0, 10)}` : ''}`
+      : ' · 세금계산서 미발행';
+    const buttons = [];
+    buttons.push(
+      `<button class="btn btn--quiet btn--sm" type="button" data-billing-tax="${esc(invoice.id)}" data-billing-site="${esc(invoice.siteId)}">${invoice.taxInvoice === 'issued' ? '발행 취소' : '세금계산서 발행'}</button>`,
+    );
+    if (key === 'scheduled') {
+      buttons.push(`<button class="btn btn--primary btn--sm" type="button" data-billing-billed="${esc(invoice.id)}" data-billing-site="${esc(invoice.siteId)}">청구 완료</button>`);
+    }
+    if (key === 'billed' || key === 'overdue') {
+      buttons.push(`<button class="btn btn--primary btn--sm" type="button" data-billing-paid="${esc(invoice.id)}" data-billing-site="${esc(invoice.siteId)}">입금 완료</button>`);
+    }
+    const open = state.billing.open === invoice.id;
+    return `
+      <article class="billing-card billing-card--${esc(key)}" data-invoice-card="${esc(invoice.id)}" data-invoice-site="${esc(invoice.siteId)}" data-invoice-status="${esc(key)}">
+        <div class="billing-card__head">
+          <div>
+            <strong>${esc(invoice.siteName || '')}</strong>
+            <span>${esc(invoice.invoiceNo)} · ${esc(invoice.kindLabel || '')}${invoice.title ? ` · ${esc(invoice.title)}` : ''}</span>
+          </div>
+          <span class="badge ${meta.badge}" data-invoice-badge>${esc(invoice.statusLabel || meta.label)}</span>
+        </div>
+        <div class="billing-card__money">
+          <span>공급가 <strong>${esc(fmtNumber(invoice.amount))}</strong></span>
+          <span>부가세 <strong>${esc(fmtNumber(invoice.vat))}</strong></span>
+          <span class="billing-card__total">합계 <strong>${esc(fmtWon(invoice.total))}</strong></span>
+        </div>
+        <p class="tiny muted">
+          납기 ${invoice.dueDate ? esc(fmtDateLong(invoice.dueDate)) : '미정'}${esc(taxLine)}${esc(paidLine)}
+          ${key === 'overdue' ? '<span class="billing-card__late"> · 납기 지남</span>' : ''}
+        </p>
+        <div class="btn-row">${buttons.join('')}</div>
+        ${
+          key === 'paid'
+            ? ''
+            : `<div class="billing-edit">
+                 <button class="link-btn" type="button" data-billing-open="${esc(invoice.id)}">${open ? '닫기' : '금액 · 납기 수정'}</button>
+                 ${
+                   open
+                     ? `<div class="billing-edit__box" data-billing-edit="${esc(invoice.id)}">
+                          <div class="field-row">
+                            <div class="field"><label>공급가(원)</label><input class="input" type="number" inputmode="numeric" min="0" step="1000" data-billing-amount value="${esc(invoice.amount)}"></div>
+                            <div class="field"><label>부가세(원)</label><input class="input" type="number" inputmode="numeric" min="0" step="1000" data-billing-vat value="${esc(invoice.vat)}"></div>
+                          </div>
+                          <div class="field"><label>납기일</label><input class="input" type="date" data-billing-due value="${esc(invoice.dueDate || '')}"></div>
+                          <div class="btn-row">
+                            <button class="btn btn--primary btn--sm" type="button" data-billing-save="${esc(invoice.id)}" data-billing-site="${esc(invoice.siteId)}">저장</button>
+                            ${key === 'scheduled' ? `<button class="btn btn--quiet btn--sm" type="button" data-billing-cancel="${esc(invoice.id)}" data-billing-site="${esc(invoice.siteId)}">청구 취소</button>` : ''}
+                          </div>
+                        </div>`
+                     : ''
+                 }
+               </div>`
+        }
+        ${
+          invoice.history && invoice.history.length
+            ? `<details class="billing-history"><summary>이력 ${invoice.history.length}건</summary><ul>${invoice.history
+                .slice(0, 5)
+                .map((row) => `<li><strong>${esc(row.action)}</strong>${row.actor ? ` · ${esc(row.actor)}` : ''}${row.note ? ` · ${esc(row.note)}` : ''}</li>`)
+                .join('')}</ul></details>`
+            : ''
+        }
+      </article>`;
+  }
+
+  /** 고객이 승인했지만 아직 청구하지 않은 추가 작업 — 그 달 추가 청구로 만듭니다. */
+  function extraInvoicePickerTemplate({ quotes, invoices, month }) {
+    const billed = new Set((invoices || []).map((row) => row.quoteId).filter(Boolean));
+    const rows = (quotes || []).filter(
+      (quote) => isExtraQuote(quote) && quote.customerDecision === 'approved' && !billed.has(quote.id),
+    );
+    if (!rows.length) return '';
+    const picked = state.billing.extraQuoteId || (rows[0] && rows[0].id) || '';
+    const target = rows.find((quote) => quote.id === picked) || rows[0];
+    return `
+      <div class="billing-extra" data-billing-extra>
+        <p class="details-head">추가 작업 청구 만들기</p>
+        <p class="tiny muted">고객이 승인한 추가 작업 견적을 그 달 청구로 올립니다. 금액은 견적 금액이며, 필요하면 고쳐서 저장할 수 있습니다.</p>
+        <div class="field">
+          <label for="billing-extra-quote">추가 작업 견적</label>
+          <select class="input" id="billing-extra-quote" data-billing-extra-quote>
+            ${rows
+              .map(
+                (quote) => `<option value="${esc(quote.id)}"${quote.id === picked ? ' selected' : ''}>${esc(
+                  `${quote.no} · ${quote.clientCompany || ''} · ${fmtWon(quote.amount)}`,
+                )}</option>`,
+              )
+              .join('')}
+          </select>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="billing-extra-amount">청구 금액(공급가)</label><input class="input" id="billing-extra-amount" type="number" inputmode="numeric" min="0" step="1000" data-billing-extra-amount value="${esc(target ? target.amount : '')}"></div>
+        </div>
+        <button class="btn btn--quiet btn--sm" type="button" data-billing-extra-create>${esc(billingMonthLabel(month))} 추가 청구 만들기</button>
+      </div>`;
+  }
+
+  function billingPanelTemplate({ summary, invoices, payouts, quotes, sites }) {
+    const month = summary.month;
+    const rows = billingFilterRows(invoices, state.billing.filter);
+    const stats = invoiceStats(invoices);
+    const filters = [
+      { key: '', label: `전체 ${invoices.length}` },
+      { key: 'unpaid', label: `미수 · 연체 ${stats.billed + stats.overdue}` },
+      { key: 'billed', label: `청구 ${stats.billed}` },
+      { key: 'scheduled', label: `예정 ${stats.scheduled}` },
+      { key: 'paid', label: `입금 ${stats.paid}` },
+    ];
+    const withAmount = (sites || []).filter((site) => site.contract && site.contract.contractAmount > 0).length;
+    return `
+      <section class="panel billing-panel" data-billing-panel>
+        <div class="section-head">
+          <h2>청구 · 입금 · 미수금</h2>
+          <p>${esc(summary.monthLabel)}</p>
+        </div>
+        <div class="billing-month">
+          <button class="link-btn" type="button" data-billing-month="prev">‹ ${esc(billingMonthLabel(shiftBillingMonth(month, -1)))}</button>
+          <strong>${esc(summary.monthLabel)}</strong>
+          <button class="link-btn" type="button" data-billing-month="next">${esc(billingMonthLabel(shiftBillingMonth(month, 1)))} ›</button>
+        </div>
+        <div class="billing-totals">
+          <div><span>계약 매출 (월)</span><strong data-billing-total="contract">${esc(fmtWon(summary.contractMonthly))}</strong></div>
+          <div><span>청구 합계</span><strong data-billing-total="invoiced">${esc(fmtWon(summary.invoicedTotal))}</strong></div>
+          <div><span>입금 완료</span><strong data-billing-total="paid">${esc(fmtWon(summary.paidTotal))}</strong></div>
+          <div class="billing-totals__unpaid"><span>미수금</span><strong data-billing-total="unpaid">${esc(fmtWon(summary.unpaidTotal))}</strong></div>
+        </div>
+        <p class="tiny muted" style="margin:-4px 0 10px">
+          계약 매출은 이 달 월 계약금(${withAmount}곳), 청구 합계는 실제 내보낸 청구서(예정 제외)입니다.
+          ${summary.scheduledTotal ? `아직 청구 전인 예정 ${fmtWon(summary.scheduledTotal)}은 따로 잡혀 있습니다.` : ''}
+          ${summary.overdueTotal ? `납기가 지난 연체 ${fmtWon(summary.overdueTotal)}은 바로 아래에서 처리하세요.` : ''}
+          ${summary.taxPending ? `세금계산서 미발행 ${summary.taxPending}건.` : ''}
+        </p>
+        <div class="btn-row btn-row--stack billing-actions">
+          <button class="btn btn--primary btn--sm" type="button" data-billing-generate-invoices>이 달 청구 일괄 생성</button>
+          <button class="btn btn--quiet btn--sm" type="button" data-billing-generate-payouts>이 달 도급 정산 생성</button>
+        </div>
+        <p class="tiny muted billing-actions__hint">일괄 생성은 업장 계약의 월 계약금 · 청구일 · 도급금액을 그대로 씁니다. 이미 만든 달은 건너뜁니다.</p>
+        <div class="chips billing-filters">
+          ${filters
+            .map(
+              (filter) => `<button class="chip" type="button" data-billing-filter="${esc(filter.key)}" aria-pressed="${state.billing.filter === filter.key}">${esc(filter.label)}</button>`,
+            )
+            .join('')}
+        </div>
+        ${rows.length ? `<div class="stack-10" data-billing-list>${rows.map(invoiceCardTemplate).join('')}</div>` : '<p class="tiny muted">이 달 청구가 없습니다. [이 달 청구 일괄 생성]을 눌러 계약에서 만들어 보세요.</p>'}
+        ${extraInvoicePickerTemplate({ quotes, invoices, month })}
+      </section>`;
+  }
+
+  /** 팀장 도급 정산 — 업장별 한 줄, [지급 완료]로 실지급일 · 메모를 남깁니다. */
+  function payoutCardTemplate(payout) {
+    const key = payoutStatusKey(payout);
+    const meta = PAYOUT_STATUS[key] || PAYOUT_STATUS.scheduled;
+    return `
+      <article class="billing-card payout-card" data-payout-card="${esc(payout.id)}" data-payout-site="${esc(payout.siteId)}" data-payout-status="${esc(key)}">
+        <div class="billing-card__head">
+          <div>
+            <strong>${esc(payout.leaderName || '팀장 미정')}</strong>
+            <span>${esc(payout.payoutNo)} · ${esc(payout.siteName || '')}</span>
+          </div>
+          <span class="badge ${meta.badge}" data-payout-badge>${esc(payout.statusLabel || meta.label)}</span>
+        </div>
+        <div class="billing-card__money">
+          <span>도급액 <strong>${esc(fmtNumber(payout.amount))}</strong></span>
+          <span>부가세 <strong>${esc(fmtNumber(payout.vat))}</strong></span>
+          <span class="billing-card__total">지급액 <strong>${esc(fmtWon(payout.total))}</strong></span>
+        </div>
+        <p class="tiny muted">지급일 ${payout.dueDate ? esc(fmtDateLong(payout.dueDate)) : '미정'}${key === 'paid' && payout.paidAt ? ` · 지급 ${esc(fmtDateLong(payout.paidAt))}` : ''}${payout.note ? ` · ${esc(payout.note)}` : ''}</p>
+        ${key === 'paid' ? '' : `<div class="btn-row"><button class="btn btn--primary btn--sm" type="button" data-payout-paid="${esc(payout.id)}" data-payout-site="${esc(payout.siteId)}">지급 완료</button></div>`}
+      </article>`;
+  }
+
+  function payoutPanelTemplate({ payouts }) {
+    const stats = payoutStats(payouts);
+    const mine = sortByLeader(payouts);
+    return `
+      <section class="panel payout-panel" data-payout-panel>
+        <div class="section-head">
+          <h2>팀장 도급 정산</h2>
+          <p>${stats.scheduledCount ? `정산 예정 ${stats.scheduledCount}건` : '정산 예정 없음'}${stats.paidCount ? ` · 지급 완료 ${stats.paidCount}건` : ''}</p>
+        </div>
+        <div class="billing-totals">
+          <div><span>정산 예정</span><strong data-payout-total="scheduled">${esc(fmtWon(stats.scheduled))}</strong></div>
+          <div><span>지급 완료</span><strong data-payout-total="paid">${esc(fmtWon(stats.paid))}</strong></div>
+        </div>
+        <p class="tiny muted" style="margin:-4px 0 10px">업장 도급금액과 팀장 도급계약서 지급일(익월 15일)로 만듭니다. 부가세는 도급액의 10%로 잡혀 있습니다.</p>
+        ${mine.length ? `<div class="stack-10" data-payout-list>${mine.map(payoutCardTemplate).join('')}</div>` : '<p class="tiny muted">이 달 도급 정산이 없습니다. [이 달 도급 정산 생성]을 눌러 만들어 보세요.</p>'}
+      </section>`;
+  }
+
+  /** 정산 목록을 팀장별로 묶어 보여 줍니다(이름 → 지급일 순). */
+  function sortByLeader(payouts) {
+    const rows = Array.isArray(payouts) ? payouts.slice() : [];
+    return rows.sort((a, b) => {
+      const byName = String(a.leaderName || '').localeCompare(String(b.leaderName || ''), 'ko');
+      if (byName) return byName;
+      return String(a.dueDate || '').localeCompare(String(b.dueDate || ''));
+    });
+  }
+
+  async function generateInvoicesForMonth(button) {
+    if (state.busy) return;
+    const month = billingMonthKey(state.billing.month || '');
+    state.busy = true;
+    setBusy(button, true, '만드는 중…');
+    try {
+      const result = await store.generateMonthlyInvoices({
+        month,
+        by: state.session ? state.session.name : '',
+        actor: state.session,
+      });
+      await render();
+      toast(
+        result.created
+          ? `${billingMonthLabel(month)} 청구 ${result.created}건을 만들었습니다.${result.missing ? ` 계약금 미등록 ${result.missing}곳은 건너뛰었습니다.` : ''}`
+          : `새로 만들 청구가 없습니다.${result.skipped ? ` 이미 ${result.skipped}건이 있습니다.` : ''}${result.missing ? ` 계약금 미등록 ${result.missing}곳.` : ''}`,
+        { duration: 8000 },
+      );
+    } catch (error) {
+      toast(error.message || '청구를 만들지 못했습니다.', { tone: 'error' });
+    } finally {
+      state.busy = false;
+      setBusy(button, false);
+    }
+  }
+
+  async function generatePayoutsForMonth(button) {
+    if (state.busy) return;
+    const month = billingMonthKey(state.billing.month || '');
+    state.busy = true;
+    setBusy(button, true, '만드는 중…');
+    try {
+      const result = await store.generateMonthlyPayouts({
+        month,
+        by: state.session ? state.session.name : '',
+        actor: state.session,
+      });
+      await render();
+      toast(
+        result.created
+          ? `${billingMonthLabel(month)} 팀장 도급 정산 ${result.created}건을 만들었습니다.${result.missing ? ` 담당 팀장 · 도급금액이 없는 ${result.missing}곳은 건너뛰었습니다.` : ''}`
+          : `새로 만들 정산이 없습니다.${result.skipped ? ` 이미 ${result.skipped}건이 있습니다.` : ''}`,
+        { duration: 8000 },
+      );
+    } catch (error) {
+      toast(error.message || '도급 정산을 만들지 못했습니다.', { tone: 'error' });
+    } finally {
+      state.busy = false;
+      setBusy(button, false);
+    }
+  }
+
+  async function toggleInvoiceTax(card, button) {
+    const siteId = button.dataset.billingSite;
+    const invoiceId = button.dataset.billingTax;
+    const invoice = await store.getInvoice(siteId, invoiceId, { actor: state.session });
+    if (!invoice) return;
+    const issuing = invoice.taxInvoice !== 'issued';
+    const ok = await confirmDialog({
+      title: issuing ? '세금계산서를 발행했나요?' : '세금계산서 발행을 취소할까요?',
+      message: `${invoice.invoiceNo} · ${invoice.siteName || ''} · ${fmtWon(invoice.total)}\n${issuing ? '발행일을 오늘로 기록합니다. 실제 발행(홈택스 등)은 직접 하셔야 합니다.' : '발행 기록을 미발행으로 되돌립니다.'}`,
+      confirmLabel: issuing ? '발행 완료로 기록' : '취소로 기록',
+      tone: issuing ? 'default' : 'danger',
+    });
+    if (!ok) return;
+    setBusy(button, true, '기록 중…');
+    try {
+      await store.setInvoiceTaxInvoice(siteId, invoiceId, {
+        issued: issuing,
+        by: state.session ? state.session.name : '',
+        actor: state.session,
+      });
+      await render();
+      toast(issuing ? '세금계산서 발행으로 기록했습니다.' : '세금계산서 미발행으로 되돌렸습니다.');
+    } catch (error) {
+      toast(error.message || '세금계산서 상태를 바꾸지 못했습니다.', { tone: 'error' });
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function markInvoiceBilledFromCard(button) {
+    const siteId = button.dataset.billingSite;
+    const invoiceId = button.dataset.billingBilled;
+    const invoice = await store.getInvoice(siteId, invoiceId, { actor: state.session });
+    if (!invoice) return;
+    const ok = await confirmDialog({
+      title: '청구 완료로 바꿀까요?',
+      message: `${invoice.invoiceNo} · ${invoice.siteName || ''} · ${fmtWon(invoice.total)}\n납기 ${invoice.dueDate || '미정'} · 납기가 지나면 자동으로 미수(연체)로 보입니다.`,
+      confirmLabel: '청구 완료',
+    });
+    if (!ok) return;
+    setBusy(button, true, '처리 중…');
+    try {
+      await store.markInvoiceBilled(siteId, invoiceId, { by: state.session ? state.session.name : '', actor: state.session });
+      await render();
+      toast('청구 완료로 기록했습니다. 입금되면 [입금 완료]를 눌러 주세요.');
+    } catch (error) {
+      toast(error.message || '청구 완료로 바꾸지 못했습니다.', { tone: 'error' });
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function markInvoicePaidFromCard(button) {
+    const siteId = button.dataset.billingSite;
+    const invoiceId = button.dataset.billingPaid;
+    const invoice = await store.getInvoice(siteId, invoiceId, { actor: state.session });
+    if (!invoice) return;
+    const ok = await confirmDialog({
+      title: '입금 완료로 처리할까요?',
+      message: `${invoice.invoiceNo} · ${invoice.siteName || ''} · ${fmtWon(invoice.total)}\n오늘(${fmtDateLong(toISODate())}) 입금으로 기록합니다. 일부만 받았다면 [금액 · 납기 수정]에서 금액을 맞춘 뒤 처리해 주세요.`,
+      confirmLabel: '입금 완료',
+    });
+    if (!ok) return;
+    setBusy(button, true, '처리 중…');
+    try {
+      await store.markInvoicePaid(siteId, invoiceId, {
+        paidAt: toISODate(),
+        by: state.session ? state.session.name : '',
+        actor: state.session,
+      });
+      await render();
+      toast('입금 완료로 기록했습니다.');
+    } catch (error) {
+      toast(error.message || '입금 완료로 처리하지 못했습니다.', { tone: 'error' });
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function saveInvoiceFromCard(button) {
+    const siteId = button.dataset.billingSite;
+    const invoiceId = button.dataset.billingSave;
+    const box = $(`[data-billing-edit="${invoiceId}"]`, container);
+    if (!box) return;
+    const amount = $('[data-billing-amount]', box);
+    const vat = $('[data-billing-vat]', box);
+    const due = $('[data-billing-due]', box);
+    setBusy(button, true, '저장 중…');
+    try {
+      await store.updateInvoice(siteId, invoiceId, {
+        amount: amount ? amount.value : null,
+        vat: vat ? vat.value : null,
+        dueDate: due ? due.value : null,
+        by: state.session ? state.session.name : '',
+        actor: state.session,
+      });
+      state.billing.open = '';
+      await render();
+      toast('청구 금액 · 납기를 저장했습니다.');
+    } catch (error) {
+      toast(error.message || '청구를 저장하지 못했습니다.', { tone: 'error' });
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function cancelInvoiceFromCard(button) {
+    const siteId = button.dataset.billingSite;
+    const invoiceId = button.dataset.billingCancel;
+    const ok = await confirmDialog({
+      title: '이 예정 청구를 취소할까요?',
+      message: '아직 청구하지 않은 예정 청구만 취소할 수 있습니다. 취소 기록은 업장 이력에 남습니다.',
+      confirmLabel: '청구 취소',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setBusy(button, true, '취소 중…');
+    try {
+      await store.cancelInvoice(siteId, invoiceId, { by: state.session ? state.session.name : '', actor: state.session });
+      await render();
+      toast('예정 청구를 취소했습니다.');
+    } catch (error) {
+      toast(error.message || '청구를 취소하지 못했습니다.', { tone: 'error' });
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function createExtraInvoiceFromForm(button) {
+    const select = $('[data-billing-extra-quote]', container);
+    const input = $('[data-billing-extra-amount]', container);
+    const quoteId = select ? select.value : '';
+    if (!quoteId) {
+      toast('추가 작업 견적을 고르세요.', { tone: 'error' });
+      return;
+    }
+    const quote = await store.getQuote(quoteId, { actor: state.session });
+    if (!quote || !quote.siteId) {
+      toast('견적에 연결된 업장을 찾을 수 없습니다.', { tone: 'error' });
+      return;
+    }
+    setBusy(button, true, '만드는 중…');
+    try {
+      const invoice = await store.createExtraInvoice(quote.siteId, {
+        quoteId,
+        month: state.billing.month || billingMonthKey(''),
+        amount: input ? input.value : null,
+        by: state.session ? state.session.name : '',
+        actor: state.session,
+      });
+      await render();
+      toast(`${invoice.invoiceNo} 추가 작업 청구를 만들었습니다. 금액을 확인하고 [청구 완료]를 눌러 주세요.`, { duration: 8000 });
+    } catch (error) {
+      toast(error.message || '추가 작업 청구를 만들지 못했습니다.', { tone: 'error' });
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function markPayoutPaidFromCard(button) {
+    const siteId = button.dataset.payoutSite;
+    const payoutId = button.dataset.payoutPaid;
+    const rows = await store.listPayouts({ siteId }, { actor: state.session });
+    const payout = rows.find((row) => row.id === payoutId);
+    if (!payout) return;
+    const ok = await confirmDialog({
+      title: '도급 지급 완료로 기록할까요?',
+      message: `${payout.payoutNo} · ${payout.leaderName || ''} · ${payout.siteName || ''} · ${fmtWon(payout.total)}\n오늘(${fmtDateLong(toISODate())}) 지급으로 기록합니다. 실제 이체는 직접 하셔야 합니다.`,
+      confirmLabel: '지급 완료',
+    });
+    if (!ok) return;
+    setBusy(button, true, '기록 중…');
+    try {
+      await store.markPayoutPaid(siteId, payoutId, {
+        paidAt: toISODate(),
+        by: state.session ? state.session.name : '',
+        actor: state.session,
+      });
+      await render();
+      toast(`${payout.leaderName || '팀장'} 도급 지급 완료로 기록했습니다.`);
+    } catch (error) {
+      toast(error.message || '도급 지급 완료로 기록하지 못했습니다.', { tone: 'error' });
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function findIssue(siteId, issueId) {    const rows = await store.listIssues({ siteId }, { actor: state.session });
     return rows.find((row) => row.id === issueId) || null;
   }
 
@@ -2379,6 +2854,12 @@ export function createAdminView(container) {  const state = {
     const customers = accounts.filter((account) => account.role === 'customer');
     const grants = await store.listGrants({}, actor);
     const revenue = await store.revenueSummary(actor);
+    // 9단계 — 이 달 청구 · 입금 · 미수금 · 도급 정산 (업장 안 invoices[] · payouts[])
+    const billingMonth = billingMonthKey(state.billing.month || '');
+    state.billing.month = billingMonth;
+    const billing = await store.billingSummary({ month: billingMonth }, { actor: session });
+    const invoices = await store.listInvoices({ month: billingMonth }, { actor: session });
+    const payouts = await store.listPayouts({ month: billingMonth }, { actor: session });
     const quotes = await store.listQuotes({}, actor);
     const agreements = await store.listAgreements({}, actor);
     const staffContracts = await store.listStaffContracts({}, actor);
@@ -2441,7 +2922,11 @@ export function createAdminView(container) {  const state = {
 
       ${scheduleSettingsTemplate(sites, schedule)}
 
-      ${revenueSummaryTemplate(revenue)}
+      ${revenueSummaryTemplate(revenue, billing)}
+
+      ${billingPanelTemplate({ summary: billing, invoices, payouts, quotes, sites })}
+
+      ${payoutPanelTemplate({ payouts })}
 
       ${surveyPanelTemplate({
         sites,
@@ -2995,6 +3480,14 @@ export function createAdminView(container) {  const state = {
   }
 
   async function onChange(event) {
+    if (event.target.matches('[data-billing-extra-quote]')) {
+      // 추가 작업 견적을 바꾸면 금액 칸을 그 견적 금액으로 채웁니다(저장 전 확인용).
+      state.billing.extraQuoteId = event.target.value;
+      const quote = await store.getQuote(event.target.value, { actor: state.session }).catch(() => null);
+      const input = $('#billing-extra-amount', container);
+      if (input && quote) input.value = quote.amount;
+      return;
+    }
     if (event.target.id === 'sa-role') {
       const title = $('#sa-title', container);
       if (title) {
@@ -3650,6 +4143,89 @@ export function createAdminView(container) {  const state = {
     const issueCloseSave = event.target.closest('[data-issue-close-save]');
     if (issueCloseSave) {
       await completeIssueCard(issueCloseSave.dataset.issueSite, issueCloseSave.dataset.issueCloseSave, issueCloseSave);
+      return;
+    }
+
+    /* ---------------- 9단계 — 청구 · 입금 · 미수금 · 도급 정산 ---------------- */
+    const billMonth = event.target.closest('[data-billing-month]');
+    if (billMonth) {
+      state.billing.month = shiftBillingMonth(
+        state.billing.month || billingMonthKey(''),
+        billMonth.dataset.billingMonth === 'prev' ? -1 : 1,
+      );
+      state.billing.open = '';
+      await render();
+      const panel = $('[data-billing-panel]', container);
+      if (panel) panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      return;
+    }
+
+    const billFilter = event.target.closest('[data-billing-filter]');
+    if (billFilter) {
+      state.billing.filter = billFilter.dataset.billingFilter || '';
+      state.billing.open = '';
+      await render();
+      return;
+    }
+
+    const billOpen = event.target.closest('[data-billing-open]');
+    if (billOpen) {
+      state.billing.open = state.billing.open === billOpen.dataset.billingOpen ? '' : billOpen.dataset.billingOpen;
+      await render();
+      return;
+    }
+
+    const billGenerateInvoices = event.target.closest('[data-billing-generate-invoices]');
+    if (billGenerateInvoices) {
+      await generateInvoicesForMonth(billGenerateInvoices);
+      return;
+    }
+
+    const billGeneratePayouts = event.target.closest('[data-billing-generate-payouts]');
+    if (billGeneratePayouts) {
+      await generatePayoutsForMonth(billGeneratePayouts);
+      return;
+    }
+
+    const billTax = event.target.closest('[data-billing-tax]');
+    if (billTax) {
+      await toggleInvoiceTax(billTax.closest('[data-invoice-card]'), billTax);
+      return;
+    }
+
+    const billBilled = event.target.closest('[data-billing-billed]');
+    if (billBilled) {
+      await markInvoiceBilledFromCard(billBilled);
+      return;
+    }
+
+    const billPaid = event.target.closest('[data-billing-paid]');
+    if (billPaid) {
+      await markInvoicePaidFromCard(billPaid);
+      return;
+    }
+
+    const billSave = event.target.closest('[data-billing-save]');
+    if (billSave) {
+      await saveInvoiceFromCard(billSave);
+      return;
+    }
+
+    const billCancel = event.target.closest('[data-billing-cancel]');
+    if (billCancel) {
+      await cancelInvoiceFromCard(billCancel);
+      return;
+    }
+
+    const billExtraCreate = event.target.closest('[data-billing-extra-create]');
+    if (billExtraCreate) {
+      await createExtraInvoiceFromForm(billExtraCreate);
+      return;
+    }
+
+    const payoutPaid = event.target.closest('[data-payout-paid]');
+    if (payoutPaid) {
+      await markPayoutPaidFromCard(payoutPaid);
       return;
     }
 
