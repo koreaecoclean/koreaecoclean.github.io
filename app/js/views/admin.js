@@ -1191,7 +1191,7 @@ export function createAdminView(container) {  const state = {
       <details class="settings schedule-settings" data-schedule-settings>
         <summary>일정 · 위치 설정 (업장별)</summary>
         <div class="settings__body stack-10">
-          <p class="hint">청소 요일·시간을 비우면 업장의 청소 주기 · 매뉴얼에서 계산한 값이 쓰입니다. 좌표는 현장에 서서 [현재 위치로 좌표 등록]을 누르면 채워집니다.</p>
+          <p class="hint">저장한 적이 없으면 업장의 청소 주기 · 매뉴얼에서 계산한 값이 쓰입니다. 요일을 모두 비우고 저장하면 이 업장은 일정을 만들지 않습니다. 좌표는 현장에 서서 [현재 위치로 좌표 등록]을 누르면 채워집니다.</p>
           ${sites.map((site) => scheduleSiteFormTemplate(site, today)).join('')}
         </div>
       </details>`;
@@ -1219,7 +1219,7 @@ export function createAdminView(container) {  const state = {
     return `
       <section class="sched-site" data-schedule-site-box="${esc(site.id)}">
         <div class="sched-site__head">
-          <div><strong>${esc(site.name)}</strong><span class="tiny muted">${esc(site.code)} · ${esc(scheduleDayText(config.days))} ${esc(scheduleTimeText(config))}</span></div>
+          <div><strong>${esc(site.name)}</strong><span class="tiny muted">${esc(site.code)} · ${config.paused ? '일정 없음' : esc(scheduleDayText(config.days))} ${esc(scheduleTimeText(config))}</span></div>
           <span class="badge ${typeof config.lat === 'number' ? 'badge--done' : 'badge--wait'}" data-schedule-coord-badge="${esc(site.id)}">${typeof config.lat === 'number' ? `좌표 등록 · ${config.radiusM}m` : '좌표 미등록'}</span>
         </div>
         <form class="form" data-schedule-form="${esc(site.id)}" novalidate>

@@ -1232,6 +1232,8 @@ export function normalizeScheduleConfig(input) {
   const lng = numOrNull(source.lng, -180, 180);
   return {
     days: days.includes('daily') ? ['daily'] : orderScheduleDays(days),
+    // 요일을 모두 비우고 저장하면 그 업장은 일정을 만들지 않습니다(자동 계산값으로 되돌아가지 않음).
+    paused: !!source.paused,
     startTime: hhmm(source.startTime),
     endTime: hhmm(source.endTime),
     radiusM: Math.min(3000, Math.max(50, Math.round(Number(source.radiusM) || DEFAULT_GPS_RADIUS_M))),
@@ -1363,7 +1365,7 @@ export function siteSchedule(site) {
   );
   return {
     ...stored,
-    days: stored.days.length ? stored.days : derivedDays,
+    days: stored.paused ? [] : stored.days.length ? stored.days : derivedDays,
     startTime: stored.startTime || derivedTime.start,
     endTime: stored.endTime || derivedTime.end,
   };
@@ -4550,9 +4552,11 @@ export class Store {
     if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
     const source = patch && typeof patch === 'object' ? patch : {};
     const stored = normalizeScheduleConfig(site.schedule);
+    const explicitDays = Array.isArray(source.days);
     const merged = normalizeScheduleConfig({
       ...stored,
-      days: source.days !== undefined ? source.days : stored.days,
+      days: explicitDays ? source.days : stored.days,
+      paused: explicitDays ? source.days.length === 0 : stored.paused,
       startTime: source.startTime !== undefined ? source.startTime : stored.startTime,
       endTime: source.endTime !== undefined ? source.endTime : stored.endTime,
       radiusM: source.radiusM !== undefined ? source.radiusM : stored.radiusM,
@@ -4570,13 +4574,13 @@ export class Store {
     const after = siteSchedule({ ...site, schedule: merged });
     const changes = diffFields(
       {
-        days: scheduleDayText(before.days),
+        days: before.paused ? '일정 없음' : scheduleDayText(before.days),
         time: scheduleTimeText(before) || '미설정',
         radiusM: `${before.radiusM}m`,
         coordinates: typeof before.lat === 'number' ? `${before.lat}, ${before.lng}` : '미등록',
       },
       {
-        days: scheduleDayText(merged.days),
+        days: merged.paused ? '일정 없음' : scheduleDayText(merged.days),
         time: scheduleTimeText(merged) || '미설정',
         radiusM: `${merged.radiusM}m`,
         coordinates: typeof merged.lat === 'number' ? `${merged.lat}, ${merged.lng}` : '미등록',
@@ -4734,8 +4738,11 @@ export class Store {
     };
   }
 
-  /** 업장의 일정 변경 · 도착 기록 이력 — 대표 화면용. */
-  async listScheduleVisits(siteId, { limit = 20 } = {}) {
+  /** 업장의 일정 변경 · 도착 기록 이력 — 대표 화면용(좌표가 포함되므로 직원에게는 열지 않음). */
+  async listScheduleVisits(siteId, { limit = 20, actor = null } = {}) {
+    if (actor && !isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '현장 기록 상세는 대표(최고관리자)만 볼 수 있습니다.');
+    }
     const site = await this.getSite(siteId);
     if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
     return {
