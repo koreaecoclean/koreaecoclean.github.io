@@ -756,7 +756,38 @@ export function createCustomerView(container) {
       </section>`;
   }
 
-  function manageTabTemplate(site, stats, viewer) {
+  function visitScheduleTemplate(schedule) {
+    const entries = ((schedule && schedule.entries) || []).filter((entry) => entry.status !== 'off' || entry.changed);
+    const next = entries.slice(0, 12);
+    if (!schedule) return '';
+    const cls = (status) =>
+      status === 'done' ? 'badge--done' : status === 'active' ? 'badge--wait' : status === 'missed' ? 'badge--stop' : status === 'off' ? 'badge--stop' : 'badge';
+    return `
+      <section class="panel customer-schedule" data-customer-schedule>
+        <div class="section-head">
+          <div>
+            <h2>방문 일정</h2>
+            <p>앞으로 2주 · 정기 청소 일정</p>
+          </div>
+          <span class="badge">${next.length}회</span>
+        </div>
+        ${next.length
+          ? `<ul class="sched-customer">${next
+              .map(
+                (entry) => `<li data-customer-schedule-date="${esc(entry.date)}" data-customer-schedule-status="${esc(entry.status)}">
+                  <span class="sched-customer__date">${esc(fmtDateLong(entry.date))} (${esc(entry.weekdayLabel)})</span>
+                  <span class="tiny muted">${esc(entry.time || '시간 협의')}</span>
+                  <span class="badge ${cls(entry.status)}">${esc(entry.statusLabel)}</span>
+                  ${entry.changed ? '<span class="tiny muted">일정 변경</span>' : ''}
+                </li>`,
+              )
+              .join('')}</ul>`
+          : '<p class="tiny muted">예정된 방문이 없습니다. 대표에게 문의해 주세요.</p>'}
+        <p class="hint">정기 청소 요일을 기준으로 만든 일정입니다. 휴무 · 시간 변경이 있으면 이곳에 바로 표시됩니다. 현장 작업 기록은 아래 방문 보고에서 확인하실 수 있습니다.</p>
+      </section>`;
+  }
+
+  function manageTabTemplate(site, stats, viewer, schedule) {
     const last = stats.last;
     const reports = filterReports(stats.reports);
     const nextLabel = stats.nextDate ? `${fmtDateLong(stats.nextDate)} 예정` : '일정 확인 필요';
@@ -764,6 +795,8 @@ export function createCustomerView(container) {
     const roomLabel = room.status === 'active' ? '운영 중' : room.status === 'ended' ? '종료' : '연결 중';
     return `
       ${compareTemplate(site, stats)}
+
+      ${visitScheduleTemplate(schedule)}
 
       <section class="panel">
         <dl class="kv kv--left">
@@ -847,7 +880,7 @@ export function createCustomerView(container) {
     `;
   }
 
-  function roomTemplate(site, stats, viewer, documents) {
+  function roomTemplate(site, stats, viewer, documents, schedule) {
     const meta = CATEGORY_META[site.category] || {};
     const tab = ['quote', 'contract', 'manage'].includes(state.roomTab) ? state.roomTab : 'manage';
     return `
@@ -880,7 +913,7 @@ export function createCustomerView(container) {
 
       ${viewer.preview ? '' : profilePanelTemplate(viewer)}
 
-      ${tab === 'quote' ? quoteTabTemplate(documents) : tab === 'contract' ? contractTabTemplate(documents) : manageTabTemplate(site, stats, viewer)}
+      ${tab === 'quote' ? quoteTabTemplate(documents) : tab === 'contract' ? contractTabTemplate(documents) : manageTabTemplate(site, stats, viewer, schedule)}
     `;
   }
 
@@ -946,6 +979,14 @@ export function createCustomerView(container) {
 
     const stats = await store.statsForSite(site, { customerFacing: true });
     if (token !== renderToken) return;
+    // 5단계 — 자기 업장의 방문 일정만(직원 위치·좌표·거리는 오지 않습니다).
+    const scheduleFrom = toISODate();
+    const scheduleEnd = new Date(`${scheduleFrom}T12:00:00`);
+    scheduleEnd.setDate(scheduleEnd.getDate() + 13);
+    const schedule = await store
+      .listSchedule({ from: scheduleFrom, to: toISODate(scheduleEnd) }, { actor: session })
+      .catch(() => null);
+    if (token !== renderToken) return;
 
     reportsById.clear();
     stats.reports.forEach((report) => reportsById.set(report.id, report));
@@ -955,7 +996,7 @@ export function createCustomerView(container) {
     };
     if (!['quote', 'contract', 'manage'].includes(state.roomTab)) state.roomTab = 'manage';
     if (token !== renderToken) return;
-    container.innerHTML = roomTemplate(site, stats, { ...session, preview: false }, documents);
+    container.innerHTML = roomTemplate(site, stats, { ...session, preview: false }, documents, schedule);
   }
 
   /* ---------------- staff preview (팀장·대표) ---------------- */
@@ -1013,7 +1054,11 @@ export function createCustomerView(container) {
       preview: true,
     };
 
-    container.innerHTML = previewBanner(session, site, pool) + roomTemplate(site, stats, viewer, documents);
+    const previewSchedule = await store
+      .listSchedule({ from: toISODate(), to: toISODate(new Date(Date.now() + 13 * 86400000)) }, { actor: session })
+      .catch(() => null);
+
+    container.innerHTML = previewBanner(session, site, pool) + roomTemplate(site, stats, viewer, documents, previewSchedule);
   }
 
   /* ---------------- lightbox ---------------- */

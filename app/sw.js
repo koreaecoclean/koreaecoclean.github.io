@@ -7,7 +7,7 @@
    Bump CACHE_VERSION whenever shell files change.
    ============================================================ */
 
-const CACHE_VERSION = 'v2.10.0';
+const CACHE_VERSION = 'v2.11.0';
 const CACHE_NAME = `kec-shell-${CACHE_VERSION}`;
 
 const PRECACHE = [

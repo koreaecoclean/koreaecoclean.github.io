@@ -24,7 +24,7 @@ import {
   openLightbox,
   modeSwitchTemplate,
 } from '../ui.js';
-import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, canUseSupply, MAX_BASELINE_PHOTOS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, HANDOVER_ACCESS_TYPES } from '../store.js';
+import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, canUseSupply, MAX_BASELINE_PHOTOS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, HANDOVER_ACCESS_TYPES, SCHEDULE_STATUS, SCHEDULE_DAYS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, scheduleDayText, scheduleTimeText } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
 import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
@@ -424,6 +424,10 @@ export function createLeaderView(container) {
     supplyOrders: [],
     supplyCatalog: [],
     supplyRequestOpen: true,
+    // 5단계 — 일정 · GPS 현장 도착/완료
+    schedule: { entries: [], days: [], summary: {}, today: '' },
+    scheduleBusy: '',
+    visitForm: { siteId: '', kind: 'arrive', reason: 'indoor', note: '', error: '' },
     busy: false,
   };
   const sampleCursor = { security: 0, cleaning: 0, issue: 0 };
@@ -537,6 +541,9 @@ export function createLeaderView(container) {
       const pending = (state.assignments || []).filter((row) => row.status === 'pending').length;
       tabs.push({ key: 'assign', label: pending ? `내 배정 ${pending}` : '내 배정' });
     }
+    // 5단계 — 오늘 일정 · GPS 현장 도착/완료
+    const todayCount = (state.schedule.entries || []).filter((row) => row.date === state.schedule.today).length;
+    if (session) tabs.push({ key: 'schedule', label: todayCount ? `일정 ${todayCount}` : '일정' });
     // 청소장비 · 봉투는 구입 당사자 직원만 봅니다. 부관리자(본부장) 화면에는 나오지 않습니다.
     if (session && session.role === 'leader' && canUseSupply(session)) {
       tabs.push({ key: 'supply', label: '장비 · 봉투' });
@@ -550,6 +557,248 @@ export function createLeaderView(container) {
           )
           .join('')}
       </nav>`;
+  }
+
+  /* ---------------- 5단계 — 일정 · GPS 현장 도착/완료 (기획서 14·15장) ---------------- */
+
+  function scheduleEntryOf(siteId) {
+    return (state.schedule.entries || []).find(
+      (entry) => entry.siteId === siteId && entry.date === state.schedule.today,
+    ) || null;
+  }
+
+  function gpsBadgeTemplate(entry) {
+    const gps = (entry && entry.gps) || { key: '', label: '' };
+    if (!gps.label) return '<span class="badge" data-gps-status="none">도착 전</span>';
+    const cls = gps.key === 'verified' ? 'badge--done' : gps.key === 'recorded' ? 'badge--wait' : 'badge--stop';
+    return `<span class="badge ${cls}" data-gps-status="${esc(gps.key)}">${esc(gps.label)}</span>`;
+  }
+
+  function visitFormTemplate(siteId) {
+    const form = state.visitForm || {};
+    if (form.siteId !== siteId) return '';
+    const kind = form.kind === 'done' ? 'done' : 'arrive';
+    return `
+      <form class="sched-exception" data-visit-manual-form="${esc(siteId)}" data-visit-site="${esc(siteId)}" novalidate>
+        <input type="hidden" data-visit-kind value="${kind}">
+        <p class="tiny"><strong>위치를 확인하지 못했습니다.</strong> 사유를 골라 기록하면 대표 화면에 ‘위치 미인증 · 예외’로 표시됩니다.</p>
+        <label class="field">
+          <span class="field__label">사유</span>
+          <select class="input" data-visit-reason data-visit-reason-site="${esc(siteId)}">
+            ${GPS_EXCEPTION_REASONS.map(
+              (row) => `<option value="${esc(row.key)}"${row.key === (form.reason || 'indoor') ? ' selected' : ''}>${esc(row.label)}</option>`,
+            ).join('')}
+          </select>
+        </label>
+        <label class="field">
+          <span class="field__label">메모 (선택)</span>
+          <input class="input" type="text" maxlength="80" data-visit-note
+                 data-visit-note-site="${esc(siteId)}" value="${esc(form.note || '')}" placeholder="예: 지하 작업실이라 위치가 잡히지 않음">
+        </label>
+        ${form.error ? `<p class="pin-error">${esc(form.error)}</p>` : ''}
+        <div class="btn-row">
+          <button class="btn btn--primary btn--sm" type="submit" data-visit-manual="${esc(siteId)}">예외로 기록</button>
+          <button class="btn btn--quiet btn--sm" type="button" data-visit-cancel="${esc(siteId)}">취소</button>
+        </div>
+      </form>`;
+  }
+
+  function todayScheduleCardTemplate(entry) {
+    const busy = state.scheduleBusy === entry.siteId;
+    const done = entry.status === 'done';
+    const overrideLabel = entry.override
+      ? (SCHEDULE_OVERRIDE_TYPES[entry.override.type] || {}).label || '일정 변경'
+      : '';
+    const arriveAt = entry.arrive && entry.arrive.at ? fmtTime(String(entry.arrive.at).slice(11, 16)) : '';
+    const doneAt = entry.done && entry.done.at ? fmtTime(String(entry.done.at).slice(11, 16)) : '';
+    return `
+      <article class="sched-card" data-schedule-site="${esc(entry.siteId)}" data-schedule-date="${esc(entry.date)}" data-schedule-status="${esc(entry.status)}">
+        <div class="sched-card__head">
+          <div>
+            <strong>${esc(entry.siteName)}</strong>
+            <span class="tiny muted">${esc(entry.time || '시간 미설정')} · ${esc(entry.weekdayLabel)}요일</span>
+          </div>
+          <span class="badge ${esc(entry.statusBadge)}">${esc(entry.statusLabel)}</span>
+        </div>
+        ${entry.changed ? `<p class="tiny muted">일정 변경 · ${esc(overrideLabel)}${entry.override && entry.override.note ? ` · ${esc(entry.override.note)}` : ''}</p>` : ''}
+        <div class="sched-gps" data-gps-status="${esc((entry.gps || {}).key || '')}">
+          ${gpsBadgeTemplate(entry)}
+          ${arriveAt ? `<span class="tiny muted">${esc(arriveAt)} 도착</span>` : ''}
+          ${doneAt ? `<span class="tiny muted">${esc(doneAt)} 완료</span>` : ''}
+          ${entry.reportId ? '<span class="badge badge--done">보고 연결</span>' : ''}
+        </div>
+        ${entry.hasCoordinates === false ? '<p class="tiny muted">업장 좌표가 아직 없습니다 — 시각은 기록되고, 거리·반경 확인은 대표가 좌표를 등록한 뒤 가능합니다.</p>' : ''}
+        <div class="btn-row">
+          <button class="btn btn--primary btn--sm" type="button" data-visit-arrive="${esc(entry.siteId)}" ${busy || done ? 'disabled' : ''}>현장 도착 (GPS 확인)</button>
+          <button class="btn btn--quiet btn--sm" type="button" data-visit-done="${esc(entry.siteId)}" ${busy || done ? 'disabled' : ''}>청소 완료</button>
+        </div>
+        ${visitFormTemplate(entry.siteId)}
+      </article>`;
+  }
+
+  function schedulePanelTemplate() {
+    const schedule = state.schedule || {};
+    const today = schedule.today || toISODate();
+    const entries = schedule.entries || [];
+    const todayEntries = entries.filter((entry) => entry.date === today);
+    const summary = schedule.summary || {};
+    const week = entries.filter((entry) => entry.date !== today);
+    const days = (schedule.days || []).filter((day) => day.date !== today);
+    const statusRow = [
+      ['planned', '예정'],
+      ['active', '진행 중'],
+      ['done', '완료'],
+      ['missed', '미방문'],
+    ]
+      .map(
+        ([key, label]) => `<div data-schedule-count="${key}"><strong>${Number(summary[key]) || 0}</strong><span>${label}</span></div>`,
+      )
+      .join('');
+    const weekRows = days
+      .map((day) => {
+        const rows = week.filter((entry) => entry.date === day.date);
+        if (!rows.length) return '';
+        return `
+          <div class="sched-day" data-schedule-day="${esc(day.date)}">
+            <div class="sched-day__head">
+              <strong>${esc(day.date.slice(5).replace('-', '.'))} (${esc(day.weekdayLabel)})</strong>
+              <span class="tiny muted">${rows.length}건</span>
+            </div>
+            ${rows
+              .map(
+                (entry) => `
+                <div class="sched-row" data-schedule-site="${esc(entry.siteId)}" data-schedule-status="${esc(entry.status)}">
+                  <span>${esc(entry.siteName)}</span>
+                  <span class="tiny muted">${esc(entry.time || '시간 미설정')}</span>
+                  <span class="badge ${esc(entry.statusBadge)}">${esc(entry.statusLabel)}</span>
+                </div>`,
+              )
+              .join('')}
+          </div>`;
+      })
+      .join('');
+    return `
+      <section class="panel schedule-today" data-schedule-panel>
+        <div class="section-head">
+          <div>
+            <h2>오늘 일정</h2>
+            <p>${esc(fmtDateLong(today))}</p>
+          </div>
+          <span class="badge">${todayEntries.length}곳</span>
+        </div>
+        <div class="sched-stats">${statusRow}</div>
+        <p class="hint">현장에 도착하면 [현장 도착]을 누르세요. 위치가 확인되면 거리와 반경 안 여부가 함께 기록됩니다.</p>
+      </section>
+      <div class="sched-list">
+        ${todayEntries.length ? todayEntries.map(todayScheduleCardTemplate).join('') : '<div class="empty"><strong>오늘 예정된 업장이 없습니다</strong><span>대표가 일정을 바꾸면 여기에 표시됩니다.</span></div>'}
+      </div>
+      <section class="panel">
+        <div class="section-head">
+          <h2>이번 주 일정</h2>
+          <p>${days.length}일</p>
+        </div>
+        ${weekRows || '<p class="tiny muted">이번 주 남은 일정이 없습니다.</p>'}
+      </section>
+      <section class="panel">
+        <div class="section-head"><h2>기록 안내</h2></div>
+        <p class="tiny muted">
+          위치는 근무 중 현장 도착 · 완료를 누를 때 그 순간의 좌표만 기록합니다. 근무가 끝나면 위치를 추적하지 않습니다.
+          위치 권한을 거부했거나 실내라 위치가 잡히지 않으면 사유를 골라 기록할 수 있고, 그 기록은 ‘위치 미인증 · 예외’로 표시됩니다.
+        </p>
+      </section>`;
+  }
+
+  /** 브라우저 위치 — 없거나 거부되면 예외 흐름으로 넘깁니다. */
+  function currentPosition() {
+    return new Promise((resolve, reject) => {
+      const geo = typeof navigator !== 'undefined' ? navigator.geolocation : null;
+      if (!geo || typeof geo.getCurrentPosition !== 'function') {
+        const error = new Error('이 기기에서는 위치 기능을 쓸 수 없습니다.');
+        error.code = 'unsupported';
+        reject(error);
+        return;
+      }
+      geo.getCurrentPosition(
+        (position) => resolve(position),
+        (error) => reject(error || new Error('위치를 확인하지 못했습니다.')),
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+      );
+    });
+  }
+
+  async function recordVisitAtSite(siteId, kind) {
+    if (!state.session || state.scheduleBusy) return;
+    state.scheduleBusy = siteId;
+    state.visitForm = { siteId: '', kind, reason: 'indoor', note: '', error: '' };
+    await render();
+    try {
+      const position = await currentPosition();
+      const coords = (position && position.coords) || {};
+      const result = await store.recordSiteVisit(
+        siteId,
+        {
+          kind,
+          date: toISODate(),
+          mode: 'gps',
+          lat: coords.latitude,
+          lng: coords.longitude,
+          accuracy: coords.accuracy,
+        },
+        { actor: state.session },
+      );
+      state.scheduleBusy = '';
+      await render();
+      toast(result.message, { duration: 5000 });
+    } catch (error) {
+      state.scheduleBusy = '';
+      state.visitForm = {
+        siteId,
+        kind,
+        reason: error && error.code === 'unsupported' ? 'unsupported' : error && error.code === 1 ? 'denied' : 'indoor',
+        note: '',
+        error: '',
+      };
+      await render();
+      toast('위치를 확인하지 못했습니다. 사유를 골라 예외로 기록해 주세요.', { tone: 'error', duration: 6000 });
+    }
+  }
+
+  async function submitVisitException(form) {
+    if (!state.session) return;
+    const siteId = form.dataset.visitManualForm || form.dataset.visitSite || '';
+    const kindInput = form.querySelector('[data-visit-kind]');
+    const reasonInput = form.querySelector('[data-visit-reason]');
+    const noteInput = form.querySelector('[data-visit-note]');
+    const kind = kindInput && kindInput.value === 'done' ? 'done' : 'arrive';
+    state.scheduleBusy = siteId;
+    try {
+      const result = await store.recordSiteVisit(
+        siteId,
+        {
+          kind,
+          date: toISODate(),
+          mode: 'manual',
+          reason: reasonInput ? reasonInput.value : 'indoor',
+          note: noteInput ? noteInput.value : '',
+        },
+        { actor: state.session },
+      );
+      state.visitForm = { siteId: '', kind: 'arrive', reason: 'indoor', note: '', error: '' };
+      state.scheduleBusy = '';
+      await render();
+      toast(result.message, { duration: 5000 });
+    } catch (error) {
+      state.scheduleBusy = '';
+      state.visitForm = {
+        siteId,
+        kind,
+        reason: reasonInput ? reasonInput.value : 'indoor',
+        note: noteInput ? noteInput.value : '',
+        error: error.message || '기록하지 못했습니다.',
+      };
+      await render();
+      toast(error.message || '현장 기록을 남기지 못했습니다.', { tone: 'error' });
+    }
   }
 
   /* ---------------- 관리팀장별 관리업장 (대표 전용) ---------------- */
@@ -988,6 +1237,8 @@ export function createLeaderView(container) {
                   session,
                   state: { supply: { open: state.supplyRequestOpen } },
                 })
+              : tab === 'schedule'
+                ? schedulePanelTemplate()
               : tab === 'assign' && canReceiveAssignments(session)
                 ? assignmentPanelTemplate(session)
               : state.managerMode
@@ -1637,7 +1888,7 @@ export function createLeaderView(container) {
 
   async function render(options = {}) {
     mount();
-    if (options && options.tab && ['sites', 'contracts', 'supply', 'assign'].includes(options.tab)) {
+    if (options && options.tab && ['sites', 'contracts', 'supply', 'assign', 'schedule'].includes(options.tab)) {
       state.leaderTab = options.tab;
     }
     const session = await getSession();
@@ -1657,6 +1908,8 @@ export function createLeaderView(container) {
       state.teamLeads = [];
       state.teamContracts = [];
       state.teamLeadId = '';
+      state.schedule = { entries: [], days: [], summary: {}, today: '' };
+      state.visitForm = { siteId: '', kind: 'arrive', reason: 'indoor', note: '', error: '' };
       closeBaselineSheet();
       container.innerHTML = gateTemplate();
       return;
@@ -1721,6 +1974,9 @@ export function createLeaderView(container) {
     );
     // 4단계 — 내게 온 팀장 배정 요청 (본인 계정 것만 · 고객 금액 없음).
     state.assignments = canReceiveAssignments(state.session) ? await store.listAssignmentRequests(state.session) : [];
+    // 5단계 — 본인 일정(대표는 전체) + 오늘 현장 도착/완료 기록. 서버·기기 어느 쪽에서든
+    //  배정된 업장만 내려옵니다(store.listSchedule 이 권한별로 거릅니다).
+    state.schedule = await store.listSchedule({}, { actor: state.session });
 
     // 청소장비 · 봉투: 구입 당사자 직원(부관리자·대표 제외)에게만 열립니다.
     const supplyAllowed = state.session.role === 'leader' && canUseSupply(state.session);
@@ -1993,6 +2249,11 @@ export function createLeaderView(container) {
   }
 
   async function onSubmit(event) {
+    if (event.target.matches('[data-visit-manual-form]')) {
+      event.preventDefault();
+      await submitVisitException(event.target);
+      return;
+    }
     if (event.target.id === 'supply-request-form') {
       event.preventDefault();
       if (!state.session) return;
@@ -2087,6 +2348,24 @@ export function createLeaderView(container) {
   }
 
   async function onClick(event) {
+    /* -------- 5단계 — 현장 도착(GPS) · 청소 완료 · 예외 기록 -------- */
+    const arriveButton = event.target.closest('[data-visit-arrive]');
+    if (arriveButton) {
+      await recordVisitAtSite(arriveButton.dataset.visitArrive, 'arrive');
+      return;
+    }
+    const doneButton = event.target.closest('[data-visit-done]');
+    if (doneButton) {
+      await recordVisitAtSite(doneButton.dataset.visitDone, 'done');
+      return;
+    }
+    const visitCancel = event.target.closest('[data-visit-cancel]');
+    if (visitCancel) {
+      state.visitForm = { siteId: '', kind: 'arrive', reason: 'indoor', note: '', error: '' };
+      await render();
+      return;
+    }
+
     const baselineOpen = event.target.closest('[data-baseline-open]');
     if (baselineOpen) {
       await openBaselineSheet(baselineOpen.dataset.baselineOpen, { onChanged: render });

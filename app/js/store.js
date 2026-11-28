@@ -1080,6 +1080,442 @@ export function normalizeAssignment(input) {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* 5단계 — 일정 관리 · GPS 위치 인증 (기획서 14·15장)                  */
+/* ------------------------------------------------------------------ */
+
+/** 청소 요일 — 월요일부터 일요일까지. `daily` 는 매일. */
+export const SCHEDULE_DAYS = [
+  { key: 'mon', label: '월', js: 1 },
+  { key: 'tue', label: '화', js: 2 },
+  { key: 'wed', label: '수', js: 3 },
+  { key: 'thu', label: '목', js: 4 },
+  { key: 'fri', label: '금', js: 5 },
+  { key: 'sat', label: '토', js: 6 },
+  { key: 'sun', label: '일', js: 0 },
+];
+
+/** 일정 상태 — 예정 · 진행 중(도착 인증) · 완료 · 미방문(지연) · 일정 변경(휴무·보강). */
+export const SCHEDULE_STATUS = {
+  planned: { label: '예정', short: '예정', badge: 'badge' },
+  active: { label: '진행 중', short: '진행 중', badge: 'badge--wait' },
+  done: { label: '완료', short: '완료', badge: 'badge--done' },
+  missed: { label: '미방문(지연)', short: '미방문', badge: 'badge--stop' },
+  off: { label: '휴무', short: '휴무', badge: 'badge--stop' },
+};
+
+/** 일정 변경 종류 — 특정 날짜 한 건만 바꿉니다(반복 규칙은 그대로). */
+export const SCHEDULE_OVERRIDE_TYPES = {
+  off: { label: '휴무 · 건너뜀', badge: 'badge--stop', short: '휴무' },
+  extra: { label: '보강 일정 추가', badge: 'badge--wait', short: '보강' },
+  change: { label: '시간 변경', badge: 'badge--wait', short: '변경' },
+};
+
+/** 위치 인증이 안 될 때 고르는 사유 — 무작정 막히지 않게 하되 예외로 표시합니다. */
+export const GPS_EXCEPTION_REASONS = [
+  { key: 'denied', label: '위치 권한 거부' },
+  { key: 'unsupported', label: '위치 기능 미지원' },
+  { key: 'indoor', label: '실내 · 위치 오차' },
+  { key: 'urgent', label: '현장 사정으로 인증 생략' },
+  { key: 'etc', label: '기타 (메모)' },
+];
+
+/** 업장 기준 허용 반경 기본값(m). 대표가 업장마다 바꿀 수 있습니다. */
+export const DEFAULT_GPS_RADIUS_M = 200;
+
+/** 업장마다 보관하는 도착 · 완료 기록 최대 건수(최신순). */
+export const MAX_SITE_VISITS = 240;
+
+const SCHEDULE_DAY_BY_LABEL = Object.freeze(
+  SCHEDULE_DAYS.reduce((map, row) => {
+    map[row.label] = row.key;
+    return map;
+  }, {}),
+);
+
+const SCHEDULE_DAY_BY_JS = Object.freeze(
+  SCHEDULE_DAYS.reduce((map, row) => {
+    map[row.js] = row.key;
+    return map;
+  }, {}),
+);
+
+function orderScheduleDays(keys) {
+  const wanted = new Set(keys);
+  return SCHEDULE_DAYS.filter((row) => wanted.has(row.key)).map((row) => row.key);
+}
+
+function hhmm(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return '';
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return '';
+  return `${String(hour).padStart(2, '0')}:${match[2]}`;
+}
+
+function isoDateOf(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return '';
+  const date = new Date(`${text}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return '';
+  return todayISO(date) === text ? text : '';
+}
+
+function addDays(value, days) {
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  date.setDate(date.getDate() + Number(days || 0));
+  return todayISO(date);
+}
+
+function weekdayKeyOf(isoDate) {
+  const date = new Date(`${isoDate}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return '';
+  return SCHEDULE_DAY_BY_JS[date.getDay()] || '';
+}
+
+function weekdayLabelOf(key) {
+  return (SCHEDULE_DAYS.find((row) => row.key === key) || {}).label || '';
+}
+
+/**
+ * 청소 요일 읽기 — 저장된 요일이 우선, 없으면 청소공정 매뉴얼 요일,
+ * 그것도 없으면 업장 주기 문구("주 3회 (월 · 수 · 금)")에서 뽑습니다.
+ */
+export function parseScheduleDays(text, manualDays) {
+  const manual = (Array.isArray(manualDays) ? manualDays : [])
+    .map((value) => toText(value))
+    .filter((key) => key === 'daily' || SCHEDULE_DAYS.some((row) => row.key === key));
+  if (manual.includes('daily')) return ['daily'];
+  if (manual.length) return orderScheduleDays(manual);
+
+  const source = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!source) return [];
+  if (/매일/.test(source)) return ['daily'];
+  if (/월\s*[~∼\-–]\s*일/.test(source)) return ['daily'];
+  const range = source.match(/([월화수목금토일])\s*[~∼\-–]\s*([월화수목금토일])/);
+  if (range) {
+    const from = SCHEDULE_DAY_BY_LABEL[range[1]];
+    const to = SCHEDULE_DAY_BY_LABEL[range[2]];
+    const startIndex = SCHEDULE_DAYS.findIndex((row) => row.key === from);
+    const endIndex = SCHEDULE_DAYS.findIndex((row) => row.key === to);
+    if (startIndex >= 0 && endIndex >= startIndex) {
+      return SCHEDULE_DAYS.slice(startIndex, endIndex + 1).map((row) => row.key);
+    }
+  }
+  // '일정 협의' 의 '일' 이 요일로 잡히지 않게 '일정' 은 먼저 지웁니다.
+  const cleaned = source.replace(/일정/g, '');
+  const found = SCHEDULE_DAYS.filter((row) => cleaned.includes(row.label)).map((row) => row.key);
+  return orderScheduleDays(found);
+}
+
+/** "07:30 ~ 10:30" · "20:00~07:00" 같은 시간 문구 → 시작/종료. */
+export function parseScheduleTime(text) {
+  const source = String(text || '');
+  const match = source.match(/(\d{1,2}):(\d{2})\s*[~∼\-–]\s*(\d{1,2}):(\d{2})/);
+  if (!match) return { start: '', end: '' };
+  return { start: hhmm(`${match[1]}:${match[2]}`), end: hhmm(`${match[3]}:${match[4]}`) };
+}
+
+/** 일정 설정 — 저장된 값만 정규화합니다(기본값은 siteSchedule 이 채웁니다). */
+export function normalizeScheduleConfig(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const days = Array.isArray(source.days)
+    ? source.days
+        .map((value) => toText(value))
+        .filter((key) => key === 'daily' || SCHEDULE_DAYS.some((row) => row.key === key))
+    : [];
+  const lat = numOrNull(source.lat, -90, 90);
+  const lng = numOrNull(source.lng, -180, 180);
+  return {
+    days: days.includes('daily') ? ['daily'] : orderScheduleDays(days),
+    startTime: hhmm(source.startTime),
+    endTime: hhmm(source.endTime),
+    radiusM: Math.min(3000, Math.max(50, Math.round(Number(source.radiusM) || DEFAULT_GPS_RADIUS_M))),
+    lat: lat === null ? null : Number(lat.toFixed(6)),
+    lng: lng === null ? null : Number(lng.toFixed(6)),
+    addressNote: toText(source.addressNote),
+    updatedAt: toText(source.updatedAt),
+    updatedBy: toText(source.updatedBy),
+  };
+}
+
+/** 특정 날짜 일정 변경 한 건 (휴무 · 보강 · 시간 변경). */
+export function normalizeScheduleOverride(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    id: toText(source.id) || uid('schov'),
+    date: isoDateOf(source.date),
+    type: SCHEDULE_OVERRIDE_TYPES[source.type] ? source.type : 'change',
+    time: toText(source.time),
+    note: toText(source.note),
+    by: toText(source.by),
+    at: toText(source.at),
+  };
+}
+
+export function normalizeScheduleOverrides(list) {
+  const rows = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    const row = normalizeScheduleOverride(item);
+    if (!row.date) continue;
+    if (seen.has(row.date)) continue;
+    seen.add(row.date);
+    rows.push(row);
+  }
+  return rows.sort((a, b) => a.date.localeCompare(b.date)).slice(-200);
+}
+
+function numOrNull(value, min = null, max = null) {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  if (min !== null && number < min) return null;
+  if (max !== null && number > max) return null;
+  return number;
+}
+
+/** 현장 도착 · 청소 완료 기록 한 건. */
+export function normalizeVisit(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const kind = source.kind === 'done' ? 'done' : 'arrive';
+  const lat = numOrNull(source.lat, -90, 90);
+  const lng = numOrNull(source.lng, -180, 180);
+  const distance = numOrNull(source.distanceM, 0);
+  const accuracy = numOrNull(source.accuracy, 0);
+  return {
+    id: toText(source.id) || uid('visit'),
+    date: isoDateOf(source.date),
+    kind,
+    at: toText(source.at),
+    lat: lat === null ? null : Number(lat.toFixed(6)),
+    lng: lng === null ? null : Number(lng.toFixed(6)),
+    accuracy: accuracy === null ? null : Math.round(accuracy),
+    distanceM: distance === null ? null : Math.round(distance),
+    inRange: typeof source.inRange === 'boolean' ? source.inRange : null,
+    mode: source.mode === 'manual' ? 'manual' : 'gps',
+    reason: GPS_EXCEPTION_REASONS.some((row) => row.key === source.reason) ? toText(source.reason) : '',
+    reasonLabel: toText(source.reasonLabel),
+    note: toText(source.note).slice(0, 400),
+    accountId: toText(source.accountId),
+    name: toText(source.name),
+  };
+}
+
+export function normalizeVisits(list) {
+  const rows = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    const row = normalizeVisit(item);
+    if (!row.date || !row.at) continue;
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    rows.push(row);
+  }
+  return rows.sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, MAX_SITE_VISITS);
+}
+
+/** 두 좌표 사이 거리(m) — 하버사인. */
+export function distanceMeters(lat1, lng1, lat2, lng2) {
+  const values = [lat1, lng1, lat2, lng2];
+  if (values.some((value) => value === null || value === undefined || String(value).trim() === '')) return null;
+  const numbers = values.map((value) => Number(value));
+  if (numbers.some((value) => !Number.isFinite(value))) return null;
+  const [a1, b1, a2, b2] = numbers;
+  const rad = (value) => (value * Math.PI) / 180;
+  const dLat = rad(a2 - a1);
+  const dLng = rad(b2 - b1);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a1)) * Math.cos(rad(a2)) * Math.sin(dLng / 2) ** 2;
+  return Math.round(6371000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h)));
+}
+
+/** 업장 좌표 · 반경과 현재 위치를 비교합니다. 좌표가 없으면 거리 확인 불가. */
+export function gpsCheck(site, position = {}) {
+  const config = siteSchedule(site);
+  const hasCoordinates = typeof config.lat === 'number' && typeof config.lng === 'number';
+  const lat = Number(position.lat);
+  const lng = Number(position.lng);
+  const distanceM = hasCoordinates && Number.isFinite(lat) && Number.isFinite(lng)
+    ? distanceMeters(config.lat, config.lng, lat, lng)
+    : null;
+  return {
+    hasCoordinates,
+    radiusM: config.radiusM,
+    distanceM,
+    inRange: distanceM === null ? null : distanceM <= config.radiusM,
+  };
+}
+
+/** 저장된 일정 설정 + 업장 정보에서 계산한 기본값(요일 · 시간 · 반경). */
+export function siteSchedule(site) {
+  const stored = normalizeScheduleConfig(site && site.schedule);
+  const source = site && typeof site === 'object' ? site : {};
+  const manual = source.manual && typeof source.manual === 'object' ? source.manual : null;
+  const manualDays = manual && Array.isArray(manual.days) ? manual.days.map((row) => row && row.key) : [];
+  const handover = source.handover && typeof source.handover === 'object' ? source.handover : {};
+  const derivedDays = parseScheduleDays(source.frequency || handover.workDays, manualDays);
+  const derivedTime = parseScheduleTime(
+    (manual && (manual.time || manual.timeNote)) || handover.workHours || '',
+  );
+  return {
+    ...stored,
+    days: stored.days.length ? stored.days : derivedDays,
+    startTime: stored.startTime || derivedTime.start,
+    endTime: stored.endTime || derivedTime.end,
+  };
+}
+
+/** 화면에 쓰는 시간 문구 — 저장값이 없으면 업장 매뉴얼 시간. */
+export function scheduleTimeText(config) {
+  const row = config && typeof config === 'object' ? config : {};
+  if (row.startTime && row.endTime) return `${row.startTime} ~ ${row.endTime}`;
+  return row.startTime || row.endTime || '';
+}
+
+export function scheduleDayText(days) {
+  const list = Array.isArray(days) ? days : [];
+  if (!list.length) return '요일 미설정';
+  if (list.includes('daily')) return '매일';
+  return list.map((key) => weekdayLabelOf(key)).filter(Boolean).join(' · ');
+}
+
+function minutesOf(value) {
+  const text = hhmm(value);
+  if (!text) return null;
+  const [hour, minute] = text.split(':').map(Number);
+  return hour * 60 + minute;
+}
+
+/** 오늘 예정 시간이 지나도록 도착 기록이 없으면 미방문(지연)으로 봅니다(2시간 여유). */
+function scheduleOverdue(entry, today, nowMin) {
+  if (!entry || entry.date !== today) return false;
+  const end = minutesOf(entry.endTime) ?? minutesOf(entry.startTime);
+  if (end === null || nowMin === null) return false;
+  return nowMin > end + 120;
+}
+
+function visitCertText(visit, what = '') {
+  if (!visit) return '';
+  const tag = what ? `(${what})` : '';
+  if (visit.mode === 'manual') {
+    const reason = visit.reasonLabel || (GPS_EXCEPTION_REASONS.find((row) => row.key === visit.reason) || {}).label || '사유 기록';
+    return `위치 미인증${tag} · ${reason}`;
+  }
+  if (visit.distanceM === null) return `위치 기록${tag} · 거리 확인 불가`;
+  if (visit.inRange === true) return `위치 인증${tag} · ${visit.distanceM}m`;
+  if (visit.inRange === false) return `반경 밖${tag} · ${visit.distanceM}m`;
+  return `위치 기록${tag}`;
+}
+
+/** 도착 · 완료 기록을 함께 보고 위치 인증 상태를 정합니다(예외가 있으면 먼저 표시). */
+function gpsLabelOf(entry) {
+  const arrive = entry && entry.arrive;
+  const done = entry && entry.done;
+  const parts = [];
+  if (arrive && arrive.mode === 'manual') parts.push(visitCertText(arrive));
+  if (done && done.mode === 'manual') parts.push(visitCertText(done, '완료'));
+  if (arrive && arrive.mode !== 'manual') parts.push(visitCertText(arrive));
+  if (done && done.mode !== 'manual') parts.push(visitCertText(done, '완료'));
+  const label = parts.filter(Boolean).join(' · ');
+  if (!label) return { key: '', label: '' };
+  const exception = (arrive && arrive.mode === 'manual') || (done && done.mode === 'manual');
+  let key = 'verified';
+  if (exception) key = 'exception';
+  else if ((arrive && arrive.inRange === false) || (done && done.inRange === false)) key = 'outside';
+  else if ((arrive && arrive.distanceM === null) || (done && done.distanceM === null)) key = 'recorded';
+  else if (!arrive && !done) key = '';
+  return {
+    key,
+    label,
+    arriveLabel: arrive ? visitCertText(arrive) : '',
+    doneLabel: done ? visitCertText(done, '완료') : '',
+  };
+}
+
+/**
+ * 한 업장의 기간별 일정 — 반복 요일 + 날짜별 변경 + 도착/완료 기록 + 보고를 합쳐
+ * 상태(예정 · 진행 중 · 완료 · 미방문 · 휴무)를 계산합니다. 화면과 테스트가 같이 씁니다.
+ */
+export function scheduleEntriesForSite(site, { from, to, today = todayISO(), nowMin = null, reportDates = [] } = {}) {
+  if (!site) return [];
+  const config = siteSchedule(site);
+  const overrides = normalizeScheduleOverrides(site.scheduleOverrides);
+  const byDate = new Map(overrides.map((row) => [row.date, row]));
+  const visits = normalizeVisits(site.visits);
+  const reports = new Set((Array.isArray(reportDates) ? reportDates : []).map((value) => toText(value)));
+  const regular = config.days.includes('daily') || config.days.length > 0;
+  const entries = [];
+  let cursor = from;
+  let guard = 0;
+  while (cursor && cursor <= to && guard < 93) {
+    guard += 1;
+    const weekday = weekdayKeyOf(cursor);
+    const override = byDate.get(cursor) || null;
+    const isRegular = regular && (config.days.includes('daily') || config.days.includes(weekday));
+    const include = isRegular || !!override;
+    if (include) {
+      const off = !!override && override.type === 'off';
+      const dayVisits = visits.filter((row) => row.date === cursor);
+      const arrive = dayVisits.find((row) => row.kind === 'arrive') || null;
+      const done = dayVisits.find((row) => row.kind === 'done') || null;
+      const report = reports.has(cursor);
+      const time = override && override.type === 'change' && override.time
+        ? override.time
+        : scheduleTimeText(config);
+      const timeParts = parseScheduleTime(time);
+      const entry = {
+        id: `sch_${site.id}_${cursor}`,
+        siteId: site.id,
+        siteName: toText(site.name),
+        siteCode: toText(site.code),
+        manager: toText(site.manager),
+        managerRole: toText(site.managerRole),
+        assigneeName: toText((site.assignee && site.assignee.name) || site.manager),
+        date: cursor,
+        weekday,
+        weekdayLabel: weekdayLabelOf(weekday),
+        startTime: timeParts.start || config.startTime,
+        endTime: timeParts.end || config.endTime,
+        time,
+        changed: !!override,
+        override: override ? { ...override } : null,
+        reportId: '',
+        hasCoordinates: typeof config.lat === 'number' && typeof config.lng === 'number',
+        radiusM: config.radiusM,
+        arrive,
+        done,
+        gps: gpsLabelOf({ arrive, done }),
+      };
+      let status = 'planned';
+      if (off) status = 'off';
+      else if (done || report) status = 'done';
+      else if (arrive) status = 'active';
+      else if (cursor < today) status = 'missed';
+      else if (scheduleOverdue(entry, today, nowMin)) status = 'missed';
+      entry.status = status;
+      entry.statusLabel = (SCHEDULE_STATUS[status] || SCHEDULE_STATUS.planned).label;
+      entry.statusBadge = (SCHEDULE_STATUS[status] || SCHEDULE_STATUS.planned).badge;
+      entries.push(entry);
+    }
+    cursor = addDays(cursor, 1);
+  }
+  return entries;
+}
+
+/** 기간 정리 — 최대 62일, from > to 면 바꿔 줍니다. */
+function normalizeScheduleRange(from, to, today) {
+  let start = isoDateOf(from) || today;
+  let end = isoDateOf(to) || addDays(start, 6);
+  if (start > end) [start, end] = [end, start];
+  const limit = addDays(start, 61);
+  if (end > limit) end = limit;
+  return { from: start, to: end };
+}
+
 const HANDOVER_FIELD_LABELS = {
   address: '현장 주소',
   accessType: '출입 방식',
@@ -1661,6 +2097,10 @@ function normalizeSite(site) {
     assignee: site.assignee && typeof site.assignee === 'object'
       ? { accountId: toText(site.assignee.accountId), name: toText(site.assignee.name), since: toText(site.assignee.since) }
       : null,
+    // 5단계 — 일정(청소 요일·시간·좌표·반경 · 날짜별 변경)과 현장 도착/완료 기록
+    schedule: normalizeScheduleConfig(site.schedule),
+    scheduleOverrides: normalizeScheduleOverrides(site.scheduleOverrides),
+    visits: normalizeVisits(site.visits),
     // 업장(siteId) 중심 연결 고리 — 이 업장이 어느 견적/계약/팀장 계약에서 왔는지.
     quoteId: toText(site.quoteId),
     contractId: toText(site.contractId),
@@ -1827,6 +2267,12 @@ export function siteForCustomer(site) {
     room: normalizeRoom(site.room),
     quoteId: site.quoteId,
     contractId: site.contractId,
+    // 5단계 — 고객은 자기 업장의 방문 요일·시간만 봅니다(직원 위치·좌표·거리는 넘기지 않음).
+    schedule: {
+      days: siteSchedule(site).days,
+      startTime: siteSchedule(site).startTime,
+      endTime: siteSchedule(site).endTime,
+    },
     active: site.active,
     locked: site.locked,
   };
@@ -1905,6 +2351,11 @@ export function siteForStaff(site) {
       : null,
     secretSet: !!(site.secret && site.secret.doorCode),
     secretLogCount: site.secret && Array.isArray(site.secret.log) ? site.secret.log.length : 0,
+    // 5단계 — 본인 업장의 일정(요일·시간·좌표·반경)과 도착/완료 기록.
+    //  좌표는 업장 위치이고, 기록은 이 업장 것만 넘깁니다(다른 업장·다른 직원 기록 없음).
+    schedule: siteSchedule(site),
+    scheduleOverrides: normalizeScheduleOverrides(site.scheduleOverrides),
+    visits: normalizeVisits(site.visits),
     // 본인 도급 조건 — 이 업장의 도급금액만. (고객 청구일·계약일 등은 넘기지 않습니다.)
     staffPay: { amount: contract.subcontractAmount },
   };
@@ -3944,6 +4395,318 @@ export class Store {
     });
     this._notify();
     return assignments.find((row) => row.id === assignment.id);
+  }
+
+  /* ---------------- 5단계 — 일정 조회 · 변경 · GPS 도착/완료 (기획서 14·15장) ---------------- */
+
+  /**
+   * 기간 일정 — 대표는 전체 업장(팀장별 필터), 직원은 배정된 업장만, 고객은 자기 업장만.
+   * 반복 요일에서 일정을 만들고, 날짜별 변경 · 도착/완료 기록 · 보고를 합쳐 상태를 냅니다.
+   */
+  async listSchedule({ from = '', to = '', leader = '' } = {}, { actor = null } = {}) {
+    const today = todayISO();
+    const range = normalizeScheduleRange(from, to, today);
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+
+    const all = await this.listSites();
+    let sites = [];
+    if (!actor) sites = all;
+    else if (isCeoActor(actor)) sites = all;
+    else if (isCustomerActor(actor)) {
+      const ids = await this._customerSiteIds(actor);
+      sites = all.filter((site) => ids.includes(site.id));
+    } else if (isStaffActor(actor)) {
+      const mine = new Set(assignedSiteIdsOf(actor));
+      sites = all.filter((site) => mine.has(site.id));
+    }
+
+    // 보고가 있는 날짜는 도착 기록이 없어도 완료로 봅니다(현장 보고와 일정 연결).
+    const reports = (await this.adapter.getAll('reports')).map(normalizeReport);
+    const reportDatesBySite = {};
+    for (const report of reports) {
+      if (!report.siteId || !report.date) continue;
+      reportDatesBySite[report.siteId] = reportDatesBySite[report.siteId] || new Set();
+      reportDatesBySite[report.siteId].add(report.date);
+    }
+    const reportIdBySiteDate = {};
+    for (const report of reports) {
+      if (!report.siteId || !report.date) continue;
+      reportIdBySiteDate[`${report.siteId}|${report.date}`] = report.id;
+    }
+
+    let entries = [];
+    for (const site of sites) {
+      const rows = scheduleEntriesForSite(site, {
+        from: range.from,
+        to: range.to,
+        today,
+        nowMin,
+        reportDates: [...(reportDatesBySite[site.id] || [])],
+      });
+      for (const entry of rows) entry.reportId = reportIdBySiteDate[`${site.id}|${entry.date}`] || '';
+      entries = entries.concat(rows);
+    }
+    const wanted = toText(leader);
+    if (wanted) entries = entries.filter((entry) => entry.manager === wanted || entry.assigneeName === wanted);
+    entries.sort((a, b) =>
+      a.date.localeCompare(b.date) ||
+      String(a.startTime || '99:99').localeCompare(String(b.startTime || '99:99')) ||
+      a.siteName.localeCompare(b.siteName),
+    );
+
+    const leads = [...new Set(sites.map((site) => toText(site.manager)).filter(Boolean))].sort();
+    const summary = { planned: 0, active: 0, done: 0, missed: 0, off: 0, today: 0 };
+    for (const entry of entries) {
+      if (Object.prototype.hasOwnProperty.call(summary, entry.status)) summary[entry.status] += 1;
+      if (entry.date === today) summary.today += 1;
+    }
+
+    const days = [];
+    let cursor = range.from;
+    for (let guard = 0; cursor <= range.to && guard < 93; guard += 1) {
+      const weekday = weekdayKeyOf(cursor);
+      days.push({
+        date: cursor,
+        weekday,
+        weekdayLabel: weekdayLabelOf(weekday),
+        isToday: cursor === today,
+        count: entries.filter((entry) => entry.date === cursor).length,
+      });
+      cursor = addDays(cursor, 1);
+    }
+
+    if (isCustomerActor(actor)) {
+      // 고객에게는 방문 날짜·시간·상태만 — 직원 위치 · 좌표 · 거리 · 사유는 넘기지 않습니다.
+      entries = entries.map((entry) => ({
+        id: entry.id,
+        siteId: entry.siteId,
+        siteName: entry.siteName,
+        date: entry.date,
+        weekdayLabel: entry.weekdayLabel,
+        time: entry.time,
+        status: entry.status,
+        statusLabel: entry.statusLabel,
+        changed: entry.changed,
+        arrived: !!entry.arrive,
+        done: entry.status === 'done',
+      }));
+    }
+
+    return { from: range.from, to: range.to, today, days, entries, summary, leaders: leads };
+  }
+
+  /** 오늘 일정만 짧게 — 팀장 화면의 「오늘 일정」 카드. */
+  async listTodaySchedule({ actor = null } = {}) {
+    const today = todayISO();
+    return this.listSchedule({ from: today, to: today }, { actor });
+  }
+
+  /**
+   * 업장 일정 설정(청소 요일·시간 · 허용 반경 · 기준 좌표) — 대표만 저장합니다.
+   * 비어 있는 칸은 넘기지 않아 기존 값이 지워지지 않습니다.
+   */
+  async saveSiteSchedule(siteId, patch = {}, { actor = null } = {}) {
+    if (actor && !isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '일정 · 위치 설정은 대표(최고관리자)만 저장할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const source = patch && typeof patch === 'object' ? patch : {};
+    const stored = normalizeScheduleConfig(site.schedule);
+    const merged = normalizeScheduleConfig({
+      ...stored,
+      days: source.days !== undefined ? source.days : stored.days,
+      startTime: source.startTime !== undefined ? source.startTime : stored.startTime,
+      endTime: source.endTime !== undefined ? source.endTime : stored.endTime,
+      radiusM: source.radiusM !== undefined ? source.radiusM : stored.radiusM,
+      lat: source.lat !== undefined ? source.lat : stored.lat,
+      lng: source.lng !== undefined ? source.lng : stored.lng,
+      addressNote: source.addressNote !== undefined ? source.addressNote : stored.addressNote,
+      updatedAt: new Date().toISOString(),
+      updatedBy: toText(source.actor) || (actor && actor.name) || '대표',
+    });
+    if ((merged.lat === null) !== (merged.lng === null)) {
+      throw new StoreError('bad-coordinates', '위도와 경도를 함께 입력해 주세요.');
+    }
+    const before = siteSchedule(site);
+    // 저장하지 않은 칸(요일·시간)은 업장 정보에서 계산한 기본값을 그대로 쓸니다.
+    const after = siteSchedule({ ...site, schedule: merged });
+    const changes = diffFields(
+      {
+        days: scheduleDayText(before.days),
+        time: scheduleTimeText(before) || '미설정',
+        radiusM: `${before.radiusM}m`,
+        coordinates: typeof before.lat === 'number' ? `${before.lat}, ${before.lng}` : '미등록',
+      },
+      {
+        days: scheduleDayText(merged.days),
+        time: scheduleTimeText(merged) || '미설정',
+        radiusM: `${merged.radiusM}m`,
+        coordinates: typeof merged.lat === 'number' ? `${merged.lat}, ${merged.lng}` : '미등록',
+      },
+      { days: '청소 요일', time: '청소 시간', radiusM: '허용 반경', coordinates: '업장 좌표' },
+    );
+    const now = new Date().toISOString();
+    await this.adapter.put('sites', { ...site, schedule: merged, updatedAt: now });
+    if (changes.length) {
+      await this.recordHistory('sites', site.id, {
+        actor: merged.updatedBy,
+        action: '일정 · 위치 설정 변경',
+        note: `${changes.length}개 항목`,
+        changes,
+      });
+    }
+    this._notify();
+    return normalizeSite(await this.adapter.get('sites', site.id));
+  }
+
+  /** 특정 날짜 일정 변경(휴무 · 보강 · 시간 변경) — 대표만. 같은 날짜는 새 값으로 바뀝니다. */
+  async addScheduleOverride(siteId, input = {}, { actor = null } = {}) {
+    if (actor && !isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '일정 변경은 대표(최고관리자)만 할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const source = input && typeof input === 'object' ? input : {};
+    const date = isoDateOf(source.date);
+    if (!date) throw new StoreError('bad-date', '변경할 날짜를 골라 주세요.');
+    const type = SCHEDULE_OVERRIDE_TYPES[source.type] ? source.type : 'change';
+    const row = normalizeScheduleOverride({
+      id: uid('schov'),
+      date,
+      type,
+      time: type === 'change' ? toText(source.time) : '',
+      note: source.note,
+      by: toText(source.actor) || (actor && actor.name) || '대표',
+      at: new Date().toISOString(),
+    });
+    if (type === 'change' && !row.time) {
+      throw new StoreError('bad-time', '변경할 시간을 입력해 주세요(예: 19:30 ~ 21:00).');
+    }
+    const next = normalizeScheduleOverrides([
+      ...site.scheduleOverrides.filter((item) => item.date !== date),
+      row,
+    ]);
+    await this.adapter.put('sites', { ...site, scheduleOverrides: next, updatedAt: new Date().toISOString() });
+    await this.recordHistory('sites', site.id, {
+      actor: row.by,
+      action: '일정 변경',
+      note: `${date} · ${SCHEDULE_OVERRIDE_TYPES[type].label}${row.time ? ` ${row.time}` : ''}${row.note ? ` · ${row.note}` : ''}`,
+    });
+    this._notify();
+    return normalizeSite(await this.adapter.get('sites', site.id));
+  }
+
+  /** 날짜별 일정 변경 취소 — 대표만. */
+  async removeScheduleOverride(siteId, overrideId, { actor = null } = {}) {
+    if (actor && !isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '일정 변경은 대표(최고관리자)만 할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const target = site.scheduleOverrides.find((row) => row.id === toText(overrideId));
+    if (!target) throw new StoreError('no-override', '일정 변경을 찾을 수 없습니다.');
+    const next = site.scheduleOverrides.filter((row) => row.id !== target.id);
+    await this.adapter.put('sites', { ...site, scheduleOverrides: next, updatedAt: new Date().toISOString() });
+    await this.recordHistory('sites', site.id, {
+      actor: (actor && actor.name) || '대표',
+      action: '일정 변경 취소',
+      note: `${target.date} · ${SCHEDULE_OVERRIDE_TYPES[target.type].label}`,
+    });
+    this._notify();
+    return normalizeSite(await this.adapter.get('sites', site.id));
+  }
+
+  /**
+   * 현장 도착 · 청소 완료 기록 — 그 업장의 배정 직원(또는 대표)만.
+   * 위치(GPS)를 못 받으면 사유를 골라 예외로 남깁니다 — 기록 자체를 막지 않습니다.
+   */
+  async recordSiteVisit(siteId, input = {}, { actor = null } = {}) {
+    if (!actor) throw new StoreError('permission-denied', '로그인해야 현장 기록을 남길 수 있습니다.');
+    if (isCustomerActor(actor)) {
+      throw new StoreError('permission-denied', '고객은 현장 기록을 남길 수 없습니다.');
+    }
+    if (isStaffActor(actor) && !canOpenSite(actor, siteId)) {
+      throw new StoreError('permission-denied', '배정받은 업장의 일정만 기록할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const source = input && typeof input === 'object' ? input : {};
+    const kind = source.kind === 'done' ? 'done' : 'arrive';
+    const date = isoDateOf(source.date) || todayISO();
+    const mode = source.mode === 'manual' ? 'manual' : 'gps';
+    const reason = toText(source.reason);
+    if (mode === 'manual' && !GPS_EXCEPTION_REASONS.some((row) => row.key === reason)) {
+      throw new StoreError('reason-required', '위치를 확인하지 못한 사유를 골라 주세요.');
+    }
+    const lat = Number(source.lat);
+    const lng = Number(source.lng);
+    if (mode === 'gps' && (!Number.isFinite(lat) || !Number.isFinite(lng))) {
+      throw new StoreError('bad-position', '현재 위치를 확인하지 못했습니다. 사유를 골라 예외로 기록해 주세요.');
+    }
+    const check = gpsCheck(site, { lat, lng });
+    const reasonLabel = mode === 'manual'
+      ? (GPS_EXCEPTION_REASONS.find((row) => row.key === reason) || {}).label || ''
+      : '';
+    const visit = normalizeVisit({
+      id: uid('visit'),
+      date,
+      kind,
+      at: new Date().toISOString(),
+      lat: mode === 'gps' ? lat : null,
+      lng: mode === 'gps' ? lng : null,
+      accuracy: mode === 'gps' ? source.accuracy : null,
+      distanceM: mode === 'gps' ? check.distanceM : null,
+      inRange: mode === 'gps' ? check.inRange : null,
+      mode,
+      reason: mode === 'manual' ? reason : '',
+      reasonLabel,
+      note: source.note,
+      accountId: toText(actor.accountId),
+      name: toText(actor.name),
+    });
+    const visits = normalizeVisits([visit, ...site.visits]);
+    await this.adapter.put('sites', { ...site, visits, updatedAt: new Date().toISOString() });
+
+    const kindLabel = kind === 'done' ? '청소 완료' : '현장 도착';
+    const kindParticle = kind === 'done' ? '를' : '을';
+    let note = '';
+    if (visit.mode === 'manual') note = `위치 미인증 · ${reasonLabel}`;
+    else if (visit.distanceM === null) note = '위치 기록 · 업장 좌표 미등록';
+    else note = `${visit.inRange ? '반경 안' : '반경 밖'} · ${visit.distanceM}m (허용 ${check.radiusM}m)`;
+    if (visit.note) note += ` · ${visit.note}`;
+    await this.recordHistory('sites', site.id, {
+      actor: visit.name || '직원',
+      action: `${kindLabel} 기록`,
+      note,
+    });
+    this._notify();
+    const today = todayISO();
+    const [entry] = scheduleEntriesForSite(
+      normalizeSite(await this.adapter.get('sites', site.id)),
+      { from: date, to: date, today },
+    );
+    return {
+      visit,
+      entry: entry || null,
+      status: entry ? entry.status : 'planned',
+      check,
+      message: visit.mode === 'manual'
+        ? `${kindLabel}${kindParticle} 예외로 기록했습니다 (${reasonLabel}).`
+        : `${kindLabel}${kindParticle} 기록했습니다${visit.distanceM === null ? '' : ` · ${visit.distanceM}m${visit.inRange ? ' (반경 안)' : ' (반경 밖)'}`}.`,
+    };
+  }
+
+  /** 업장의 일정 변경 · 도착 기록 이력 — 대표 화면용. */
+  async listScheduleVisits(siteId, { limit = 20 } = {}) {
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    return {
+      overrides: site.scheduleOverrides,
+      visits: site.visits.slice(0, Math.max(1, Math.round(Number(limit) || 20))),
+      config: siteSchedule(site),
+    };
   }
 
   /** Save the 첫 견적(오염) or 첫 청소(대청소) record of a site. */
