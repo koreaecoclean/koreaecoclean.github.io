@@ -23,6 +23,16 @@ import { openDocumentSheet } from './quote-contract.js';
 /* markup                                                              */
 /* ------------------------------------------------------------------ */
 
+/** 시각 표시 — 저장은 UTC(ISO)지만 화면·인쇄는 기기 시간대(한국)로 보여 줍니다. */
+function stampText(iso) {
+  const text = String(iso || '');
+  if (!text) return '';
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return text.replace('T', ' ').slice(0, 16);
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}.${pad(date.getMonth() + 1)}.${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function photoCardsTemplate(report, group) {
   const photos = (report.photos && report.photos[group.key]) || [];
   if (!photos.length) return '';
@@ -88,7 +98,7 @@ function revisionHistoryTemplate(report) {
             (row) => `
           <li data-revision="${esc(row.action)}">
             <strong>${esc(REPORT_REVISION_ACTIONS[row.action] || row.actionLabel || row.action)}</strong>
-            <span>${esc(row.at ? row.at.replace('T', ' ').slice(0, 16) : '')}${row.by ? ` · ${esc(row.by)}` : ''}</span>
+            <span>${esc(stampText(row.at))}${row.by ? ` · ${esc(row.by)}` : ''}</span>
             ${row.note ? `<p>${esc(row.note)}</p>` : ''}
             ${row.changes.length
               ? `<p class="report-doc__changes">${row.changes
@@ -109,7 +119,7 @@ function originalTemplate(report) {
   const done = rows.filter((row) => row.done).length;
   return `
     <section class="report-doc__block report-doc__internal" data-report-original>
-      <h3>처음 등록한 내용 <span>${esc(original.at.replace('T', ' ').slice(0, 16))}</span></h3>
+      <h3>처음 등록한 내용 <span>${esc(stampText(original.at))}</span></h3>
       <p class="report-doc__sub">점검 ${done}/${rows.length} · 사진 시건장치 ${Number(original.photos.security) || 0}장 ·
         맞춤청소 ${Number(original.photos.cleaning) || 0}장 · 특이사항 ${Number(original.photos.issue) || 0}장</p>
       ${original.note ? `<p><strong>전달 메모</strong> ${esc(original.note)}</p>` : ''}

@@ -7362,7 +7362,7 @@ export class Store {
           action: 'created',
           by: toText(input.leader) || toText(input.actor),
           statusTo: 'pending',
-          note: `${toText(input.date)} ${toText(input.time)} 등록`,
+          note: `${toText(input.date)} ${toText(input.time)} 청소 보고`.trim(),
         }),
       ],
       revisionCount: 0,
