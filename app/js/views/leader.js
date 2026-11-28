@@ -24,7 +24,7 @@ import {
   openLightbox,
   modeSwitchTemplate,
 } from '../ui.js';
-import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, canUseSupply, MAX_BASELINE_PHOTOS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, HANDOVER_ACCESS_TYPES, SCHEDULE_STATUS, SCHEDULE_DAYS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, scheduleDayText, scheduleTimeText } from '../store.js';
+import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, canUseSupply, MAX_BASELINE_PHOTOS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, HANDOVER_ACCESS_TYPES, SCHEDULE_STATUS, SCHEDULE_DAYS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, scheduleDayText, scheduleTimeText, durationText } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
 import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
@@ -569,6 +569,34 @@ export function createLeaderView(container) {
     ) || null;
   }
 
+  /** 그 날짜의 일정 — 오늘 · 이번 주 · 월간에서 찾습니다(보고서 화면 연결용). */
+  function scheduleEntryOfDate(siteId, date) {
+    const rows = (state.schedule.entries || []).concat(
+      (state.scheduleMonthSchedule && state.scheduleMonthSchedule.entries) || [],
+    );
+    return rows.find((entry) => entry.siteId === siteId && entry.date === date) || null;
+  }
+
+  /** 보고서 화면에 보여 주는 «현장 도착 = 시작 / 청소 완료 = 종료» 기록. */
+  function workRecordCardTemplate(entry) {
+    const start = entry && entry.actualStart ? fmtTime(entry.actualStart) : '';
+    const end = entry && entry.actualEnd ? fmtTime(entry.actualEnd) : '';
+    const duration = (entry && entry.workDurationText) || '';
+    if (!start && !end) return '';
+    const lines = [
+      start ? `<span class="sched-work-line" data-report-start="${esc(entry.actualStart)}">시작 ${esc(start)}</span>` : '',
+      end ? `<span class="sched-work-line" data-report-end="${esc(entry.actualEnd)}">종료 ${esc(end)}</span>` : '',
+      duration ? `<span class="sched-work-line" data-report-duration="${esc(entry.workMinutes)}">소요 ${esc(duration)}</span>` : '',
+    ].filter(Boolean);
+    return `
+      <section class="sched-work-card" data-report-worktime="${esc(entry.siteId)}">
+        <strong>현장 도착 · 청소 완료 기록</strong>
+        <p>${lines.join(' <span class="tiny muted">·</span> ')}</p>
+        <p class="tiny muted">이 시작 · 종료 시간이 보고서에 함께 등록됩니다.</p>
+        ${duration ? `<div><button class="link-btn" type="button" data-fill-duration="${esc(entry.workMinutes)}">소요 시간 ${esc(duration)}로 채우기</button></div>` : ''}
+      </section>`;
+  }
+
   function gpsBadgeTemplate(entry) {
     const gps = (entry && entry.gps) || { key: '', label: '' };
     const parts = [gps.arriveLabel, gps.doneLabel].filter(Boolean);
@@ -616,11 +644,14 @@ export function createLeaderView(container) {
   function todayScheduleCardTemplate(entry) {
     const busy = state.scheduleBusy === entry.siteId;
     const done = entry.status === 'done';
+    const started = !!entry.arrive;
+    const finished = !!entry.done;
+    const startClock = entry.actualStart ? fmtTime(entry.actualStart) : '';
+    const endClock = entry.actualEnd ? fmtTime(entry.actualEnd) : '';
+    const duration = entry.workDurationText || '';
     const overrideLabel = entry.override
       ? (SCHEDULE_OVERRIDE_TYPES[entry.override.type] || {}).label || '일정 변경'
       : '';
-    const arriveAt = entry.arrive && entry.arrive.at ? fmtTime(String(entry.arrive.at).slice(11, 16)) : '';
-    const doneAt = entry.done && entry.done.at ? fmtTime(String(entry.done.at).slice(11, 16)) : '';
     return `
       <article class="sched-card" data-schedule-site="${esc(entry.siteId)}" data-schedule-date="${esc(entry.date)}" data-schedule-status="${esc(entry.status)}">
         <div class="sched-card__head">
@@ -631,17 +662,38 @@ export function createLeaderView(container) {
           <span class="badge ${esc(entry.statusBadge)}">${esc(entry.statusLabel)}</span>
         </div>
         ${entry.changed ? `<p class="tiny muted">일정 변경 · ${esc(overrideLabel)}${entry.override && entry.override.note ? ` · ${esc(entry.override.note)}` : ''}</p>` : ''}
+        <div class="sched-work" data-work-times="${esc(entry.siteId)}">
+          <div class="sched-work__row" data-work-start="${esc(entry.actualStart || '')}">
+            <span class="sched-work__label">시작</span>
+            <strong class="sched-work__value${started ? ' is-set' : ''}">${started ? esc(startClock) : '등록 전'}</strong>
+          </div>
+          <div class="sched-work__row" data-work-end="${esc(entry.actualEnd || '')}">
+            <span class="sched-work__label">종료</span>
+            <strong class="sched-work__value${finished ? ' is-set' : ''}">${finished ? esc(endClock) : '—'}</strong>
+            ${duration ? `<span class="sched-work__dur" data-work-duration="${esc(entry.workMinutes)}분">소요 ${esc(duration)}</span>` : ''}
+          </div>
+        </div>
         <div class="sched-gps" data-gps-status="${esc((entry.gps || {}).key || '')}">
           ${gpsBadgeTemplate(entry)}
-          ${arriveAt ? `<span class="tiny muted">${esc(arriveAt)} 도착</span>` : ''}
-          ${doneAt ? `<span class="tiny muted">${esc(doneAt)} 완료</span>` : ''}
           ${entry.reportId ? '<span class="badge badge--done">보고 연결</span>' : ''}
         </div>
         ${entry.hasCoordinates === false ? '<p class="tiny muted">업장 좌표가 아직 없습니다 — 시각은 기록되고, 거리·반경 확인은 대표가 좌표를 등록한 뒤 가능합니다.</p>' : ''}
-        <div class="btn-row">
-          <button class="btn btn--primary btn--sm" type="button" data-visit-arrive="${esc(entry.siteId)}" ${busy || done ? 'disabled' : ''}>현장 도착 (GPS 확인)</button>
-          <button class="btn btn--quiet btn--sm" type="button" data-visit-done="${esc(entry.siteId)}" ${busy || done ? 'disabled' : ''}>청소 완료</button>
-        </div>
+        ${
+          finished
+            ? `<p class="sched-work__done" data-work-summary="${esc(entry.siteId)}">${icons.check} 청소 완료${startClock && endClock ? ` · 시작 ${esc(startClock)} → 종료 ${esc(endClock)}` : ''}${duration ? ` (소요 ${esc(duration)})` : ''}</p>
+               <button class="link-btn sched-work__redo" type="button" data-visit-redo-done="${esc(entry.siteId)}">완료 시간 다시 기록</button>`
+            : started
+              ? `<p class="sched-work__started" data-work-started="${esc(entry.siteId)}">${icons.check} 시작 등록됨 · ${esc(startClock)}</p>
+                 <div class="btn-row">
+                   <button class="btn btn--primary" type="button" data-visit-done="${esc(entry.siteId)}" ${busy ? 'disabled' : ''}>청소 완료 (종료 시간 등록)</button>
+                 </div>
+                 <button class="link-btn sched-work__redo" type="button" data-visit-arrive="${esc(entry.siteId)}" ${busy ? 'disabled' : ''}>시작 시간 다시 기록</button>`
+              : `<div class="btn-row">
+                   <button class="btn btn--primary" type="button" data-visit-arrive="${esc(entry.siteId)}" ${busy || done ? 'disabled' : ''}>현장 도착 (GPS 확인) · 시작 등록</button>
+                   <button class="btn btn--quiet btn--sm" type="button" data-visit-done="${esc(entry.siteId)}" ${busy || done ? 'disabled' : ''}>청소 완료</button>
+                 </div>
+                 <p class="tiny muted sched-work__hint">현장에 도착해 [현장 도착]을 누르면 그 시각이 <strong>청소 시작 시간</strong>으로 등록됩니다.</p>`
+        }
         ${visitFormTemplate(entry.siteId)}
       </article>`;
   }
@@ -760,7 +812,7 @@ export function createLeaderView(container) {
           <span class="badge">${todayEntries.length}곳</span>
         </div>
         <div class="sched-stats">${statusRow}</div>
-        <p class="hint">현장에 도착하면 [현장 도착]을 누르세요. 위치가 확인되면 거리와 반경 안 여부가 함께 기록됩니다.</p>
+        <p class="hint">현장에 도착하면 [현장 도착]을 누르세요. 그 시각이 <strong>청소 시작 시간</strong>으로 등록되고, 위치가 확인되면 거리와 반경 안 여부도 함께 기록됩니다. [청소 완료]를 누르면 종료 시간과 <strong>소요 시간</strong>이 계산됩니다.</p>
       </section>
       <div class="sched-list">
         ${todayEntries.length ? todayEntries.map(todayScheduleCardTemplate).join('') : '<div class="empty"><strong>오늘 예정된 업장이 없습니다</strong><span>대표가 일정을 바꾸면 여기에 표시됩니다.</span></div>'}
@@ -778,6 +830,7 @@ export function createLeaderView(container) {
         <p class="tiny muted">
           위치는 근무 중 현장 도착 · 완료를 누를 때 그 순간의 좌표만 기록합니다. 근무가 끝나면 위치를 추적하지 않습니다.
           위치 권한을 거부했거나 실내라 위치가 잡히지 않으면 사유를 골라 기록할 수 있고, 그 기록은 ‘위치 미인증 · 예외’로 표시됩니다.
+          도착 시각은 청소 시작, 완료 시각은 종료로 남아 보고서에도 함께 등록됩니다.
         </p>
       </section>`;
   }
@@ -1568,6 +1621,7 @@ export function createLeaderView(container) {
     const draft = ensureDraft(session, site);
     const meta = CATEGORY_META[site.category] || {};
     const hasManual = manualDays(site).length > 0;
+    const workEntry = scheduleEntryOfDate(site.id, draft.date);
 
     return `
       ${leaderBarTemplate(session)}
@@ -1616,6 +1670,8 @@ export function createLeaderView(container) {
           </div>
         </div>
       </section>
+
+      ${workRecordCardTemplate(workEntry)}
 
       ${hasManual ? manualCardTemplate(site, draft) : ''}
 
@@ -2430,7 +2486,30 @@ export function createLeaderView(container) {
     /* -------- 5단계 — 현장 도착(GPS) · 청소 완료 · 예외 기록 -------- */
     const arriveButton = event.target.closest('[data-visit-arrive]');
     if (arriveButton) {
-      await recordVisitAtSite(arriveButton.dataset.visitArrive, 'arrive');
+      const siteId = arriveButton.dataset.visitArrive;
+      const entry = scheduleEntryOfDate(siteId, toISODate());
+      if (entry && entry.arrive) {
+        const ok = await confirmDialog({
+          title: '시작 시간을 다시 기록할까요?',
+          message: `이미 시작 ${fmtTime(entry.actualStart)}으로 등록되어 있습니다.\n지금 시각으로 다시 기록하면 청소 시작 시간이 바뀌고 소요 시간도 다시 계산됩니다.`,
+          confirmLabel: '다시 기록',
+        });
+        if (!ok) return;
+      }
+      await recordVisitAtSite(siteId, 'arrive');
+      return;
+    }
+    const redoDone = event.target.closest('[data-visit-redo-done]');
+    if (redoDone) {
+      const siteId = redoDone.dataset.visitRedoDone;
+      const entry = scheduleEntryOfDate(siteId, toISODate());
+      const ok = await confirmDialog({
+        title: '완료 시간을 다시 기록할까요?',
+        message: `이미 종료 ${fmtTime(entry && entry.actualEnd)}로 등록되어 있습니다.\n지금 시각으로 다시 기록하면 종료 시간과 소요 시간이 바뀝니다.`,
+        confirmLabel: '다시 기록',
+      });
+      if (!ok) return;
+      await recordVisitAtSite(siteId, 'done');
       return;
     }
     const doneButton = event.target.closest('[data-visit-done]');
@@ -2443,6 +2522,18 @@ export function createLeaderView(container) {
       const delta = scheduleMonth.dataset.scheduleMonth === 'prev' ? -1 : 1;
       state.scheduleMonth = shiftMonthKey(state.scheduleMonth || monthKeyOf(), delta);
       await render();
+      return;
+    }
+    // 현장 기록으로 계산한 소요 시간을 보고서 칸에 그대로 채웁니다.
+    const fillDuration = event.target.closest('[data-fill-duration]');
+    if (fillDuration && state.draft) {
+      const minutes = Number(fillDuration.dataset.fillDuration) || 0;
+      if (minutes > 0) {
+        state.draft.duration = minutes;
+        const input = $('#r-duration', container);
+        if (input) input.value = String(minutes);
+        toast(`소요 시간을 ${durationText(minutes)}로 채웠습니다.`, { duration: 4000 });
+      }
       return;
     }
     const visitCancel = event.target.closest('[data-visit-cancel]');

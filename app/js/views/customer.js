@@ -332,7 +332,10 @@ export function createCustomerView(container) {
           </div>
           <div class="report__title">
             <strong>${esc(fmtTime(report.time))} 완료${rel ? ` · ${esc(rel)}` : ''}</strong>
-            <span>${esc(report.leader)} ${esc(report.leaderRole || '팀장')}${report.durationMin ? ` · ${report.durationMin}분` : ''}${report.manualDay ? ` · ${esc(report.manualDay)}요일 청소공정` : ''}</span>
+            <span>${esc(report.leader)} ${esc(report.leaderRole || '팀장')}${report.workDurationText ? '' : report.durationMin ? ` · ${report.durationMin}분` : ''}${report.manualDay ? ` · ${esc(report.manualDay)}요일 청소공정` : ''}</span>
+            ${report.workStartAt || report.workEndAt
+              ? `<span class="sched-work-line" data-report-work="${esc(report.id)}">${report.workStartAt ? `시작 ${esc(fmtTime(report.workStartAt))}` : ''}${report.workStartAt && report.workEndAt ? ' → ' : ''}${report.workEndAt ? `완료 ${esc(fmtTime(report.workEndAt))}` : ''}${report.workDurationText ? ` (${esc(report.workDurationText)})` : ''}</span>`
+              : ''}
           </div>
           <span class="badge badge--done">${icons.check} 완료</span>
         </header>
@@ -778,12 +781,14 @@ export function createCustomerView(container) {
                   <span class="sched-customer__date">${esc(fmtDateLong(entry.date))}</span>
                   <span class="tiny muted">${esc(entry.time || '시간 협의')}</span>
                   <span class="badge ${cls(entry.status)}">${esc(entry.statusLabel)}</span>
+                  ${entry.actualStart ? `<span class="sched-work-line" data-customer-work-start="${esc(entry.actualStart)}">시작 ${esc(fmtTime(entry.actualStart))}</span>` : ''}
+                  ${entry.actualEnd ? `<span class="sched-work-line" data-customer-work-end="${esc(entry.actualEnd)}">완료 ${esc(fmtTime(entry.actualEnd))}${entry.workDurationText ? ` (${esc(entry.workDurationText)})` : ''}</span>` : ''}
                   ${entry.changed ? '<span class="tiny muted">일정 변경</span>' : ''}
                 </li>`,
               )
               .join('')}</ul>`
           : '<p class="tiny muted">예정된 방문이 없습니다. 대표에게 문의해 주세요.</p>'}
-        <p class="hint">정기 청소 요일을 기준으로 만든 일정입니다. 휴무 · 시간 변경이 있으면 이곳에 바로 표시됩니다. 현장 작업 기록은 아래 방문 보고에서 확인하실 수 있습니다.</p>
+        <p class="hint">정기 청소 요일을 기준으로 만든 일정입니다. 휴무 · 시간 변경이 있으면 이곳에 바로 표시됩니다. 팀장이 현장에 도착해 시작을 등록하면 <strong>실제 시작 · 완료 시각</strong>이 함께 나옵니다. 현장 작업 기록은 아래 방문 보고에서 확인하실 수 있습니다.</p>
       </section>`;
   }
 

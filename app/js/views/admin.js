@@ -7,7 +7,7 @@
  */
 
 import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate, fmtDateLong, fmtTime, openLightbox, modeSwitchTemplate } from '../ui.js';
-import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, countReportPhotos, QUOTE_STATUS, AGREEMENT_STATUS, SURVEY_PHOTO_AREAS, QUOTE_TEAM_SIZES, QUOTE_DIFFICULTIES, parsePyeong, estimateQuote, handoverPhotoCatalog, HANDOVER_ACCESS_TYPES, HANDOVER_CHECK_KEYS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, SCHEDULE_DAYS, SCHEDULE_STATUS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, DEFAULT_GPS_RADIUS_M, siteSchedule, scheduleDayText, scheduleTimeText } from '../store.js';
+import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, countReportPhotos, QUOTE_STATUS, AGREEMENT_STATUS, SURVEY_PHOTO_AREAS, QUOTE_TEAM_SIZES, QUOTE_DIFFICULTIES, parsePyeong, estimateQuote, handoverPhotoCatalog, HANDOVER_ACCESS_TYPES, HANDOVER_CHECK_KEYS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, SCHEDULE_DAYS, SCHEDULE_STATUS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, DEFAULT_GPS_RADIUS_M, siteSchedule, scheduleDayText, scheduleTimeText, visitWorkOf, clockOfISO, clockLabel } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import { preparePhoto } from '../photos.js';
 import { getSession, loginAdmin, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
@@ -910,6 +910,18 @@ export function createAdminView(container) {  const state = {
       </div>`;
   }
 
+  /**
+   * 보고서에 연결된 «실제 청소 시작 · 종료 시간». 현장 도착/완료 기록이 있을 때만 보입니다.
+   * (v2.11.0 이전 보고서는 빈 값 → 줄을 그리지 않습니다. 하위 호환)
+   */
+  function reportWorkLine(report) {
+    const start = report.workStartAt ? fmtTime(report.workStartAt) : '';
+    const end = report.workEndAt ? fmtTime(report.workEndAt) : '';
+    const duration = report.workDurationText || '';
+    if (!start && !end) return '';
+    return `<span class="sched-work-line" data-report-work="${esc(report.id)}">${start ? `시작 ${esc(start)}` : ''}${start && end ? ' → ' : ''}${end ? `종료 ${esc(end)}` : ''}${duration ? ` · 소요 ${esc(duration)}` : ''}</span>`;
+  }
+
   function approvalCardTemplate(report) {
     const status = reportStatus(report);
     const done = (report.checklist || []).filter((item) => item.done).length;
@@ -932,7 +944,8 @@ export function createAdminView(container) {  const state = {
         <header class="approval-card__head">
           <div>
             <strong>${esc(report.siteName || '')}</strong>
-            <span>${esc(fmtDateLong(report.date))} ${esc(fmtTime(report.time))} · ${esc(report.leader)} ${esc(report.leaderRole || '팀장')}${report.durationMin ? ` · ${report.durationMin}분` : ''}</span>
+            <span>${esc(fmtDateLong(report.date))} ${esc(fmtTime(report.time))} · ${esc(report.leader)} ${esc(report.leaderRole || '팀장')}${report.workDurationText ? '' : report.durationMin ? ` · ${report.durationMin}분` : ''}</span>
+            ${reportWorkLine(report)}
           </div>
           <span class="badge ${status.badge}">${esc(status.label)}</span>
         </header>
@@ -1157,7 +1170,7 @@ export function createAdminView(container) {  const state = {
                 .join('')
             : '<p class="tiny muted">이 달에는 일정이 없습니다.</p>'}
         </div>
-        <p class="hint">팀장이 현장에서 [현장 도착]을 누르면 거리 · 반경 안 여부가 기록됩니다. 위치를 못 받으면 사유를 남긴 예외 기록이 ‘위치 미인증’으로 표시됩니다.</p>
+        <p class="hint">팀장이 현장에서 [현장 도착]을 누르면 그 시각이 <strong>청소 시작 시간</strong>으로, [청소 완료]를 누르면 <strong>종료 시간과 소요 시간</strong>이 기록됩니다. 위치를 못 받으면 사유를 남긴 예외 기록이 ‘위치 미인증’으로 표시됩니다.</p>
       </section>`;
   }
 
@@ -1165,20 +1178,27 @@ export function createAdminView(container) {  const state = {
     const overrideLabel = entry.changed && entry.override
       ? (SCHEDULE_OVERRIDE_TYPES[entry.override.type] || {}).label || ''
       : '';
-    const arriveAt = entry.arrive && entry.arrive.at ? fmtTime(String(entry.arrive.at).slice(11, 16)) : '';
-    const doneAt = entry.done && entry.done.at ? fmtTime(String(entry.done.at).slice(11, 16)) : '';
+    const startClock = entry.actualStart ? fmtTime(entry.actualStart) : '';
+    const endClock = entry.actualEnd ? fmtTime(entry.actualEnd) : '';
+    const duration = entry.workDurationText || '';
     return `
       <article class="sched-row sched-row--admin" data-schedule-site="${esc(entry.siteId)}" data-schedule-status="${esc(entry.status)}">
         <div class="sched-row__head">
           <strong>${esc(entry.siteName)}</strong>
           ${scheduleStatusBadge(entry)}
         </div>
-        <span class="tiny muted">${esc(entry.time || '시간 미설정')} · 담당 ${esc(entry.assigneeName || entry.manager || '미지정')}</span>
+        <span class="tiny muted">예정 ${esc(entry.time || '시간 미설정')} · 담당 ${esc(entry.assigneeName || entry.manager || '미지정')}</span>
         ${overrideLabel ? `<span class="tiny muted">일정 변경 · ${esc(overrideLabel)}${entry.override.note ? ` · ${esc(entry.override.note)}` : ''}</span>` : ''}
+        <div class="sched-row__work" data-work-times="${esc(entry.siteId)}">
+          ${startClock
+            ? `<span data-work-start="${esc(entry.actualStart)}">실제 시작 <strong>${esc(startClock)}</strong></span>`
+            : '<span class="tiny muted" data-work-start="">실제 시작 — 미등록</span>'}
+          ${endClock
+            ? `<span data-work-end="${esc(entry.actualEnd)}">${startClock ? '· ' : ''}종료 <strong>${esc(endClock)}</strong>${duration ? ` (소요 ${esc(duration)})` : ''}</span>`
+            : '<span class="tiny muted" data-work-end="">종료 — 미등록</span>'}
+        </div>
         <div class="sched-row__badges">
           ${scheduleGpsBadge(entry)}
-          ${arriveAt ? `<span class="tiny muted">${esc(arriveAt)} 도착</span>` : ''}
-          ${doneAt ? `<span class="tiny muted">${esc(doneAt)} 완료</span>` : ''}
           ${entry.reportId ? '<span class="badge badge--done">보고 연결</span>' : ''}
         </div>
       </article>`;
@@ -1205,14 +1225,17 @@ export function createAdminView(container) {  const state = {
     const visitsHtml = visits.length
       ? visits
           .map((visit) => {
-            const kindLabel = visit.kind === 'done' ? '완료' : '도착';
-            const when = visit.at ? `${fmtDateLong(String(visit.at).slice(0, 10))} ${fmtTime(String(visit.at).slice(11, 16))}` : fmtDateLong(visit.date);
+            // 도착 = 청소 시작, 완료 = 종료 — 같은 날 기록과 짝을 지어 소요 시간까지 보여 줍니다.
+            const work = visitWorkOf(site.visits, visit.date);
+            const kindLabel = visit.kind === 'done' ? '종료' : '시작';
+            const when = `${fmtDateLong(visit.date)} ${clockLabel(clockOfISO(visit.at))}`.trim();
+            const duration = visit.kind === 'done' && work.workDurationText ? ` · 소요 ${work.workDurationText}` : '';
             const how = visit.mode === 'manual'
               ? `위치 미인증 · ${esc(visit.reasonLabel || '사유 기록')}${visit.note ? ` · ${esc(visit.note)}` : ''}`
               : visit.distanceM === null
                 ? '위치 기록 · 거리 확인 불가'
                 : `${visit.inRange ? '반경 안' : '반경 밖'} · ${visit.distanceM}m`;
-            return `<li><span>${esc(when)}</span><span>${kindLabel} · ${esc(visit.name || '')}</span><span class="tiny muted">${how}</span></li>`;
+            return `<li data-work-visit="${esc(visit.kind)}"><span>${esc(when)}</span><span>${kindLabel} · ${esc(visit.name || '')}${esc(duration)}</span><span class="tiny muted">${how}</span></li>`;
           })
           .join('')
       : '<li class="tiny muted">현장 기록이 없습니다.</li>';

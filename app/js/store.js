@@ -161,6 +161,14 @@ export function isReportVisible(report) {
 
 function normalizeReport(report) {
   if (!report) return report;
+  // v2.11.1 — 현장 도착 · 청소 완료로 등록된 실제 작업 시간(시작 · 종료 · 소요).
+  //  v2.11.0 이전 보고서에는 없으므로 빈 값 / null 로 들어옵니다(하위 호환).
+  const workStartAt = hhmm(report.workStartAt) || clockOfISO(report.workStartISO);
+  const workEndAt = hhmm(report.workEndAt) || clockOfISO(report.workEndISO);
+  const rawMin = report.workDurationMin;
+  const workMinutes = rawMin === undefined || rawMin === null || rawMin === '' || !Number.isFinite(Number(rawMin)) || Number(rawMin) < 0
+    ? (workStartAt && workEndAt ? minutesBetween(report.workStartISO || '', report.workEndISO || '') : null)
+    : Math.round(Number(rawMin));
   return {
     ...report,
     photos: normalizePhotos(report.photos),
@@ -168,6 +176,12 @@ function normalizeReport(report) {
     status: reportStatusKey(report),
     approvedAt: report.approvedAt || '',
     approvedBy: report.approvedBy || '',
+    workStartAt,
+    workEndAt,
+    workDurationMin: workMinutes,
+    workDurationText: workMinutes === null ? '' : durationText(workMinutes),
+    workStartISO: toText(report.workStartISO),
+    workEndISO: toText(report.workEndISO),
     // 업장(siteId) 중심 연결 — 보고서도 어느 계약 · 어느 팀장 계약의 작업인지 가집니다.
     contractId: toText(report.contractId),
     staffContractId: toText(report.staffContractId),
@@ -1321,6 +1335,99 @@ export function normalizeVisits(list) {
   return rows.sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, MAX_SITE_VISITS);
 }
 
+/**
+ * 야간 일정(예: 22:30 ~ 05:30)은 도착과 완료가 서로 다른 날짜에 찍힙니다.
+ * 시작 · 종료를 이어 볼 때 허용하는 최대 간격(분).
+ */
+const WORK_PAIR_WINDOW_MIN = 720;
+
+/** ISO 시각 → 그 기기 시간대의 24시간 'HH:MM' (예: 07:47). 값이 없으면 ''. */
+export function clockOfISO(value) {
+  const text = toText(value);
+  if (!text) return '';
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+/** 'HH:MM' → '오전 7:47' — 화면 · 알림 문구용. */
+export function clockLabel(value) {
+  const text = hhmm(value);
+  if (!text) return '';
+  const [hour, minute] = text.split(':').map(Number);
+  const meridiem = hour < 12 ? '오전' : '오후';
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${meridiem} ${hour12}:${String(minute).padStart(2, '0')}`;
+}
+
+/** 두 시각 사이의 분 — 뒤가 앞보다 빠르거나 값이 없으면 null. */
+export function minutesBetween(startAt, endAt) {
+  const start = new Date(toText(startAt));
+  const end = new Date(toText(endAt));
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const diff = Math.round((end.getTime() - start.getTime()) / 60000);
+  return diff >= 0 ? diff : null;
+}
+
+/** 85 → '1시간 25분' · 60 → '1시간' · 25 → '25분'. */
+export function durationText(minutes) {
+  if (minutes === null || minutes === undefined || minutes === '') return '';
+  const value = Number(minutes);
+  if (!Number.isFinite(value) || value < 0) return '';
+  const total = Math.round(value);
+  const hour = Math.floor(total / 60);
+  const minute = total % 60;
+  if (!hour) return `${minute}분`;
+  if (!minute) return `${hour}시간`;
+  return `${hour}시간 ${minute}분`;
+}
+
+/**
+ * 한 날짜의 현장 기록에서 **청소 시작 · 종료 시각과 소요 시간**을 계산합니다.
+ * 도착(at)이 곧 시작 시간이고 완료(at)가 곧 종료 시간입니다.
+ * 같은 날짜에 짝이 없으면 12시간 안의 이웃 날짜 기록까지 이어 봅니다(야간 일정).
+ */
+export function visitWorkOf(visits, date) {
+  const rows = Array.isArray(visits) ? visits : [];
+  const dayRows = rows.filter((row) => row.date === date);
+  const arrive = dayRows.find((row) => row.kind === 'arrive') || null;
+  const done = dayRows.find((row) => row.kind === 'done') || null;
+  let startRow = arrive;
+  let endRow = done;
+  if (startRow && !endRow) {
+    endRow = rows
+      .filter((row) => row.kind === 'done' && row.date > date)
+      .filter((row) => {
+        const gap = minutesBetween(startRow.at, row.at);
+        return gap !== null && gap <= WORK_PAIR_WINDOW_MIN;
+      })
+      .sort((a, b) => String(a.at).localeCompare(String(b.at)))[0] || null;
+  }
+  if (!startRow && endRow) {
+    startRow = rows
+      .filter((row) => row.kind === 'arrive' && row.date < date)
+      .filter((row) => {
+        const gap = minutesBetween(row.at, endRow.at);
+        return gap !== null && gap <= WORK_PAIR_WINDOW_MIN;
+      })
+      .sort((a, b) => String(b.at).localeCompare(String(a.at)))[0] || null;
+  }
+  const actualStartAt = startRow && startRow.at ? String(startRow.at) : '';
+  const actualEndAt = endRow && endRow.at ? String(endRow.at) : '';
+  const workedMin = actualStartAt && actualEndAt ? minutesBetween(actualStartAt, actualEndAt) : null;
+  return {
+    actualStartAt,
+    actualEndAt,
+    actualStart: clockOfISO(actualStartAt),
+    actualEnd: clockOfISO(actualEndAt),
+    workMinutes: workedMin,
+    workDurationText: workedMin === null ? '' : durationText(workedMin),
+    // 야간 일정처럼 다른 날짜에 찍힌 짝을 이어 쓴 경우
+    pairedStart: !!startRow && startRow !== arrive,
+    pairedEnd: !!endRow && endRow !== done,
+  };
+}
+
 /** 두 좌표 사이 거리(m) — 하버사인. */
 export function distanceMeters(lat1, lng1, lat2, lng2) {
   const values = [lat1, lng1, lat2, lng2];
@@ -1467,6 +1574,8 @@ export function scheduleEntriesForSite(site, { from, to, today = todayISO(), now
       const dayVisits = visits.filter((row) => row.date === cursor);
       const arrive = dayVisits.find((row) => row.kind === 'arrive') || null;
       const done = dayVisits.find((row) => row.kind === 'done') || null;
+      // 도착 = 청소 시작, 완료 = 청소 종료 — 소요 시간까지 함께 계산합니다.
+      const work = visitWorkOf(visits, cursor);
       const report = reports.has(cursor);
       const time = override && override.type === 'change' && override.time
         ? override.time
@@ -1493,11 +1602,12 @@ export function scheduleEntriesForSite(site, { from, to, today = todayISO(), now
         radiusM: config.radiusM,
         arrive,
         done,
+        ...work,
         gps: gpsLabelOf({ arrive, done }),
       };
       let status = 'planned';
       if (off) status = 'off';
-      else if (done || report) status = 'done';
+      else if (done || work.pairedEnd || report) status = 'done';
       else if (arrive) status = 'active';
       else if (cursor < today) status = 'missed';
       else if (scheduleOverdue(entry, today, nowMin)) status = 'missed';
@@ -4515,7 +4625,8 @@ export class Store {
       entries = entries.map((entry) => ({ ...entry, arrive: safeVisit(entry.arrive), done: safeVisit(entry.done) }));
     }
     if (isCustomerActor(actor)) {
-      // 고객에게는 방문 날짜·시간·상태만 — 직원 위치 · 좌표 · 거리 · 사유는 넘기지 않습니다.
+      // 고객에게는 방문 날짜·시간·상태와 **실제 시작 · 종료 시각**만 —
+      // 직원 위치·좌표·거리·사유·담당자 이름은 넘기지 않습니다.
       entries = entries.map((entry) => ({
         id: entry.id,
         siteId: entry.siteId,
@@ -4528,6 +4639,10 @@ export class Store {
         changed: entry.changed,
         arrived: !!entry.arrive,
         done: entry.status === 'done',
+        actualStart: entry.actualStart,
+        actualEnd: entry.actualEnd,
+        workMinutes: entry.workMinutes,
+        workDurationText: entry.workDurationText,
       }));
     }
 
@@ -4710,7 +4825,6 @@ export class Store {
     await this.adapter.put('sites', { ...site, visits, updatedAt: new Date().toISOString() });
 
     const kindLabel = kind === 'done' ? '청소 완료' : '현장 도착';
-    const kindParticle = kind === 'done' ? '를' : '을';
     let note = '';
     if (visit.mode === 'manual') note = `위치 미인증 · ${reasonLabel}`;
     else if (visit.distanceM === null) note = '위치 기록 · 업장 좌표 미등록';
@@ -4727,14 +4841,30 @@ export class Store {
       normalizeSite(await this.adapter.get('sites', site.id)),
       { from: date, to: date, today },
     );
+    // 도착 = 시작 시간, 완료 = 종료 시간 — 알림에도 그대로 알려 줍니다.
+    const work = entry
+      ? {
+          actualStart: entry.actualStart,
+          actualEnd: entry.actualEnd,
+          workMinutes: entry.workMinutes,
+          workDurationText: entry.workDurationText,
+        }
+      : null;
+    const position = visit.mode === 'manual'
+      ? `위치 미인증 · ${reasonLabel}`
+      : visit.distanceM === null
+        ? '위치 기록 · 거리 확인 불가'
+        : `위치 ${visit.inRange ? '인증' : '반경 밖'} · ${visit.distanceM}m`;
+    const clock = kind === 'done'
+      ? `종료 ${clockLabel((work && work.actualEnd) || clockOfISO(visit.at))}${work && work.workDurationText ? ` · 소요 ${work.workDurationText}` : ''}`
+      : `시작 시간 ${clockLabel((work && work.actualStart) || clockOfISO(visit.at))}`;
     return {
       visit,
       entry: entry || null,
       status: entry ? entry.status : 'planned',
       check,
-      message: visit.mode === 'manual'
-        ? `${kindLabel}${kindParticle} 예외로 기록했습니다 (${reasonLabel}).`
-        : `${kindLabel}${kindParticle} 기록했습니다${visit.distanceM === null ? '' : ` · ${visit.distanceM}m${visit.inRange ? ' (반경 안)' : ' (반경 밖)'}`}.`,
+      work,
+      message: `${kindLabel} · ${clock} 등록했습니다. ${position}.`,
     };
   }
 
@@ -6905,6 +7035,14 @@ export class Store {
     const site = await this.getSite(input.siteId);
     if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
     const links = await this._reportLinks(site, input);
+    // 당일 [현장 도착] · [청소 완료] 기록이 있으면 그 시각을 보고서의
+    //  시작 · 종료 시간으로 그대로 잇습니다(없으면 빈 값 — 기존 보고서와 똑같이 동작).
+    const visited = visitWorkOf(normalizeVisits(site.visits), isoDateOf(input.date));
+    const givenStart = hhmm(input.workStartAt);
+    const givenEnd = hhmm(input.workEndAt);
+    const givenMin = input.workDurationMin === undefined || input.workDurationMin === null || input.workDurationMin === ''
+      ? null
+      : Number(input.workDurationMin);
 
     const report = {
       id: uid('rep'),
@@ -6919,6 +7057,14 @@ export class Store {
       leader: input.leader,
       leaderRole: input.leaderRole || '팀장',
       durationMin: Number(input.durationMin) || null,
+      // 현장 도착 · 청소 완료 시각 (청소 시작 · 종료 시간)
+      workStartAt: givenStart || visited.actualStart,
+      workEndAt: givenEnd || visited.actualEnd,
+      workDurationMin: givenMin !== null && Number.isFinite(givenMin) && givenMin >= 0
+        ? Math.round(givenMin)
+        : visited.workMinutes,
+      workStartISO: givenStart ? '' : visited.actualStartAt,
+      workEndISO: givenEnd ? '' : visited.actualEndAt,
       checklist: (input.checklist || []).map((item) => ({ label: item.label, done: !!item.done })),
       note: String(input.note || '').trim(),
       issueNote: String(input.issueNote || '').trim(),
