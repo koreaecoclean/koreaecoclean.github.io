@@ -651,6 +651,101 @@
 - 추가 견적 PDF는 기존 견적서 시트의 인쇄를 그대로 씁니다(서버 PDF 생성 없음).
 - 특이사항 사진은 보고서 사진 참조를 재사용합니다. 보고서를 삭제해도 특이사항은 남습니다(기록 보존).
 
+## 9-I. 청구 · 입금 · 미수금 · 팀장 도급 정산 단계에서 실제로 구현한 것 (v2.14.0 · 기획서 22·23장)
+
+기획서 22장(결제 · 청구 · 미수금)과 23장(팀장 도급 정산)을 **무료 범위**(업장 레코드 안 `invoices[]` · `payouts[]`)로 올렸습니다.
+**새 서버 컬렉션 · 서버 스키마 · 운영 데이터 마이그레이션 없음.** 돈이 실제로 오가는 일(PG 결제·자동이체·세금계산서 실제 발행)은 하지 않고,
+**누가 얼마를 청구했고 언제 입금·지급되었는지 기록·확인**하는 데까지입니다(계좌이체 · 홈택스는 대표가 직접).
+
+### 9-I-1. 왜 업장 안(`site.invoices[]` · `site.payouts[]`)에 두었나
+
+`public.ecoclean_items.collection` 의 check 제약을 건드리지 않고(라이브 DB 보호), `site.issues[]` · `site.visits[]` 와 같은 방식으로
+업장 레코드 안에 쌓아 기기 간 동기화를 그대로 씁니다. 예전 업장은 필드가 없어도 빈 배열로 읽힙니다(마이그레이션 불필요).
+
+### 9-I-2. 데이터 (업장 안 `invoices[]` · `payouts[]`)
+
+| 무엇 | 칸 | 모양 |
+| --- | --- | --- |
+| 청구 | `site.invoices[]` | `{id, siteId, siteCode, siteName, invoiceNo, month, kind, quoteId, title, dueDate, amount(공급가), vat, total, status, taxInvoice, taxIssuedAt, paidAt, paidAmount, note, issuedBy, history[], createdAt, updatedAt}` |
+| 청구 번호 | `invoiceNo` | `I-YYYYMM-NNN` — **모든 업장 통틀어** 그 달 순번(중복 없음) |
+| 청구 상태 | `status` | `scheduled`(청구 예정) → `billed`(청구 완료) → `paid`(입금 완료), 납기일이 지나면 **읽을 때 `overdue`(미수 · 연체)** |
+| 세금계산서 | `taxInvoice` | `none`(미발행) · `issued`(발행완료) + `taxIssuedAt` |
+| 청구 구분 | `kind` | `regular`(정기청소 · 월 계약) · `extra`(추가 작업 · 1회, `quoteId` 연결) |
+| 도급 정산 | `site.payouts[]` | `{id, siteId, siteCode, siteName, payoutNo, month, leaderId, leaderName, contractId, dueDate, amount, vat, total, status, paidAt, note, history[], createdAt, updatedAt}` |
+| 정산 번호 | `payoutNo` | `P-YYYYMM-NNN` — 같은 방식으로 그 달 순번 |
+| 정산 상태 | `status` | `scheduled`(정산 예정) → `paid`(지급 완료) |
+
+- 청구 · 정산 모두 **전/후 상태 · 사유 · 처리자**를 자기 `history[]` 에 남기고, 같은 동작을 **업장 이력**(`site.history`)에도 남깁니다.
+- 상태 `overdue` 는 저장하지 않고 **납기일과 오늘을 비교해 읽을 때 계산**합니다(기기마다 같은 결과, 값이 저절로 바뀌지 않음).
+
+### 9-I-3. 계산 규칙 (임의 확정 금지)
+
+| 항목 | 규칙 |
+| --- | --- |
+| 월 청구액(공급가) | 업장 계약의 `contract.contractAmount`(월 계약금). 비어 있으면 청구를 만들지 않고 `계약금 미등록`으로 건너뜁니다. |
+| 부가세 | 공급가의 **10%**(`vatOf`). 계약 비고에 `부가세 포함`이 있으면 0원 · 합계 = 공급가. |
+| 납기일 | 계약의 청구일(`billingDay`)을 해석 — `매월 10일`·`10` → 그 달 10일, `익월 15일` → 다음 달 15일, 숫자가 없으면(`협의 중`) **납기일 없음**(그래서 미수 판정도 안 함). 31일은 그 달 말일로 맞춤. |
+| 청구 번호 | 그 달 마지막 `I-YYYYMM-NNN` + 1 (업장이 달라도 이어짐) |
+| 정산 지급액 | 업장 계약의 `contract.subcontractAmount`(도급금액) + 부가세 10% |
+| 정산 지급일 | 팀장 도급계약서의 지급일(`settlementDay`, 기본 15)을 **익월**로 계산(도급계약서 제5조 지급일 익월 15일 기준). `당월`이라고 적힌 계약만 그 달. |
+| 정산 담당 팀장 | ① 이 업장의 팀장 계약 중 계정이 연결된 것(체결 우선) → ② 업장 `assignee` → ③ 담당 팀장 이름과 같은 팀장 계정. **대표(채종병)가 맡은 업장 · 팀장 계정이 없는 업장은 만들지 않고 건너뜁니다.** |
+| 청구 합계 · 미수금 | 청구 합계 = 그 달 청구서 전체(예정 포함). 입금 완료 = 실입금 합계(일부 입금 포함). **미수금 = 청구 − 입금**(일부 입금의 남은 금액 포함), 연체 = 그중 납기 지난 금액. |
+| 계약 매출 | 그 달 월 계약금 합계(계약이 살아 있는 업장). 청구 합계와 따로 보여 계약 대비 청구·입금을 비교합니다. |
+
+- 이미 그 달 정기청구 · 팀장별 정산이 있으면 건너뜁니다(여러 번 눌러도 중복 없음).
+- 추가 작업 청구는 **고객이 승인한 추가 견적**(`quotes.kind:'extra'` + `customerDecision:'approved'`)만 만들 수 있고, 같은 견적으로 두 번 만들지 않습니다.
+- 입금 완료된 청구는 금액을 바꾸지 않고, 아직 청구하지 않은(예정) 청구만 취소할 수 있습니다.
+
+### 9-I-4. 저장소 함수
+
+- 정의: `INVOICE_STATUS` · `INVOICE_STATUS_ORDER` · `INVOICE_KINDS` · `TAX_INVOICE_STATUS` · `PAYOUT_STATUS` · `VAT_RATE` · `MAX_SITE_INVOICES/PAYOUTS` · `billingMonthKey` · `billingMonthLabel` · `shiftBillingMonth` · `vatOf` · `billingDueDate` · `payoutDueDate` · `invoiceKindOf/Label` · `invoiceStatusKey` · `invoiceStatus` · `isInvoicePaid/Unpaid` · `normalizeInvoice(s)` · `sortInvoices` · `invoiceStats` · `invoiceNoSequence` · `nextInvoiceNo` · `customerInvoiceView` · `normalizePayout(s)` · `payoutStatusKey` · `sortPayouts` · `payoutStats` · `payoutNoSequence` · `nextPayoutNo` · `leaderPayoutView`.
+- 조회: `listInvoices({siteId,month,status,unpaid,limit}, {actor})` · `getInvoice` · `listPayouts({siteId,month,status,leaderId}, {actor})` · `billingSummary({month}, {actor})`.
+- 생성 · 처리(대표만): `generateMonthlyInvoices` · `createExtraInvoice` · `updateInvoice` · `markInvoiceBilled` · `markInvoicePaid` · `setInvoiceTaxInvoice` · `cancelInvoice` · `generateMonthlyPayouts` · `markPayoutPaid`.
+- 내부: `_saveSiteInvoices` · `_saveSitePayouts` · `_collectInvoices` · `_collectPayouts` · `_resolveSiteLeader`.
+
+### 9-I-5. 화면
+
+- **대표 「전체 매출 정리」**: 기존 계약금 · 도급 · 수수료 · 순수 매출 아래에 **계약 매출(월) · 청구 합계 · 입금 완료 · 미수금** 칸을 따로 추가했습니다.
+- **대표 「청구 · 입금 · 미수금」 패널**: ‹ 지난달 / 다음달 › 이동, 합계 4칸, **[이 달 청구 일괄 생성]**, **[이 달 도급 정산 생성]**, 상태 필터(전체 · 미수·연체 · 청구 · 예정 · 입금), 청구 카드마다 공급가·부가세·합계·납기·세금계산서·이력과 **[청구 완료] · [입금 완료] · [세금계산서 발행] · [금액 · 납기 수정](예정 청구는 [청구 취소])**. 미수(연체) 건이 먼저 옵니다.
+- **대표 「팀장 도급 정산」 패널**: 이 달 정산 예정 · 지급 완료 합계, 팀장별 카드(도급액 · 부가세 · 지급액 · 지급일)와 **[지급 완료]**(실지급일·메모 기록).
+- **추가 작업 청구 만들기**: 고객이 승인했지만 아직 청구하지 않은 추가 견적을 골라 그 달 청구로 만듭니다(금액 확인·수정 가능).
+- **고객 ③ 관리 「청구 · 입금」**: 본인 업장의 청구월 · 구분 · 공급가 · 부가세 · 합계 · 납기 · 상태(입금 완료 · 입금 전) · **세금계산서 발행 여부**만. 직원 이름 · 내부 메모 · 견적 id · 도급 정산은 나오지 않습니다.
+- **팀장 「내 도급 정산」**(업장 화면, 「내 도급 조건」 아래): 본인 정산의 월 · 번호 · 지급일 · 지급액 · 상태만. **고객 청구 금액 · 다른 팀장 정산 · 회사 내부 조건은 나오지 않습니다.** 본부장(부관리자) 화면에는 이 패널이 없습니다.
+
+### 9-I-6. 권한 분리 (구현 · 테스트로 확인)
+
+| 항목 | 대표 | 본부장 | 팀장 · 직원 | 고객 |
+| --- | --- | --- | --- | --- |
+| 고객 청구 · 미수금 · 세금계산서 | 전체 | **X**(요청 거절) | **X**(요청 거절) | 본인 업장만 |
+| 청구 생성 · 청구/입금/발행 처리 | O | X | X | X |
+| 팀장 도급 정산 | 전체 | 본인 것만(금액은 본인 것만) | **본인 것만** | **X**(요청 거절) |
+| 도급 정산 생성 · 지급 처리 | O | X | X | X |
+| 내부 메모 · 이력 · 견적 id | O | X | X | **X** |
+
+### 9-I-7. 검증 (2026-11-28)
+
+| 테스트 | 결과 |
+| --- | --- |
+| `tests/test_stage8_billing.py` (신규) | **144/144** — 번호 · 날짜 · 부가세 계산, 청구 생성/중복 방지, 청구→입금→세금계산서→취소, 미수 판정, 추가 청구, 요약, 도급 정산(담당 팀장 해석·익월 지급일), 권한 4역할, 업장 이력, 라이브 63행 보존 |
+| `tests/test_stage8_render.py` (신규) | **58/58** — 대표 매출 정리 4칸 · 청구 패널 · 카드 버튼 · 미수 먼저 · 정산 패널, 고객 청구 칸(금액 · 세금계산서 · 입금), 팀장 내 정산(고객 금액 비노출), 본부장 비노출, 이스케이프 |
+| `tests/browser_stage8.py` (신규) | **35/35** — 실제 Chromium 전 과정(일괄 생성 3건 → 청구 완료 → 미수 → 세금계산서 → 입금 → 정산 5건 → 지급 → 고객 · 팀장 화면), 콘솔 오류 0 |
+| 기존 25종 + `run_tests.py` | **2,022/2,022** |
+| `browser_test` · `browser_stage4`~`7` · `browser_v2111` | 273 · 40 · 50 · 65 · 42 · 33 (합계 503) |
+| `check_static.py` · `run_views.py` | ALL PASSED |
+| `tests/live_stage8.py` (라이브) | **34/34** — 배포본 390×844, `?sync=off` 로 기기에만 기록 |
+
+합계 **2,022개 파이썬 검사 + 538개 브라우저 검사 + 라이브 34개** 통과.
+서비스워커 `CACHE_VERSION` **v2.14.0**, GitHub Pages 빌드 **built**(커밋 `7963611`).
+**라이브 DB 사후 확인**: `ecoclean_items` **63행 그대로**, sha256 `2437644f…` 동일(추가 · 변경 0).
+
+### 9-I-8. 남은 것
+
+- 돈이 실제로 움직이지 않습니다 — PG 결제 · 자동이체 · 세금계산서 실발행(홈택스) · 계좌 입금 확인은 대표가 직접 하고 앱에는 **기록만** 남깁니다(무료 버전 원칙).
+- 청구 · 정산도 업장 레코드 안에 쌓이므로 **두 기기가 같은 업장을 동시에 고치면** 나중 저장이 이깁니다(기존 visits · issues 와 같은 한계). Supabase Auth · RLS(0단계) 때 별도 테이블로 분리하는 것이 좋습니다.
+- 청구서 · 정산서 **PDF/인쇄 시트**는 아직 없습니다(견적서 · 계약서 · 영수증은 있음). 필요하면 다음 단계에서 추가.
+- 도급 정산의 부가세는 10%로 잡혀 있습니다. 프리랜서(3.3% 원천징수) 계약의 정산은 금액을 정산 카드에서 직접 고쳐야 합니다(자동 원천징수 계산 없음).
+- 미수(연체)는 화면에서 보이는 계산값입니다. 알림(문자 · 메일)으로 독촉하는 기능은 10단계 알림함에서 다룹니다.
+
 ## 10. 구현 상태 표기 규칙 (기획서 30장 7·8항)
 
 화면에서 "되는 것처럼" 보이지 않게 다음 규칙을 씁니다.
@@ -710,10 +805,10 @@
 - 데이터: 새 컬렉션 없음(`sites` 안 `issues[]` + `quotes.kind/issueId`). 상세는 9-H장.
 - 원칙: 고객에게 자동 발송 금지(대표가 금액을 넣고 [고객에게 발송]을 눌러야 보임).
 
-### 9단계 — 결제·정산 (기획서 22·23장)
-- 신규: `invoices`(청구월·예정일·금액·상태·세금계산서·미수금), `payouts`(팀장 도급 정산).
-- 재사용: `site.contract`(계약금·도급·수수료·청구일) → 청구서 자동 생성. 매출 표에 "계약 매출 vs 입금" 분리.
-- 권한: 팀장은 본인 정산만, 본부장은 금액 비노출 유지.
+### 9단계 — 결제·정산 (기획서 22·23장) ✅ v2.14.0
+- 구현: `site.invoices[]`(청구 예정 → 청구 → 입금, 납기 지난 청구는 미수 · 연체) · `site.payouts[]`(팀장 도급 정산 → 지급 완료) · 월별 일괄 생성 · 추가 작업 청구(승인 견적) · 세금계산서 발행 체크 · **대표 「전체 매출 정리」의 계약 매출 vs 청구 합계 vs 입금 완료 vs 미수금** · 「청구 · 입금 · 미수금」 · 「팀장 도급 정산」 패널 · 고객 「청구 · 입금」 · 팀장 「내 도급 정산」.
+- 데이터: 새 컬렉션 없음(`sites` 안). 상세는 9-I장.
+- 원칙: 돈은 움직이지 않습니다(계좌이체 · 홈택스 직접) — 앱은 청구 · 입금 · 지급 **기록**만. 권한은 팀장·본부장에게 고객 금액 비노출, 팀장은 본인 정산만.
 
 ### 10단계 — 평가·대시보드·컨플레인·재계약 (기획서 24·25·26·27장)
 - 재사용: 근무태도 A~F, 보고율·지연, 컨플레인.
