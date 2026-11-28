@@ -35,7 +35,19 @@ export const SUPABASE_KEY = 'sb_publishable_NlQSfz427AKLAqj67s6YVw_4u3FHa3H';
 
 /** 공유 저장 테이블과 파일 버킷 이름. */
 export const SUPABASE_TABLE = 'ecoclean_items';
+/** 읽기 전용 마스킹 뷰 — 역할별로 금액·비밀번호가 지워진 데이터가 내려옵니다. */
+export const SUPABASE_VIEW = 'ecoclean_items_read';
 export const SUPABASE_BUCKET = 'ecoclean-files';
+
+/** Supabase Auth 세션(이 기기에만) · 로그인 이메일 규칙 (v2.16.0) */
+export const AUTH_STORAGE_KEY = 'kec:auth';
+export const MEMBER_EMAIL_DOMAIN = 'members.koreaecoclean.app';
+
+/** 전화번호 → 로그인 이메일. (앱 화면은 그대로 전화번호만 받습니다.) */
+export function emailForPhone(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  return digits ? `${digits}@${MEMBER_EMAIL_DOMAIN}` : '';
+}
 
 /** 앱 저장 이름 → 서버 collection 이름. */
 export const COLLECTION_OF = Object.freeze({
@@ -138,6 +150,145 @@ export class SupabaseError extends Error {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Supabase Auth (v2.16.0)                                             */
+/*   화면은 그대로 '전화번호 + 비밀번호'를 받고, 여기서 이메일 규칙으로     */
+/*   바꿔 GoTrue 에 로그인합니다. 세션은 이 기기에만 저장합니다.           */
+/* ------------------------------------------------------------------ */
+
+export class SupabaseAuth {
+  constructor({ url = SUPABASE_URL, key = SUPABASE_KEY } = {}) {
+    this.url = String(url).replace(/\/+$/, '');
+    this.key = key;
+    this.session = null;
+    this._signingIn = null;
+    this._restore();
+  }
+
+  _restore() {
+    try {
+      const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+      const saved = raw ? JSON.parse(raw) : null;
+      if (saved && saved.access_token) this.session = saved;
+    } catch (error) {
+      this.session = null;
+    }
+  }
+
+  _save(session) {
+    this.session = session;
+    try {
+      if (session) window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+      else window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    } catch (error) {
+      /* 저장할 수 없으면 이번 화면에서만 유지 */
+    }
+  }
+
+  hasSession() {
+    return !!(this.session && this.session.access_token);
+  }
+
+  isAnonymous() {
+    return !!(this.session && this.session.is_anonymous);
+  }
+
+  email() {
+    return (this.session && this.session.email) || '';
+  }
+
+  async _post(path, body, { token = '' } = {}) {
+    const headers = { apikey: this.key, 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const response = await fetch(`${this.url}${path}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body || {}),
+    });
+    const text = await response.text().catch(() => '');
+    let payload = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch (error) {
+      payload = null;
+    }
+    if (!response.ok) {
+      const message =
+        (payload && (payload.msg || payload.error_description || payload.message || payload.error)) ||
+        `로그인 실패 (${response.status})`;
+      throw new SupabaseError(String(message), response.status, text.slice(0, 300));
+    }
+    return payload || {};
+  }
+
+  _adopt(payload) {
+    const expiresIn = Number(payload.expires_in || 3600);
+    const session = {
+      access_token: payload.access_token,
+      refresh_token: payload.refresh_token || '',
+      expires_at: Date.now() + Math.max(60, expiresIn - 120) * 1000,
+      email: (payload.user && payload.user.email) || '',
+      user_id: (payload.user && payload.user.id) || '',
+      is_anonymous: !!(payload.user && payload.user.is_anonymous),
+    };
+    this._save(session);
+    return session;
+  }
+
+  /** 이메일 + 비밀번호 로그인 (직원 · 대표) */
+  async signIn(email, password) {
+    const payload = await this._post('/auth/v1/token?grant_type=password', { email, password });
+    return this._adopt(payload);
+  }
+
+  /** 익명 세션 — 고객 방 · 초대 입장용(비밀번호 없이 1회용 코드로 입장) */
+  async signInAnonymously() {
+    if (this._signingIn) return this._signingIn;
+    this._signingIn = this._post('/auth/v1/signup', { data: {}, gotrue_meta_security: {} })
+      .then((payload) => this._adopt(payload))
+      .finally(() => {
+        this._signingIn = null;
+      });
+    return this._signingIn;
+  }
+
+  async refresh() {
+    if (!this.session || !this.session.refresh_token) return false;
+    try {
+      const payload = await this._post('/auth/v1/token?grant_type=refresh_token', {
+        refresh_token: this.session.refresh_token,
+      });
+      this._adopt(payload);
+      return true;
+    } catch (error) {
+      if (error && error.status === 400) this._save(null);
+      return false;
+    }
+  }
+
+  /** 지금 쓸 수 있는 access token (만료 임박이면 먼저 갱신) */
+  async accessToken() {
+    if (!this.session) return '';
+    if (Date.now() > Number(this.session.expires_at || 0)) {
+      const ok = await this.refresh();
+      if (!ok) return '';
+    }
+    return this.session ? this.session.access_token : '';
+  }
+
+  async signOut() {
+    const token = this.session && this.session.access_token;
+    this._save(null);
+    if (!token) return true;
+    try {
+      await this._post('/auth/v1/logout', {}, { token });
+    } catch (error) {
+      /* 서버 세션이 이미 끝났어도 이 기기 세션은 지웠습니다. */
+    }
+    return true;
+  }
+}
+
 export function rowKey(value) {
   if (!value || typeof value !== 'object') return '';
   const key = value.id !== undefined && value.id !== null && value.id !== '' ? value.id : value.key;
@@ -199,39 +350,72 @@ export class SupabaseClient {
     url = SUPABASE_URL,
     key = SUPABASE_KEY,
     table = SUPABASE_TABLE,
+    view = SUPABASE_VIEW,
     bucket = SUPABASE_BUCKET,
     timeout = 12000,
+    auth = null,
   } = {}) {
     this.url = String(url).replace(/\/+$/, '');
     this.key = key;
     this.table = table;
+    this.view = view;
     this.bucket = bucket;
     this.timeout = timeout;
+    this.auth = auth;
   }
 
-  headers(extra = {}) {
+  setAuth(auth) {
+    this.auth = auth;
+    return this;
+  }
+
+  setToken(token) {
+    this.token = String(token || '');
+    return this;
+  }
+
+  /**
+   * 서버에 보낼 헤더 — 로그인했으면 그 사람의 JWT, 아니면 publishable 키(anon).
+   * anon 으로는 테이블을 하나도 읽지 못합니다(v2.16.0 RLS).
+   */
+  async headers(extra = {}) {
+    let token = this.token;
+    if (!token && this.auth) token = await this.auth.accessToken();
     return {
       apikey: this.key,
-      Authorization: `Bearer ${this.key}`,
+      Authorization: `Bearer ${token || this.key}`,
       ...extra,
     };
   }
 
-  async request(path, options = {}) {
+  async request(path, options = {}, { retry = true } = {}) {
     if (typeof fetch !== 'function') {
       throw new SupabaseError('이 브라우저에서는 서버 동기화를 쓸 수 없습니다.', 0);
     }
     const controller = typeof AbortController === 'function' ? new AbortController() : null;
     const timer = controller ? setTimeout(() => controller.abort(), this.timeout) : null;
     try {
+      const headers = await this.headers(options.headers || {});
       const response = await fetch(`${this.url}${path}`, {
         ...options,
-        headers: this.headers(options.headers || {}),
+        headers,
         signal: controller ? controller.signal : undefined,
       });
+      // 세션이 만료되면 한 번만 갱신해 다시 보냅니다.
+      if (response.status === 401 && retry && this.auth && this.auth.hasSession()) {
+        const refreshed = await this.auth.refresh();
+        if (refreshed) return this.request(path, options, { retry: false });
+      }
       if (!response.ok) {
         const detail = await response.text().catch(() => '');
-        throw new SupabaseError(`Supabase ${response.status}`, response.status, detail.slice(0, 300));
+        let message = `Supabase ${response.status}`;
+        try {
+          const parsed = JSON.parse(detail);
+          if (parsed && parsed.message) message = String(parsed.message);
+        } catch (error) {
+          /* 본문이 JSON 이 아니면 기본 문구 */
+        }
+        throw new SupabaseError(message, response.status, detail.slice(0, 300));
       }
       return response;
     } finally {
@@ -239,14 +423,30 @@ export class SupabaseClient {
     }
   }
 
-  /** 모든 레코드(또는 since 이후 바뀐 레코드)를 읽습니다. */
+  /** security definer 함수 호출 (1회용 코드 검증 · 상담 접수) */
+  async rpc(name, params = {}) {
+    const response = await this.request(`/rest/v1/rpc/${name}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params || {}),
+    });
+    const text = await response.text();
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /** 모든 레코드(또는 since 이후 바뀐 레코드)를 읽습니다. — 마스킹 뷰에서 읽습니다. */
   async listItems({ since = '' } = {}) {
     const params = new URLSearchParams({
       select: 'collection,id,data,updated_at',
       order: 'updated_at.asc',
     });
     if (since) params.set('updated_at', `gt.${since}`);
-    const response = await this.request(`/rest/v1/${this.table}?${params.toString()}`);
+    const response = await this.request(`/rest/v1/${this.view}?${params.toString()}`);
     const rows = await response.json();
     return Array.isArray(rows) ? rows : [];
   }
@@ -320,12 +520,14 @@ export const SYNC_STATUS = {
   synced: { label: '서버 연결됨', tone: 'done' },
   offline: { label: '오프라인 · 기기 저장', tone: 'warn' },
   error: { label: '동기화 지연', tone: 'warn' },
+  login: { label: '로그인 필요', tone: 'wait' },
   local: { label: '기기 저장', tone: 'wait' },
 };
 
 export class SupabaseSync {
   constructor({ client = new SupabaseClient(), interval = 5000, fullEvery = 12 } = {}) {
     this.client = client;
+    this.auth = client.auth || null;
     this.interval = interval;
     this.fullEvery = fullEvery;
     this.local = null;
@@ -342,6 +544,11 @@ export class SupabaseSync {
     this._writes = 0;
     this._handleVisibility = null;
     this._handleOnline = null;
+  }
+
+  /** 로그인(JWT)이 있어야 서버를 읽고 쓸 수 있습니다. */
+  get authorized() {
+    return !!(this.auth && this.auth.hasSession());
   }
 
   onStatus(listener) {
@@ -377,6 +584,12 @@ export class SupabaseSync {
    */
   async hydrate(adapter) {
     this.local = adapter;
+    // 로그인 전에는 서버를 손대지 않습니다(기기 데이터를 지우지 않음).
+    if (!this.authorized) {
+      this.setStatus('login', '로그인하면 서버와 맞춥니다');
+      this.remoteTs = '';
+      return { mode: 'unauthenticated', rows: 0 };
+    }
     this.setStatus('syncing', '서버 확인 중');
     let rows;
     try {
@@ -408,6 +621,29 @@ export class SupabaseSync {
     this.remoteTs = maxUpdatedAt(rows);
     this.setStatus('synced', '서버 연결됨');
     return { mode: 'pulled', rows: applied };
+  }
+
+  /**
+   * 로그인 직후 — 그 사람의 범위로 서버 내용을 다시 받아 옵니다.
+   * 로그아웃 상태에서 쌓인 서버 쓰기 대기열은 버립니다(권한 밖 쓰기 방지).
+   */
+  async resume(adapter) {
+    if (!this.authorized) return { mode: 'unauthenticated', rows: 0 };
+    // 로그인 전에는 queuePut 자체를 막아 두었으므로 대기열은 비우지 않습니다
+    // (방금 만든 계정처럼 아직 못 올린 변경을 잃지 않도록).
+    const target = adapter || this.local;
+    const result = await this.hydrate(target);
+    if (this.flush && this.queue.length) await this.flush().catch(() => false);
+    if (this.store) this.start(this.store);
+    return result;
+  }
+
+  /** 로그아웃 — 큐를 버리고 서버 읽기/쓰기를 멈춥니다. */
+  logout() {
+    this.stop();
+    this.queue = [];
+    this.remoteTs = '';
+    this.setStatus('login', '로그인하면 서버와 맞춥니다');
   }
 
   async _readLocalRows() {
@@ -458,6 +694,18 @@ export class SupabaseSync {
       }
       if (!remoteKeys.has(table)) remoteKeys.set(table, new Set());
       remoteKeys.get(table).add(key);
+      // 계정 레코드에는 평문 비밀번호를 절대 남기지 않습니다(서버도 지우지만 한 번 더).
+      if (table === 'accounts' && row.data && Object.prototype.hasOwnProperty.call(row.data, 'password')) {
+        const clean = { ...row.data };
+        delete clean.password;
+        if (JSON.stringify(clean) === JSON.stringify(row.data)) {
+          /* 이미 없음 */
+        } else {
+          await this.local.put(table, clean);
+          applied += 1;
+          continue;
+        }
+      }
       if (this._pendingKeys().has(`${table}::${key}`)) continue;
       const current = await this.local.get(table, key);
       if (current && JSON.stringify(current) === JSON.stringify(row.data)) continue;
@@ -521,6 +769,7 @@ export class SupabaseSync {
 
   queuePut(table, value) {
     if (!remoteCollection(table)) return;
+    if (!this.authorized) return; // 로그인 전에는 서버로 보내지 않습니다.
     const key = rowKey(value);
     if (!key) return;
     if (isDeviceLocal(table, key)) return; // 로그인 세션 등 기기 전용 값
@@ -536,6 +785,7 @@ export class SupabaseSync {
 
   queueDelete(table, key) {
     if (!remoteCollection(table) || !key) return;
+    if (!this.authorized) return;
     if (isDeviceLocal(table, key)) return;
     this.queue.push({ type: 'delete', table, key: String(key) });
     this._writes += 1;
@@ -544,6 +794,7 @@ export class SupabaseSync {
 
   queueClear(table) {
     if (!remoteCollection(table)) return;
+    if (!this.authorized) return;
     this.queue.push({ type: 'clear', table });
     this._schedule();
   }
@@ -575,38 +826,54 @@ export class SupabaseSync {
   /** 대기 중인 쓰기를 서버로 보냅니다. 실패하면 남은 작업을 되돌려 다시 시도합니다. */
   async flush() {
     if (this.flushing) return false;
+    if (!this.authorized) return false;
     if (!this.queue.length) return true;
     this.flushing = true;
     this.setStatus('syncing', '변경 사항 저장 중');
     const ops = this.queue.slice();
     this.queue = [];
+    let denied = 0;
     try {
       while (ops.length) {
         const op = ops.shift();
         const collection = remoteCollection(op.table);
         if (!collection) continue;
-        if (op.type === 'put') {
-          const rows = [...op.rows.entries()].map(([key, value]) => ({
-            collection,
-            id: String(key),
-            data: value,
-          }));
-          await this.client.upsertItems(rows);
-        } else if (op.type === 'delete') {
-          await this.client.deleteItem(collection, op.key);
-        } else if (op.type === 'clear') {
-          await this.client.clearCollection(collection);
+        try {
+          if (op.type === 'put') {
+            const rows = [...op.rows.entries()].map(([key, value]) => ({
+              collection,
+              id: String(key),
+              data: value,
+            }));
+            await this.client.upsertItems(rows);
+          } else if (op.type === 'delete') {
+            await this.client.deleteItem(collection, op.key);
+          } else if (op.type === 'clear') {
+            await this.client.clearCollection(collection);
+          }
+        } catch (error) {
+          // 403 = 서버(RLS)가 그 역할에 막은 쓰기 — 다시 보내도 같으므로 버립니다.
+          if (error && error.status === 403) {
+            denied += 1;
+            console.warn('[sync] 서버가 허용하지 않은 변경을 건너뜁니다', collection, error.detail || '');
+            continue;
+          }
+          throw error;
         }
       }
       this.lastFlushAt = Date.now();
-      this.setStatus('synced', '서버에 저장됨');
+      this.setStatus('synced', denied ? `서버에 저장됨 · 권한 밖 ${denied}건 제외` : '서버에 저장됨');
       return true;
     } catch (error) {
       console.warn('[sync] 저장 실패', error);
       this.queue = ops.concat(this.queue);
       this.lastFlushAt = Date.now();
       const offline = error && error.status === 0;
-      this.setStatus(offline ? 'offline' : 'error', offline ? '오프라인 · 기기에 저장됨' : '서버 저장 지연 · 다시 시도합니다');
+      const expired = error && error.status === 401;
+      this.setStatus(
+        expired ? 'login' : offline ? 'offline' : 'error',
+        expired ? '로그인이 필요합니다 · 다시 로그인해 주세요' : offline ? '오프라인 · 기기에 저장됨' : '서버 저장 지연 · 다시 시도합니다',
+      );
       return false;
     } finally {
       this.flushing = false;
@@ -657,6 +924,10 @@ export class SupabaseSync {
   /** 한 번 동기화 — 내 변경을 올리고, 서버의 변경을 받아 옵니다. */
   async tick({ force = false } = {}) {
     if (this.flushing) return { pushed: 0, pulled: 0 };
+    if (!this.authorized) {
+      if (this.status !== 'login') this.setStatus('login', '로그인하면 서버와 맞춥니다');
+      return { pushed: 0, pulled: 0 };
+    }
     if (this.queue.length) await this.flush();
     this.ticks += 1;
     const full = force || this.ticks % Math.max(1, this.fullEvery) === 0;
@@ -678,7 +949,11 @@ export class SupabaseSync {
       return { pushed: 0, pulled };
     } catch (error) {
       const offline = (error && error.status === 0) || (typeof navigator !== 'undefined' && navigator.onLine === false);
-      this.setStatus(offline ? 'offline' : 'error', offline ? '오프라인 · 기기 저장' : '서버 연결 지연 · 다시 시도합니다');
+      const expired = error && error.status === 401;
+      this.setStatus(
+        expired ? 'login' : offline ? 'offline' : 'error',
+        expired ? '로그인이 필요합니다 · 다시 로그인해 주세요' : offline ? '오프라인 · 기기 저장' : '서버 연결 지연 · 다시 시도합니다',
+      );
       return { pushed: 0, pulled: 0, error };
     }
   }
@@ -705,9 +980,12 @@ export function attachSupabaseSync(store) {
     store.syncStatus = 'local';
     return null;
   }
-  const sync = new SupabaseSync({ client: new SupabaseClient() });
+  const auth = new SupabaseAuth();
+  const client = new SupabaseClient({ auth });
+  const sync = new SupabaseSync({ client });
   store.remote = sync;
-  store.syncStatus = 'idle';
+  store.auth = auth;
+  store.syncStatus = auth.hasSession() ? 'idle' : 'login';
   sync.onStatus(({ status }) => {
     store.syncStatus = status;
   });

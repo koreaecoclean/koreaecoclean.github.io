@@ -139,6 +139,62 @@
 - 관리 → 새 현장 등록에서 담당 팀장을 고르거나, 현장의 담당 팀장을 바꾸면 그 팀장의 계약서 `siteIds`(별첨 표)에 **현장이 자동으로 들어갑니다**.
 - **체결된 계약서**는 금액·서명·기간을 건드리지 않고 별첨 줄만 더합니다(금액이 비어 있는 새 줄은 공란). 담당이 아닌 팀장의 **미체결** 계약서에서는 빠집니다.
 
+### v2.16.0 — 앱 보안 잠금 · Supabase Auth 로그인 · 서버 RLS (2026-11-29)
+
+> 2026-11-29 "보안 잠금(Supabase Auth · RLS) 바로 적용하기 (기존 데이터 유지)". **기존 63행은 그대로** 두고 서버만 잠갔습니다.
+> 새 컬렉션 · 새 화면 · 새 입력 칸 없음 — 로그인 칸도 그대로 **전화번호 + 비밀번호**입니다.
+
+**무엇이 바뀌었나**
+
+| 항목 | v2.15.0 | v2.16.0 |
+| --- | --- | --- |
+| 비로그인(anon) | `ecoclean_items` 63행 전부 읽기/쓰기 가능 | **HTTP 401 permission denied** (읽기·쓰기·삭제 전부) |
+| 직원·대표 로그인 | 앱이 기기 안에서 비밀번호 비교 | **Supabase Auth 세션(JWT)** 발급 → 서버 RLS 통과 |
+| 계정 등록 | 레코드만 저장 | 저장 시 서버 트리거가 **Auth 계정까지 생성**(service_role 키 없음) |
+| 1회용 코드 | 브라우저가 코드 목록을 읽어 비교 | **서버 함수**가 검증해 그 1건만 반환 |
+| 본부장/팀장/고객 범위 | 화면에서만 가림 | **서버(RLS)** 가 행을 막고, **마스킹 뷰**가 금액을 지움 |
+| 비밀번호 | `accounts` 레코드에 **평문** | 레코드에서 제거 · Auth 해시로만 보관 |
+
+**구조**
+
+- 로그인 이메일 규칙 : `01012345678` → `01012345678@members.koreaecoclean.app` (화면은 전화번호만 받습니다)
+- 세션은 이 기기에만(`localStorage: kec:auth`) · 로그아웃하면 서버 세션도 종료
+- 계정 저장 → `kec_sync_member` 트리거 → `kec_provision_account()` → `auth.users` + `kec_members`(역할 · 담당 업장)
+- 읽기 : `public.ecoclean_items_read` (security_invoker 뷰 + `kec_mask()`) · 쓰기 : `public.ecoclean_items` + RLS
+- 1회용 코드 : `kec_room_entry(phone, code, …)` · `kec_redeem_room_code(code)` · 홈 상담 : `kec_submit_inquiry(data)`
+- 역할 : `admin`(대표) · `manager`(본부장, `canManageStaff`) · `leader`(팀장·직원) · `customer`(고객)
+
+**역할별 서버 범위**
+
+| 역할 | 읽고 쓸 수 있는 행 | 서버가 지우는 값 |
+| --- | --- | --- |
+| 대표 | 전부 | 비밀번호(레코드에서 제거) |
+| 본부장 | 배정 업장 `sites` · 그 업장 `reports` · `inviteCodes`/`leaderCodes` · `supplyCatalog` · 본인 `supplyOrders` · 본인 계정 | `sites.contract` · `sites.invoices` · `sites.payouts` |
+| 팀장·직원 | 본인 배정 `sites` · 본인 `reports` · 본인 `staffContracts` · 본인 `supplyOrders` · 본인 계정 | 남의 금액(`feeAmount`·`contractAmount`) · 업장 `invoices` · 남의 `payouts` |
+| 고객 | 본인 업장 `sites`(청구·불편사항 포함) · 본인 업장 `reports` · 본인 `quotes`/`contracts` · 본인 계정 | `contract` · `payouts` · `secret`(출입) · `survey` |
+
+- **직원 평가(`attitudeLogs`)는 대표만** — 팀장 · 본부장 계정으로는 읽기 0건, 쓰기 403.
+- 팀장이 마스킹된 업장 레코드를 다시 저장해도 서버 트리거가 계약금·청구·정산을 원래 값으로 되돌립니다(값 손실 없음).
+
+**로그인 방법 — 그대로입니다**
+
+- 직원 · 대표 : 전화번호 + 비밀번호 (+ 팀장 고유코드)
+- 고객 : 전화번호만 / 처음 · 추가 인원은 전화번호 + 1회용 코드
+- 예전 버전에서 로그인해 둔 기기는 첫 실행 때 한 번만 자동으로 옮겨 탑니다(기기에 비밀번호가 남아 있는 경우).
+  옮기지 못하면 로그인 화면에서 같은 번호 · 비밀번호로 다시 들어오면 됩니다.
+
+**확인한 것 (2026-11-29)**
+
+| 확인 | 결과 |
+| --- | --- |
+| `curl` anon `GET /rest/v1/ecoclean_items` | **HTTP 401** `permission denied for table ecoclean_items` |
+| `curl` anon `POST /rest/v1/ecoclean_items` | **HTTP 401** |
+| 팀장(이용구) JWT 조회 | 20행(본인 업장 2 · 본인 계정 · 본인 계약서 · `supplyCatalog`) · `attitudeLogs` 0행 |
+| 본부장(박희승) JWT 조회 | 39행 · `contract`/`invoices`/`payouts` 없음 · `attitudeLogs` 없음 |
+| 고객(박준호) 번호만 입장 | 자기 업장 1 · 보고 3 · 권한 1 · 다른 업장 0 |
+| 대표가 앱에서 직원 등록 → 새 직원 로그인 | Auth 계정 자동 생성 → 등록한 비밀번호로 로그인 성공 |
+| 라이브 데이터 | **63행 그대로** (백업과 대조해 변경 0건) |
+
 ### v2.15.0 — 직원 100점 평가 · 고객 컴플레인 · 대표 종합 대시보드 (통합 운영 앱 10단계)
 
 > 2026-11-29 "직원 평가(100점) · 컴플레인 · 대표 대시보드 이어서 진행". **새 서버 컬렉션 · 스키마 변경 · 운영 데이터 마이그레이션 없음** — 100점 평가는 기존 `staffChecks`(`attitudeLogs`) 안 `kind:'score'` 로, 컴플레인은 업장 레코드 안 `site.complaints[]` 로 쌓입니다.
@@ -1092,31 +1148,48 @@ vercel --prod
 | Project URL | `https://magwvjtnxlewumojlpwz.supabase.co` |
 | 공개 키(publishable) | `js/supabase-client.js` 의 `SUPABASE_KEY` |
 | 공유 테이블 | `public.ecoclean_items` — collection · id · data(jsonb) · updated_at |
+| 읽기용 뷰 | `public.ecoclean_items_read` — 역할별 마스킹(금액·비밀번호 제거) |
 | 파일 버킷 | `ecoclean-files` (public) — 사진 · 사업자등록증 · 서명 PNG |
-| 스키마 원본 | `supabase-schema.sql` (대시보드 SQL Editor에서 실행한 그대로) |
+| 로그인 | **Supabase Auth** (이메일 규칙 `전화번호@members.koreaecoclean.app`) |
+| 스키마 원본 | `supabase-schema.sql` (대시보드 SQL Editor에서 실행한 그대로 · 여러 번 실행해도 안전) |
 
 - collection 이름은 앱 저장 이름을 그대로 쓰되 세 개만 이름이 다릅니다.
   `roomCodes → inviteCodes`, `grants → leaderCodes`, `staffChecks → attitudeLogs`.
 - 서버가 `updated_at` 을 항상 직접 찍습니다(트리거). 그래서 폰 시계가 틀려도 증분 동기화가 어긋나지 않습니다.
 - 사진·서명은 Storage에 올리고 **공개 주소만** 레코드에 넣습니다. 사진 원본이 data URL로 DB에 쌓이지 않습니다.
 
+### 필수 Auth 설정 (대시보드 → Authentication → Sign In / Providers)
+| 설정 | 값 | 이유 |
+| --- | --- | --- |
+| Email provider | 켜짐 | 직원·대표가 전화번호 + 비밀번호로 로그인 |
+| **Confirm email** | **꺼짐** | 대표가 정한 비밀번호로 바로 로그인(메일 확인 단계 없음) |
+| **Allow anonymous sign-ins** | **켜짐** | 고객 방 · 1회용 코드 입장(비밀번호 없이) |
+
 ### 새 Supabase 프로젝트로 옮기려면
 1. <https://supabase.com> → **New project** (무료, 카드 등록 없음 · Region: Northeast Asia (Seoul))
-2. 왼쪽 **SQL Editor** → New query → 이 폴더의 `supabase-schema.sql` 통째로 붙여넣고 **RUN**
-   - 만드는 것: `ecoclean_items` 테이블 + `updated_at` 트리거 + anon 권한(GRANT) + RLS 정책 4종 + Realtime 발행 + Storage 버킷 `ecoclean-files` 와 정책
-3. **Project Settings → API Keys** 에서 Project URL 과 publishable 키를 복사
-4. `js/supabase-client.js` 의 `SUPABASE_URL` · `SUPABASE_KEY` 두 줄만 바꿔서 배포
+2. **Authentication → Sign In / Providers** 에서 위 표대로 세 항목을 맞춥니다.
+3. 왼쪽 **SQL Editor** → New query → 이 폴더의 `supabase-schema.sql` 통째로 붙여넣고 **RUN**
+   - 만드는 것: `ecoclean_items` 테이블 + 트리거 + RLS 정책 + `kec_members` + 역할별 함수/뷰 + 1회용 코드 RPC + Storage 버킷과 정책 + Realtime 발행
+   - 마지막 줄 `update public.ecoclean_items set data = data where collection = 'accounts';` 가
+     기존 계정들의 Auth 계정을 만들고 평문 비밀번호를 지웁니다.
+4. **Project Settings → API Keys** 에서 Project URL 과 publishable 키를 복사
+5. `js/supabase-client.js` 의 `SUPABASE_URL` · `SUPABASE_KEY` 두 줄만 바꿔서 배포
 
-> `GRANT` 를 빼면 `permission denied for table ecoclean_items` (401) 가 납니다. SQL Editor로 만든 테이블은 anon 역할 권한이 자동으로 붙지 않습니다.
+> `GRANT` 를 빼면 `permission denied` (401) 가 납니다. SQL Editor로 만든 테이블은 역할 권한이 자동으로 붙지 않습니다.
 
-### 키 노출과 보안
-- publishable(sb_publishable_…) 키는 원래 공개되어도 되는 등급이고, 앱 JS에 들어 있어도 됩니다. 다만 이 앱은 Supabase Auth 세션이 아니라 **앱 자체 인증(전화번호 · 1회용 초대코드)** 을 쓰므로, 테이블 정책이 anon에게 열려 있습니다. 즉 **키를 아는 사람은 데이터를 읽고 쓸 수 있습니다.**
-- **로그인 세션(`meta/session`)은 기기 전용**이라 서버로 올리지 않습니다. 그렇지 않으면 한 폰에서 대표로 로그인한 세션이 모든 폰에 복사됩니다.
-- 파일 버킷은 **공개(public) 버킷**입니다. 레코드에 저장된 공개 주소를 아는 사람은 파일을 열 수 있지만, **파일 목록 조회(SELECT 정책)는 두지 않았습니다** — 경로가 추측되지 않도록.
-- 다만 **계정 목록(전화번호 · 비밀번호 · 팀장 코드)** 은 여러 기기에서 로그인하려면 공유되어야 합니다. 즉 지금은 데모 수준의 인증입니다. 고객에게 개인정보를 본격적으로 받기 전에는 아래 순서로 좁히세요.
-  1. **Authentication → Providers** 에서 Email(OTP)·Kakao 중 하나를 켜고 `js/auth.js` 의 로그인을 `supabase.auth.signInWithOtp` 로 교체
-  2. RLS 정책을 collection · 계정 단위로 좁히기(고객은 자기 현장 행만, 금액은 대표만)
-  3. 1회용 코드 소모를 서버 함수(RPC)로 옮기기 — 코드 목록을 브라우저가 읽지 못하게
+### 키 노출과 보안 (v2.16.0)
+- publishable(sb_publishable_…) 키는 원래 공개되어도 되는 등급이고, 앱 JS에 들어 있어도 됩니다.
+  **이제 이 키만으로는 데이터를 읽지도 쓰지도 못합니다** — 테이블 권한을 anon 에서 회수하고 RLS 정책을 authenticated 역할에만 두었습니다.
+- 기기마다 다른 값(로그인 세션)은 서버로 올리지 않습니다(`meta/session`). Supabase Auth 세션도 이 기기에만 저장합니다.
+- 파일 버킷은 **공개(public) 버킷**입니다. 레코드에 저장된 공개 주소를 아는 사람은 파일을 열 수 있지만,
+  **파일 목록 조회(SELECT 정책)는 두지 않았습니다**(경로 추측 방지). 업로드·수정은 로그인한 사용자만 가능합니다.
+- `accounts` 레코드에는 **비밀번호가 저장되지 않습니다.** 비밀번호는 Supabase Auth 해시(`auth.users.encrypted_password`)로만 남고,
+  대표가 직원 비밀번호를 바꾸면 트리거가 Auth 비밀번호를 갱신합니다.
+- `service_role` 키는 앱 · 저장소 어디에도 넣지 않았습니다. 계정 생성은 `security definer` 트리거/함수가 대신합니다.
+- **알아 둘 한계**
+  - 고객 방은 사용자가 정한 대로 **전화번호만으로** 들어옵니다(1회용 코드는 처음 한 번). 번호를 아는 사람은 그 방을 열 수 있습니다.
+  - 그래서 고객 세션은 익명 Auth 사용자로 만들고, 서버가 그 사용자를 **그 고객 계정에 묶어** 둡니다(`kec_members`). 묶이지 않은 익명 사용자는 아무 행도 보지 못합니다.
+  - 현장 사진은 공개 버킷 주소로 열리므로, 주소를 아는 사람은 사진을 볼 수 있습니다(경로는 추측 불가).
 
 ### 무료 플랜 참고
 | 항목 | 무료 한도(2025~2026년 기준, 정책에 따라 변동) |

@@ -21,7 +21,7 @@
  *  - 서버 스키마: supabase-schema.sql
  */
 
-import { attachSupabaseSync } from './supabase-client.js';
+import { attachSupabaseSync, localTable } from './supabase-client.js';
 import {
   buildSeedData,
   buildSites,
@@ -4085,6 +4085,10 @@ export class Store {
     this._listeners = new Set();
     /** 서버 동기화 계층 (js/supabase-client.js) — 꺼져 있으면 null. */
     this.remote = null;
+    /** Supabase Auth 세션 (v2.16.0) — 동기화가 꺼져 있으면 null. */
+    this.auth = null;
+    /** 동기화가 감싸기 전의 기기 저장소 — 서버가 확정한 값을 조용히 적을 때 씁니다. */
+    this.rawAdapter = null;
     this.syncStatus = 'local';
   }
 
@@ -4098,6 +4102,7 @@ export class Store {
     // ① 서버를 기준으로 기기 캐시를 맞춥니다(서버가 비었으면 이 기기 데이터를 올립니다).
     if (this.remote) {
       try {
+        this.rawAdapter = this.adapter;
         await this.remote.hydrate(this.adapter);
         // ② 이후 모든 쓰기가 서버에도 반영되도록 어댑터를 감쌉니다.
         this.adapter = this.remote.decorate(this.adapter);
@@ -4110,6 +4115,45 @@ export class Store {
     // ③ 5초 주기 · 화면 복귀 · 네트워크 복구 때 서버 변경을 받아 옵니다.
     if (this.remote) this.remote.start(this);
     return this;
+  }
+
+  /**
+   * 로그인 직후 호출 — 그 사람의 권한 범위로 서버 내용을 다시 받아 옵니다.
+   * (로그인 전에는 서버를 읽지 않으므로, 로그인 화면에서 처음 맞추는 지점입니다.)
+   */
+  async syncAfterLogin() {
+    if (!this.remote) return { mode: 'local', rows: 0 };
+    try {
+      const result = await this.remote.resume(this.rawAdapter || this.adapter);
+      this.syncStatus = this.remote.status;
+      return result;
+    } catch (error) {
+      console.warn('[store] 로그인 후 동기화 실패', error);
+      return { mode: 'error', rows: 0, error };
+    }
+  }
+
+  /**
+   * 서버가 확정한 레코드를 기기에만 조용히 적습니다(동기화 큐에 넣지 않음).
+   * 고객 방 · 초대 입장은 서버 RPC 가 만든 결과를 그대로 받아 씁니다.
+   */
+  async applyServerEntry(result = {}) {
+    const adapter = this.rawAdapter || this.adapter;
+    const write = async (collection, row) => {
+      if (!row || typeof row !== 'object') return;
+      const table = localTable(collection);
+      if (!table) return;
+      const value = { ...row };
+      delete value.password;
+      await adapter.put(table, value);
+    };
+    await write('accounts', result.account);
+    await write('sites', result.site);
+    await write('leaderCodes', result.grant);
+    await write('quotes', result.quote);
+    await write('staffContracts', result.contract);
+    this._notify();
+    return true;
   }
 
   /** Subscribe to data changes (report added/removed, codes issued, demo reset…). */
@@ -4704,6 +4748,8 @@ export class Store {
   }
 
   async _seedIfEmpty() {
+    // 로그인 전에는 시드(예시 데이터)를 만들지 않습니다 — 서버 자료를 덮어쓰지 않게.
+    if (this.remote && !this.remote.authorized) return false;
     const sites = await this.adapter.getAll('sites');
     if (sites.length) return false;
     await this._writeSeed();
@@ -10697,6 +10743,12 @@ export class Store {
    */
   async redeemRoomCode(rawCode, account) {
     if (!account) throw new StoreError('no-account', '로그인이 필요합니다.');
+    // v2.16.0 — 로그인한 고객은 서버 함수로 코드를 등록합니다.
+    if (this.remote && this.remote.authorized && this.remote.client && typeof this.remote.client.rpc === 'function') {
+      const saved = await this.remote.client.rpc('kec_redeem_room_code', { p_code: String(rawCode || '').trim() });
+      if (saved && saved.grant) await this.applyServerEntry({ grant: saved.grant });
+      return saved;
+    }
     const needle = normalizeCode(rawCode);
     if (!needle) throw new StoreError('code-empty', '청소코드를 입력해 주세요.');
 
@@ -10825,6 +10877,17 @@ export class Store {
   }
 
   async addInquiry(data) {
+    // v2.16.0 — 비로그인 방문자의 상담 접수는 서버 함수로만 저장됩니다(표 전체 열람 없음).
+    if (this.remote && this.remote.client && typeof this.remote.client.rpc === 'function') {
+      try {
+        const saved = await this.remote.client.rpc('kec_submit_inquiry', { p_data: data || {} });
+        if (saved && saved.id) {
+          return { ...(data || {}), id: saved.id, createdAt: saved.createdAt || new Date().toISOString(), status: 'received' };
+        }
+      } catch (error) {
+        console.warn('[store] 상담 접수를 서버에 보내지 못했습니다', error);
+      }
+    }
     const inquiry = {
       id: uid('inq'),
       spaceType: data.spaceType || '',

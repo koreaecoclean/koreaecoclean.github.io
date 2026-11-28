@@ -4,7 +4,7 @@
 
 import { $, toast, initLightbox } from './ui.js';
 import { store } from './store.js';
-import { getSession } from './auth.js';
+import { getSession, prepareAuth } from './auth.js';
 import { consumeInviteHash, inviteTab } from './invite.js';
 import { createHomeView } from './views/home.js';
 import { createCustomerView } from './views/customer.js';
@@ -143,6 +143,7 @@ const SYNC_LABELS = {
   syncing: '동기화 중…',
   offline: '오프라인 저장',
   error: '동기화 지연',
+  login: '로그인 필요',
   local: '기기 저장',
 };
 
@@ -278,6 +279,13 @@ async function boot() {
   } catch (error) {
     console.error('[app] store init failed', error);
     toast('저장소를 열지 못했습니다. 시크릿 모드에서는 일부 기능이 제한됩니다.', { tone: 'error', duration: 6000 });
+  }
+
+  // v2.16.0 — 기기에 남은 로그인을 서버 세션과 맞춥니다(없으면 로그인 화면).
+  try {
+    await prepareAuth();
+  } catch (error) {
+    console.warn('[app] 세션 준비 실패', error);
   }
 
   const fromHash = window.location.hash.replace('#', '');

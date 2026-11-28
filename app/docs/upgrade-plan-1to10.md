@@ -838,6 +838,113 @@
 - 일정 완료율은 보고·도착 기록이 있는 날 기준의 참고 지표입니다. GPS 기록이 없는 업장은 `자료 없음`으로 표시하고 참고 점수에서 90%로 계산합니다.
 - 패널 접기 상태는 화면 안에서만 유지됩니다(기기를 바꾸면 펼쳐진 상태로 시작).
 
+## 9-K. 서버 보안 잠금 단계에서 실제로 구현한 것 (v2.16.0 · 2026-11-29)
+
+> 대표 결정: **"보안 잠금(Supabase Auth · RLS) 바로 적용하기 (기존 데이터 유지)"**. 6장(보안 · 권한 현황)의
+> "지금은 anon 키를 아는 사람이 데이터를 읽을 수 있는 무료 테스트 구조"를 이 단계에서 끝냈습니다.
+
+### 1) 무엇으로 잠갔나
+
+| 층 | 구성 | 파일 |
+| --- | --- | --- |
+| 인증 | Supabase Auth(이메일 공급자) · 이메일 규칙 `전화번호@members.koreaecoclean.app` | `js/supabase-client.js` `SupabaseAuth` |
+| 신원 | `public.kec_members` (auth 사용자 ↔ 계정 · 역할 · 담당 업장) | `supabase-schema.sql` 2~5절 |
+| 행 보안 | `ecoclean_items` RLS 4정책 (`kec_can_see` / `kec_can_write`) | 6 · 9절 |
+| 값 보안 | 읽기 마스킹 뷰 `ecoclean_items_read` + 쓰기 보호 트리거 `kec_guard_item` | 7 · 8절 |
+| 초대 | `kec_room_entry` · `kec_redeem_room_code` · `kec_submit_inquiry` (security definer) | 10~11절 |
+| 파일 | `ecoclean-files` 업로드/수정 = authenticated | 12절 |
+
+### 2) 역할 매핑 (앱 `accounts` → 서버 `kec_members.role`)
+
+- `role:'admin'` → **admin** (대표, 전체)
+- `role:'leader'` + `canManageStaff` → **manager** (본부장)
+- `role:'leader'` → **leader** (팀장 · 직원)
+- `role:'customer'` → **customer** (고객)
+- 담당 업장 : 팀장 · 본부장은 `assignedSiteIds`, 고객은 `siteId`
+
+### 3) 열람 · 쓰기 범위 (서버가 강제)
+
+| collection | admin | manager | leader | customer |
+| --- | --- | --- | --- | --- |
+| sites | 전체 | 배정 업장 (금액 제거) | 배정 업장 (본인 도급가만) | 본인 업장 (출입 · 계약 · 정산 제거) |
+| reports | 전체 | 배정 업장 | 본인 보고(`leaderId`=본인 ∧ 배정 업장) | 본인 업장 |
+| quotes · contracts | 전체 | ✕ | ✕ | 본인 것 |
+| staffContracts | 전체 | ✕ | 본인 것만 | ✕ |
+| attitudeLogs | 전체 | ✕ | ✕ | ✕ |
+| inviteCodes · leaderCodes | 전체 | 배정 업장 | 본인 권한 행 | 본인 권한 행 |
+| supplyCatalog | 전체 | 읽기 | 읽기 | ✕ |
+| supplyOrders | 전체 | 본인 신청 | 본인 신청 | ✕ |
+| meta · accounts | 전체 | 읽기(본인 계정) | 읽기(본인 계정) | 본인 계정 읽기 |
+| inquiries | 전체 | ✕ | ✕ | ✕ (접수는 RPC) |
+
+- 쓰기는 **읽기 범위 안에서만** 허용(`sites` · `reports` · `quotes` · `contracts` · `staffContracts` · `supplyOrders`).
+  그 밖(계정 · 평가 · 코드 · 단가 · 상담)은 대표만 — 초대 · 접수는 함수가 대신합니다.
+- 쓰기 보호 트리거 : 대표가 아닌 사람이 `sites`를 저장하면 `contract` · `invoices` · `payouts`는 **원래 값으로 되돌립니다**.
+  고객은 `complaints` · `history` · `updatedAt`만 바꿀 수 있습니다. (마스킹된 레코드를 그대로 되쓰는 앱 구조에서 값 손실을 막는 장치)
+
+### 4) 계정 등록 흐름 (service_role 키 없이)
+
+```
+대표 앱에서 새 직원 등록
+   → store.addStaffAccount() → accounts 레코드 저장
+   → (서버) BEFORE INSERT/UPDATE 트리거 kec_sync_member
+        → kec_provision_account(new.id, phone, password, name, role, sites)
+             → auth.users 생성(encrypted_password = crypt(password, gen_salt('bf')))
+             → auth.identities(email) + kec_members(역할 · 담당 업장)
+        → 저장되는 레코드에서 `password` 제거
+   → 새 직원: 전화번호 + 그 비밀번호 (+ 고유코드)로 로그인
+```
+
+- 비밀번호 변경도 같은 트리거가 Auth 쪽 `encrypted_password`를 갱신합니다.
+- 계정 삭제 → `kec_members.active=false` (로그인은 남아도 아무 행도 보이지 않습니다).
+
+### 5) 고객 · 1회용 코드 (anon 에게 테이블을 열지 않음)
+
+```
+고객 폰: auth.signInAnonymously()            ← 익명 Auth 세션(authenticated 역할)
+   → rpc kec_room_entry(phone, code)         ← security definer
+        · 코드 검증(미사용 · 현장 일치) → 계정 생성/유지 → grant 생성 → 코드 소모
+        · auth.uid() 를 그 계정에 묶음(kec_members) — 마스킹된 사이트 1건 반환
+   → 이후 그 세션은 자기 업장 행만 읽고, 불편사항·견적 승인·서명만 쓸 수 있음
+```
+
+- 묶이지 않은 익명 사용자는 **0행**. 코드 목록을 읽을 수 없습니다.
+- 홈 상담 신청은 `kec_submit_inquiry(jsonb)` 로만 들어가고, 읽기는 대표만.
+
+### 6) 앱 쪽 변경
+
+| 파일 | 변경 |
+| --- | --- |
+| `js/supabase-client.js` | `SupabaseAuth`(로그인 · 익명 · 갱신 · 로그아웃) · JWT 헤더 · `rpc()` · 읽기는 마스킹 뷰 · 로그인 전에는 hydrate/쓰기 금지 · 403 은 그 변경만 건너뜀 |
+| `js/auth.js` | `loginAdmin` · `loginStaff` = Auth 로그인(같은 입력) · `loginCustomer` · `loginStaffInvite` = `kec_room_entry` · `prepareAuth()`(기존 기기 1회 이전) · `logout()` = Auth 종료 |
+| `js/store.js` | `syncAfterLogin()` · `applyServerEntry()`(서버 확정값을 조용히 기록) · 상담 · 코드 등록 RPC |
+| `js/app.js` | 부팅 시 `prepareAuth()` · 동기화 상태 `로그인 필요` |
+| `sw.js` | `CACHE_VERSION = v2.16.0` |
+
+### 7) 검증 (2026-11-29)
+
+| 검사 | 결과 |
+| --- | --- |
+| `curl` anon `GET/POST /rest/v1/ecoclean_items` | 401 permission denied |
+| `curl` anon `GET /rest/v1/ecoclean_items_read` | 401 permission denied |
+| 팀장 JWT `attitudeLogs` | 0행 · 쓰기 403 |
+| 팀장 JWT 남의 업장 보고 쓰기 | 403 |
+| 본부장 JWT `sites.contract` · `invoices` · `payouts` | 응답에 없음 |
+| 팀장 JWT `sites.contract` | `subcontractAmount`만 |
+| 고객 RPC 입장 | 자기 업장 1 · 보고 3 · 권한 1 |
+| 대표 앱에서 직원 등록 → 로그인 | 성공(Auth 자동 생성) |
+| 기존 데이터 | 63행 그대로(백업 대조 변경 0) |
+| 파이썬 검사 | `tests/run_tests.py` 210 · 29종 전부 통과 |
+| 브라우저 검사 | 586건 통과(`?sync=off`) + 서버 모드 17건 · 직원 등록 7건 · 코드 입장 5건 |
+
+### 8) 남은 것 · 한계
+
+- 고객 방은 사용자가 정한 대로 **전화번호만으로** 들어옵니다. 번호를 아는 사람은 그 방을 열 수 있다는 점은 그대로입니다(익명 세션 + 계정 묶음으로 범위만 좁혔습니다).
+- 현장 사진은 공개 버킷 주소로 열립니다(경로 추측 불가). 비공개로 돌리려면 서명 URL 로 바꾸고 사진 표시 경로를 고쳐야 합니다.
+- 앱이 `updated_at` 증분 동기화라, 권한이 바뀐 직후 다른 기기는 다음 전체 동기화(1분)에 반영됩니다.
+
+---
+
 ## 10. 구현 상태 표기 규칙 (기획서 30장 7·8항)
 
 화면에서 "되는 것처럼" 보이지 않게 다음 규칙을 씁니다.
@@ -922,7 +1029,7 @@
 
 ## 13. 다음 작업 순서 (권장)
 
-1. (선행) 서버 보안 0단계 — 대표 결정 필요: "지금 Supabase Auth 로 올릴지" vs "기능 먼저".
+1. (선행) 서버 보안 0단계 — ✅ v2.16.0 에서 완료(Supabase Auth + 서버 RLS · 기존 데이터 유지).
 2. 2단계 견적 — `priceTable` + 구역 체크리스트 + 자동 계산 + `createQuoteForSite` 버튼 공개.
 3. 4단계 인수인계(출입·주차·쓰레기·시설) — 팀장이 현장에서 바로 보는 정보라 체감 효과가 큼.
 4. 6단계 일정(달력) — ✅ v2.11.0 에서 `sites` 안(`schedule` · `scheduleOverrides` · `visits`)으로 구현(스키마 변경 없음). 월간 달력·연속 위치는 남음.

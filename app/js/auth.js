@@ -13,8 +13,69 @@
 
 import { store, normalizeCode, normalizePhone, prettyPhone } from './store.js';
 import { DEMO_ACCOUNTS } from './seed.js';
+import { emailForPhone } from './supabase-client.js';
 
 export const SESSION_KEY = 'session';
+
+/** 서버 로그인(Supabase Auth)이 켜져 있으면 그 세션을 돌려줍니다. */
+function syncAuth() {
+  return store.remote && store.auth ? store.auth : null;
+}
+
+/**
+ * 전화번호 + 비밀번호로 서버 세션(JWT)을 받습니다. (v2.16.0)
+ * 화면은 그대로 전화번호를 받고, 서버에는 이메일 규칙으로 바꿔 보냅니다.
+ */
+async function signInWithPasswordServer(phone, password) {
+  const auth = syncAuth();
+  if (!auth) return null;
+  const email = emailForPhone(phone);
+  const known = await store.findAccountByPhone(phone).catch(() => null);
+  try {
+    return await auth.signIn(email, password);
+  } catch (error) {
+    if (error && error.status === 400) {
+      if (known) throw new AuthError('bad-password', '비밀번호가 일치하지 않습니다.');
+      throw new AuthError('no-account', '등록된 계정을 찾지 못했습니다. 대표에게 문의해 주세요.');
+    }
+    throw new AuthError('auth-failed', '서버 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.');
+  }
+}
+
+/** 고객 방 · 초대 입장용 익명 세션 (비밀번호 없이 1회용 코드로만). */
+async function ensureAnonymousSession() {
+  const auth = syncAuth();
+  if (!auth) return null;
+  if (auth.hasSession() && auth.isAnonymous()) return auth;
+  if (auth.hasSession()) await auth.signOut();
+  await auth.signInAnonymously();
+  return auth;
+}
+
+/** 서버 RPC 입장 — 검증된 1건만 돌려받아 기기에 적고 세션을 시작합니다. */
+async function enterRoomThroughServer({ phone, code = '', name = '', title = '', email = '' }) {
+  const auth = await ensureAnonymousSession();
+  if (!auth) return null;
+  let result = null;
+  try {
+    result = await store.remote.client.rpc('kec_room_entry', {
+      p_phone: phone,
+      p_code: code || '',
+      p_name: name || '',
+      p_title: title || '',
+      p_email: email || '',
+    });
+  } catch (error) {
+    throw new AuthError('room-entry', (error && error.message) || '입장에 실패했습니다.');
+  }
+  if (!result || !result.account) {
+    throw new AuthError('room-entry', '입장 정보를 받지 못했습니다. 잠시 후 다시 시도해 주세요.');
+  }
+  await store.applyServerEntry(result);
+  await store.syncAfterLogin();
+  const account = (await store.getAccount(result.account.id)) || result.account;
+  return startSession(account);
+}
 
 export class AuthError extends Error {
   constructor(code, message) {
@@ -129,7 +190,52 @@ async function startSession(account) {
 export async function logout() {
   await store.removeSetting(SESSION_KEY);
   setWorkMode('admin');
+  const auth = syncAuth();
+  if (auth && auth.hasSession()) {
+    try {
+      await auth.signOut();
+    } catch (error) {
+      /* 서버 세션이 이미 끝났어도 기기 세션은 지웠습니다. */
+    }
+  }
+  if (store.remote) store.remote.logout();
+  store.syncStatus = store.remote ? 'login' : 'local';
   emitSessionChanged();
+}
+
+/**
+ * 앱을 열 때 — 기기에 남은 로그인을 서버 세션과 맞춥니다. (v2.16.0)
+ *  · 서버 세션이 있으면 그대로 이어서 동기화
+ *  · 예전 버전에서 로그인해 둔 기기는 한 번만 비밀번호로 조용히 옮겨 탑니다
+ *  · 옮길 수 없으면 로그인 화면으로 돌려보냅니다(비밀번호 입력은 그대로)
+ */
+export async function prepareAuth() {
+  const auth = syncAuth();
+  if (!auth) return getSession();
+  if (auth.hasSession()) {
+    await store.syncAfterLogin();
+    return getSession();
+  }
+  const stored = await store.getSetting(SESSION_KEY, null);
+  if (!stored || !stored.accountId) return null;
+  const account = await store.getAccount(stored.accountId).catch(() => null);
+  const password = account && String(account.password || '').trim();
+  const phone = account && normalizePhone(account.phone);
+  if (password && phone) {
+    try {
+      await auth.signIn(emailForPhone(phone), password);
+      await store.syncAfterLogin();
+      // 기기에 남아 있던 평문 비밀번호는 지웁니다(서버가 이미 지운 값입니다).
+      const clean = { ...account };
+      delete clean.password;
+      await (store.rawAdapter || store.adapter).put('accounts', clean);
+      return getSession();
+    } catch (error) {
+      console.warn('[auth] 기존 로그인을 서버 세션으로 옮기지 못했습니다', error);
+    }
+  }
+  await logout();
+  return null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -139,6 +245,11 @@ export async function logout() {
 export async function loginCustomer({ phone, code = '', name = '', title = '', email = '' }) {
   const digits = normalizePhone(phone);
   if (!digits) throw new AuthError('phone-empty', '전화번호를 입력해 주세요.');
+
+  // v2.16.0 — 서버 모드에서는 테이블 대신 서버 함수가 코드를 검증해 1건만 돌려줍니다.
+  if (syncAuth()) {
+    return enterRoomThroughServer({ phone: digits, code: String(code || '').trim(), name, title, email });
+  }
 
   const account = await store.findAccountByPhone(digits);
   if (account && account.role !== 'customer') {
@@ -188,6 +299,22 @@ export async function loginStaff({ phone, password, leaderCode }) {
   if (!String(password || '').trim()) throw new AuthError('password-empty', '비밀번호를 입력해 주세요.');
   if (!normalizeCode(leaderCode)) throw new AuthError('code-empty', '팀장 고유코드를 입력해 주세요.');
 
+  // v2.16.0 — 전화번호 + 비밀번호 그대로 서버(Supabase Auth) 로그인
+  if (syncAuth()) {
+    await signInWithPasswordServer(digits, String(password).trim());
+    await store.syncAfterLogin();
+    const account = await store.findAccountByPhone(digits);
+    if (!account || account.role === 'customer') {
+      await syncAuth().signOut();
+      throw new AuthError('no-account', '등록된 팀장 계정이 아닙니다.');
+    }
+    await requireActive(account);
+    if (!account.leaderCode || normalizeCode(account.leaderCode) !== normalizeCode(leaderCode)) {
+      throw new AuthError('bad-leader-code', '팀장 고유코드가 일치하지 않습니다. 대표에게 재발급을 요청해 주세요.');
+    }
+    return startSession(account);
+  }
+
   const account = await store.findAccountByPhone(digits);
   if (!account || account.role === 'customer') {
     throw new AuthError('no-account', '등록된 팀장 계정이 아닙니다.');
@@ -205,6 +332,30 @@ export async function loginStaff({ phone, password, leaderCode }) {
 export async function loginAdmin({ phone, password, leaderCode = '' }) {
   const digits = normalizePhone(phone);
   if (!digits) throw new AuthError('phone-empty', '전화번호를 입력해 주세요.');
+
+  // v2.16.0 — 전화번호 + 비밀번호 그대로 서버(Supabase Auth) 로그인
+  if (syncAuth()) {
+    await signInWithPasswordServer(digits, String(password || '').trim());
+    await store.syncAfterLogin();
+    const account = await store.findAccountByPhone(digits);
+    const isCeo = account && account.role === 'admin';
+    const isManager = account && account.role === 'leader' && account.canManageStaff;
+    if (!isCeo && !isManager) {
+      await syncAuth().signOut();
+      throw new AuthError('no-account', '대표(최고관리자) 또는 본부장(관리자) 계정이 아닙니다.');
+    }
+    await requireActive(account);
+    if (isManager) {
+      if (!normalizeCode(leaderCode)) {
+        throw new AuthError('code-empty', '본부장은 팀장 고유코드도 함께 입력해야 합니다.');
+      }
+      if (!account.leaderCode || normalizeCode(account.leaderCode) !== normalizeCode(leaderCode)) {
+        throw new AuthError('bad-leader-code', '팀장 고유코드가 일치하지 않습니다. 대표에게 재발급을 요청해 주세요.');
+      }
+    }
+    return startSession(account);
+  }
+
   const account = await store.findAccountByPhone(digits);
   const isCeo = account && account.role === 'admin';
   const isManager = account && account.role === 'leader' && account.canManageStaff;
@@ -233,6 +384,11 @@ export async function loginAdmin({ phone, password, leaderCode = '' }) {
 export async function loginStaffInvite({ phone, code = '' }) {
   const digits = normalizePhone(phone);
   if (!digits) throw new AuthError('phone-empty', '전화번호를 입력해 주세요.');
+
+  // v2.16.0 — 1회용 직원 초대코드도 서버 함수가 검증합니다.
+  if (syncAuth()) {
+    return enterRoomThroughServer({ phone: digits, code: String(code || '').trim() });
+  }
 
   if (!normalizeCode(code)) {
     const account = await store.findAccountByPhone(digits);
