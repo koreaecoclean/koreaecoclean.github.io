@@ -197,13 +197,13 @@
 | --- | --- |
 | `tests/test_stage10_ops.py` (신규) | **108/108** — 컴플레인 번호 · 정규화 · 접수/상태 흐름 · 해결 필수 메모 · 권한 4역할 · 평가 등급/항목/감점 · 현장 지표 · 월별 이력 · A~F 호환 · 라이브 63행 보존 |
 | `tests/test_stage10_render.py` (신규) | **87/87** — 대시보드 카드 6 · 접기/펼치기 · 컴플레인 카드/처리 상자 · 평가 패널/폼 · 고객·팀장 비노출 · 이스케이프 · 음수 매출 |
-| `tests/browser_stage10.py` (신규) | **44/44** — 실제 Chromium 전 과정(고객 접수 → 대표 요청 → 팀장 확인 → 해결 → 고객 확인 → 평가 저장), 콘솔·페이지 오류 0 |
+| `tests/browser_stage10.py` (신규) | **47/47** — 실제 Chromium 전 과정(고객 접수 + 사진 → 대표 요청 → 팀장 확인 → 해결 → 고객 확인 → 평가 저장), 콘솔·페이지 오류 0 |
 | `tests/live_stage10.py` (신규) | **32/32** — 라이브 배포본 390×844, `?sync=off` |
 | 기존 28종 + `run_tests.py` | **2,217/2,217** |
 | `browser_test` · `browser_stage4`~`8` · `browser_v2111` | 273 · 40 · 50 · 65 · 42 · 35 · 33 |
 | `check_static` · `run_views` | ALL PASSED |
 
-합계 **2,217개 파이썬 검사 + 582개 브라우저 검사 + 라이브 32개** 통과. 라이브 DB `ecoclean_items` **63행 그대로**(sha256 동일). 서비스 워커 `CACHE_VERSION` **v2.15.0**, GitHub Pages `built` 확인.
+합계 **2,217개 파이썬 검사 + 585개 브라우저 검사 + 라이브 32개** 통과. 라이브 DB `ecoclean_items` **63행 그대로**(sha256 동일). 서비스 워커 `CACHE_VERSION` **v2.15.0**, GitHub Pages `built` 확인.
 
 **알려진 제한**
 
