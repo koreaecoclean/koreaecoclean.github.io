@@ -7,7 +7,8 @@
  */
 
 import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate, fmtDateLong, fmtTime, openLightbox, modeSwitchTemplate } from '../ui.js';
-import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, countReportPhotos, QUOTE_STATUS, AGREEMENT_STATUS, SURVEY_PHOTO_AREAS, QUOTE_TEAM_SIZES, QUOTE_DIFFICULTIES, parsePyeong, estimateQuote, handoverPhotoCatalog, HANDOVER_ACCESS_TYPES, HANDOVER_CHECK_KEYS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, SCHEDULE_DAYS, SCHEDULE_STATUS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, DEFAULT_GPS_RADIUS_M, siteSchedule, scheduleDayText, scheduleTimeText, visitWorkOf, clockOfISO, clockLabel } from '../store.js';
+import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, reportNoOf, countReportPhotos, reportStatusKey, monthGrid, entriesByDate, CALENDAR_WEEKDAYS, QUOTE_STATUS, AGREEMENT_STATUS, SURVEY_PHOTO_AREAS, QUOTE_TEAM_SIZES, QUOTE_DIFFICULTIES, parsePyeong, estimateQuote, handoverPhotoCatalog, HANDOVER_ACCESS_TYPES, HANDOVER_CHECK_KEYS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, SCHEDULE_DAYS, SCHEDULE_STATUS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, DEFAULT_GPS_RADIUS_M, siteSchedule, scheduleDayText, scheduleTimeText, visitWorkOf, clockOfISO, clockLabel } from '../store.js';
+import { openReportSheet } from './report-sheet.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import { preparePhoto } from '../photos.js';
 import { getSession, loginAdmin, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
@@ -112,6 +113,11 @@ export function createAdminView(container) {  const state = {
     scheduleMonth: '',
     scheduleBusy: '',
     scheduleError: '',
+    // 6단계 — 보고서 수정 요청 · 월간 격자 달력
+    revisionOpen: '',
+    revisionDraft: '',
+    scheduleView: 'list',
+    calendarDate: '',
   };
   let mounted = false;
   let renderToken = 0;
@@ -924,9 +930,11 @@ export function createAdminView(container) {  const state = {
 
   function approvalCardTemplate(report) {
     const status = reportStatus(report);
+    const statusKey = reportStatusKey(report);
     const done = (report.checklist || []).filter((item) => item.done).length;
     const total = (report.checklist || []).length;
-    const pending = report.status !== 'submitted';
+    const pending = statusKey === 'pending';
+    const returned = statusKey === 'returned';
     const groupRows = PHOTO_GROUPS.map((group) => {
       const count = ((report.photos && report.photos[group.key]) || []).length;
       return `
@@ -939,12 +947,51 @@ export function createAdminView(container) {  const state = {
         </div>`;
     }).join('');
 
+    const detailButton = `<button class="btn btn--quiet btn--sm" type="button" data-report-detail="${esc(report.id)}">상세 · 인쇄</button>`;
+    let actions = '';
+    if (pending) {
+      actions = `
+        <div class="approval-actions">
+          <button class="btn btn--primary btn--sm" type="button" data-approve-report="${esc(report.id)}">확인 · 고객사 제출</button>
+          <button class="btn btn--quiet btn--sm" type="button" data-revise-open="${esc(report.id)}">수정 요청</button>
+          ${detailButton}
+        </div>
+        <p class="tiny muted">제출하면 고객 방에 바로 보입니다. 사진·메모를 보완해야 하면 [수정 요청]으로 사유를 남기세요.</p>
+        ${
+          state.revisionOpen === report.id
+            ? `<div class="approval-revise" data-revise-form="${esc(report.id)}">
+                 <label class="tiny muted" for="rev-reason-${esc(report.id)}">수정 요청 사유 · 팀장 화면에 그대로 표시됩니다</label>
+                 <textarea class="textarea" id="rev-reason-${esc(report.id)}" data-revise-input="${esc(report.id)}" rows="3"
+                   placeholder="예: 시건장치 사진이 흔들렸습니다. 다시 촬영해 주세요.">${esc(state.revisionDraft)}</textarea>
+                 <div class="btn-row">
+                   <button class="btn btn--quiet btn--sm" type="button" data-revise-cancel="${esc(report.id)}">취소</button>
+                   <button class="btn btn--primary btn--sm" type="button" data-revise-send="${esc(report.id)}">사유 보내기</button>
+                 </div>
+               </div>`
+            : ''
+        }`;
+    } else if (returned) {
+      actions = `
+        ${report.revisionReason ? `<p class="approval-reason" data-revise-reason="${esc(report.id)}"><strong>수정 요청 사유</strong>${esc(report.revisionReason)}</p>` : ''}
+        <div class="approval-actions">
+          <span class="tiny muted">팀장이 보완해 다시 제출하면 여기에서 확인할 수 있습니다.${report.revisionRequestedBy ? ` · ${esc(report.revisionRequestedBy)}` : ''}</span>
+          ${detailButton}
+        </div>`;
+    } else {
+      actions = `
+        <div class="approval-actions">
+          <p class="tiny muted approval-done">${esc(report.approvedAt ? `${fmtDateLong(String(report.approvedAt).slice(0, 10))} 고객사 제출 완료` : '고객사 제출 완료')}${report.approvedBy ? ` · ${esc(report.approvedBy)}` : ''}</p>
+          ${detailButton}
+        </div>`;
+    }
+
     return `
-      <article class="approval-card" data-approval-card="${esc(report.id)}">
+      <article class="approval-card" data-approval-card="${esc(report.id)}" data-report-status="${esc(statusKey)}">
         <header class="approval-card__head">
           <div>
             <strong>${esc(report.siteName || '')}</strong>
             <span>${esc(fmtDateLong(report.date))} ${esc(fmtTime(report.time))} · ${esc(report.leader)} ${esc(report.leaderRole || '팀장')}${report.workDurationText ? '' : report.durationMin ? ` · ${report.durationMin}분` : ''}</span>
+            <div class="approval-card__no"><span class="report-no" data-report-no>${esc(reportNoOf(report))}</span>${report.revisionCount ? `<span class="tiny muted"> · 수정 요청 ${report.revisionCount}회</span>` : ''}</div>
             ${reportWorkLine(report)}
           </div>
           <span class="badge ${status.badge}">${esc(status.label)}</span>
@@ -953,29 +1000,29 @@ export function createAdminView(container) {  const state = {
         ${groupRows}
         ${report.note ? `<div class="approval-block"><strong>전달 메모</strong><p class="report__note">${esc(report.note)}</p></div>` : ''}
         ${report.issueNote ? `<div class="approval-block"><strong>특이사항 메모</strong><p class="issue-note">${esc(report.issueNote)}</p></div>` : ''}
-        ${
-          pending
-            ? `<div class="approval-actions">
-                 <button class="btn btn--primary btn--sm" type="button" data-approve-report="${esc(report.id)}">확인 · 고객사 제출</button>
-                 <span class="tiny muted">제출하면 고객 방에 바로 보입니다.</span>
-               </div>`
-            : `<p class="tiny muted approval-done">${esc(report.approvedAt ? `${fmtDateLong(String(report.approvedAt).slice(0, 10))} 고객사 제출 완료` : '고객사 제출 완료')}${report.approvedBy ? ` · ${esc(report.approvedBy)}` : ''}</p>`
-        }
+        ${actions}
       </article>`;
   }
 
-  function reportApprovalPanelTemplate({ pending, recent }) {
+  function reportApprovalPanelTemplate({ pending, returned = [], recent }) {
     return `
       <section class="panel approval-panel" data-approval-panel>
         <div class="section-head">
           <h2>보고 확인 · 고객사 제출</h2>
-          <p>${pending.length ? `${pending.length}건 확인 대기` : '확인 대기 없음'}</p>
+          <p>${pending.length ? `${pending.length}건 확인 대기` : '확인 대기 없음'}${returned.length ? ` · 수정 요청 ${returned.length}건` : ''}</p>
         </div>
         <p class="tiny muted" style="margin:-4px 0 12px">
           팀장이 등록한 보고는 <strong>대표 확인 전까지 고객에게 보이지 않습니다.</strong>
           사진 · 전달 메모 · 특이사항을 확인하고 <strong>확인 · 고객사 제출</strong>을 누르면 그때 고객 방에 표시됩니다.
+          고칠 것이 있으면 <strong>수정 요청</strong>으로 사유를 남기면 팀장이 보완해 다시 제출합니다.
         </p>
         ${pending.length ? pending.map(approvalCardTemplate).join('') : '<p class="tiny muted">확인을 기다리는 보고가 없습니다.</p>'}
+        ${
+          returned.length
+            ? `<div class="section-head" style="margin-top:10px"><h2 style="font-size:15px">수정 요청 · 팀장 보완 대기</h2><p>${returned.length}건</p></div>
+               <div class="stack-10" data-returned-reports>${returned.map(approvalCardTemplate).join('')}</div>`
+            : ''
+        }
         ${
           recent.length
             ? `<details class="approval-recent">
@@ -1028,11 +1075,52 @@ export function createAdminView(container) {  const state = {
     state.busy = true;
     setBusy(button, true, '제출 중…');
     try {
-      const next = await store.approveReport(reportId, { by: state.session ? state.session.name : '' });
+      const next = await store.approveReport(reportId, { by: state.session ? state.session.name : '', actor: state.session });
       toast(`${next.siteName || ''} 보고를 고객사에 제출했습니다.`);
       await render();
     } catch (error) {
-      toast('보고를 제출하지 못했습니다. 잠시 후 다시 시도해 주세요.', { tone: 'error' });
+      toast(error && error.message ? error.message : '보고를 제출하지 못했습니다. 잠시 후 다시 시도해 주세요.', { tone: 'error' });
+    } finally {
+      state.busy = false;
+      setBusy(button, false);
+    }
+  }
+
+  /** 6단계 — [수정 요청] 사유를 팀장에게 보냅니다(고객 방에는 계속 비노출). */
+  async function sendRevisionRequest(reportId, button) {
+    if (state.busy) return;
+    const reason = String(state.revisionDraft || '').trim();
+    if (!reason) {
+      toast('수정 요청 사유를 입력해 주세요.', { tone: 'error' });
+      const input = $(`[data-revise-input="${reportId}"]`, container);
+      if (input) input.focus();
+      return;
+    }
+    const report = await store.getReport(reportId);
+    if (!report) {
+      toast('보고를 찾지 못했습니다.', { tone: 'error' });
+      return;
+    }
+    const ok = await confirmDialog({
+      title: '수정 요청을 보낼까요?',
+      message: `${reportNoOf(report)} · ${report.siteName || ''} 보고를 팀장에게 되돌립니다.\n사유: ${reason}`,
+      confirmLabel: '수정 요청',
+    });
+    if (!ok) return;
+    state.busy = true;
+    setBusy(button, true, '보내는 중…');
+    try {
+      await store.requestReportRevision(reportId, {
+        reason,
+        by: state.session ? state.session.name : '',
+        actor: state.session,
+      });
+      state.revisionOpen = '';
+      state.revisionDraft = '';
+      toast(`${report.siteName || ''} 보고에 수정 요청을 보냈습니다. 팀장이 보완하면 다시 확인 대기로 옵니다.`);
+      await render();
+    } catch (error) {
+      toast(error && error.message ? error.message : '수정 요청을 보내지 못했습니다.', { tone: 'error' });
     } finally {
       state.busy = false;
       setBusy(button, false);
@@ -1082,6 +1170,85 @@ export function createAdminView(container) {  const state = {
   function monthLabelOf(key) {
     const [year, month] = String(key || monthKeyOf()).split('-').map(Number);
     return `${year}년 ${month}월`;
+  }
+
+  /** 6단계 — 월간 격자형 달력(일~토). 칸을 누르면 그 날짜 일정이 아래에 펼쳐집니다. */
+  function scheduleCalendarTemplate(monthSchedule, monthKey) {
+    const today = (monthSchedule && monthSchedule.today) || todayStamp();
+    const grid = monthGrid(monthKey, { today });
+    // 지난 날은 실제 기록이 있는 날만 — 기능 도입 전 날짜가 모두 ‘미방문’으로 보이지 않게.
+    const entries = ((monthSchedule && monthSchedule.entries) || []).filter(
+      (entry) => entry.date >= today || entry.arrive || entry.done || entry.reportId,
+    );
+    const byDate = entriesByDate(entries);
+    const selected = (state.calendarDate && state.calendarDate.startsWith(`${grid.key}-`))
+      ? state.calendarDate
+      : (today.startsWith(`${grid.key}-`) ? today : '');
+    const dayEntries = selected ? byDate[selected] || [] : [];
+    const marks = (rows) =>
+      rows
+        .slice(0, 4)
+        .map(
+          (entry) =>
+            `<i class="cal-mark cal-mark--${esc(entry.status)}" title="${esc(entry.siteName)} · ${esc(entry.statusLabel)}" aria-hidden="true">${esc(entry.siteName)} ${esc(entry.statusLabel)}</i>`,
+        )
+        .join('');
+    return `
+      <div class="cal-grid" data-schedule-calendar="${esc(grid.key)}">
+        <div class="cal-weekdays" role="row">
+          ${CALENDAR_WEEKDAYS.map((day) => `<span role="columnheader">${esc(day.label)}</span>`).join('')}
+        </div>
+        ${grid.weeks
+          .map(
+            (week) => `<div class="cal-week" role="row">
+              ${week
+                .map((cell) => {
+                  if (!cell.inMonth) return '<span class="cal-cell is-empty" aria-hidden="true"></span>';
+                  const rows = byDate[cell.date] || [];
+                  const classes = ['cal-cell'];
+                  if (cell.isToday) classes.push('is-today');
+                  if (cell.date === selected) classes.push('is-selected');
+                  if (cell.weekday === 0) classes.push('is-sunday');
+                  if (cell.weekday === 6) classes.push('is-saturday');
+                  return `<button class="${classes.join(' ')}" type="button" data-cal-date="${esc(cell.date)}"
+                    aria-pressed="${cell.date === selected}" aria-label="${esc(`${grid.month}월 ${cell.day}일 · 일정 ${rows.length}건`)}"
+                    ${rows.length ? `data-cal-count="${rows.length}"` : ''} data-cal-statuses="${esc(rows.map((row) => row.status).join(','))}">
+                    <span class="cal-cell__day">${cell.day}${cell.isToday ? '<span class="cal-cell__today">오늘</span>' : ''}</span>
+                    <span class="cal-cell__marks">${marks(rows)}</span>
+                    ${rows.length ? `<span class="cal-cell__count">${rows.length}건</span>` : ''}
+                  </button>`;
+                })
+                .join('')}
+            </div>`,
+          )
+          .join('')}
+      </div>
+      <div class="cal-legend" aria-hidden="true">
+        ${['planned', 'active', 'done', 'missed', 'off']
+          .map((key) => `<span><i class="cal-mark cal-mark--${key}"></i>${esc((SCHEDULE_STATUS[key] || {}).short || key)}</span>`)
+          .join('')}
+      </div>
+      <div class="cal-detail" data-cal-detail="${esc(selected)}">
+        <div class="cal-detail__head">
+          <strong>${selected ? esc(fmtDateLong(selected)) : '날짜를 누르면 일정이 보입니다'}</strong>
+          <span class="tiny muted">${selected ? `${dayEntries.length}곳` : ''}</span>
+        </div>
+        ${
+          selected && dayEntries.length
+            ? dayEntries
+                .map(
+                  (entry) => `<div class="sched-row" data-schedule-site="${esc(entry.siteId)}" data-schedule-status="${esc(entry.status)}">
+                    <span>${esc(entry.siteName)}</span>
+                    <span class="tiny muted">${esc(entry.time || '시간 미설정')} · ${esc(entry.assigneeName || entry.manager || '미지정')}</span>
+                    ${scheduleStatusBadge(entry)}
+                  </div>`,
+                )
+                .join('')
+            : selected
+              ? '<p class="tiny muted cal-empty">이 날은 일정이 없습니다.</p>'
+              : ''
+        }
+      </div>`;
   }
 
   /** 오늘 일정 · 다음 일정 · 월간 목록 · 팀장별 필터 — 대표 화면 맨 위에 붙입니다. */
@@ -1156,19 +1323,31 @@ export function createAdminView(container) {  const state = {
             <button class="link-btn" type="button" data-schedule-month="next" aria-label="다음달">${esc(monthLabelOf(shiftMonthKey(monthKey, 1)))} ›</button>
           </div>
         </div>
-        <div class="sched-month" data-schedule-month-list>
-          ${monthEntries.length
-            ? monthEntries
-                .map(
-                  (entry) => `<div class="sched-month__row" data-schedule-site="${esc(entry.siteId)}" data-schedule-status="${esc(entry.status)}">
-                    <span class="sched-month__date">${esc(entry.date.slice(5).replace('-', '.'))} (${esc(entry.weekdayLabel)})</span>
-                    <span class="sched-month__name">${esc(entry.siteName)}</span>
-                    <span class="tiny muted">${esc(entry.time || '시간 미설정')}</span>
-                    ${scheduleStatusBadge(entry)}
-                  </div>`,
-                )
-                .join('')
-            : '<p class="tiny muted">이 달에는 일정이 없습니다.</p>'}
+        <div class="cal-toolbar">
+          <span class="tiny muted">${monthEntries.length}건</span>
+          <div class="cal-view-toggle" role="group" aria-label="월간 일정 보기 방식">
+            <button type="button" data-schedule-view="list" aria-pressed="${state.scheduleView !== 'grid'}">목록</button>
+            <button type="button" data-schedule-view="grid" aria-pressed="${state.scheduleView === 'grid'}">달력</button>
+          </div>
+        </div>
+        <div class="sched-view" data-schedule-view-panel="grid"${state.scheduleView === 'grid' ? '' : ' hidden'}>
+          ${scheduleCalendarTemplate(monthSchedule, monthKey)}
+        </div>
+        <div class="sched-view" data-schedule-view-panel="list"${state.scheduleView === 'grid' ? ' hidden' : ''}>
+          <div class="sched-month" data-schedule-month-list>
+            ${monthEntries.length
+              ? monthEntries
+                  .map(
+                    (entry) => `<div class="sched-month__row" data-schedule-site="${esc(entry.siteId)}" data-schedule-status="${esc(entry.status)}">
+                      <span class="sched-month__date">${esc(entry.date.slice(5).replace('-', '.'))} (${esc(entry.weekdayLabel)})</span>
+                      <span class="sched-month__name">${esc(entry.siteName)}</span>
+                      <span class="tiny muted">${esc(entry.time || '시간 미설정')}</span>
+                      ${scheduleStatusBadge(entry)}
+                    </div>`,
+                  )
+                  .join('')
+              : '<p class="tiny muted">이 달에는 일정이 없습니다.</p>'}
+          </div>
         </div>
         <p class="hint">팀장이 현장에서 [현장 도착]을 누르면 그 시각이 <strong>청소 시작 시간</strong>으로, [청소 완료]를 누르면 <strong>종료 시간과 소요 시간</strong>이 기록됩니다. 위치를 못 받으면 사유를 남긴 예외 기록이 ‘위치 미인증’으로 표시됩니다.</p>
       </section>`;
@@ -1929,6 +2108,7 @@ export function createAdminView(container) {  const state = {
     const supplyCatalog = await store.listSupplyCatalog();
     const supplyOrders = await store.listSupplyOrders({}, actor);
     const pendingReports = await store.listReports({ status: 'pending' });
+    const returnedReports = await store.listReports({ status: 'returned' });
     const recentSubmitted = await store.listReports({ status: 'submitted', limit: 3 });
     // 업장(siteId) 중심 연결 요약 — 견적 · 계약 · 팀장 계약 · 보고 · 이력을 한 번에 읽습니다.
     const links = await store.listSiteLinks().catch(() => ({}));
@@ -1973,7 +2153,7 @@ export function createAdminView(container) {  const state = {
         </div>
       </section>
 
-      ${reportApprovalPanelTemplate({ pending: pendingReports, recent: recentSubmitted })}
+      ${reportApprovalPanelTemplate({ pending: pendingReports, returned: returnedReports, recent: recentSubmitted })}
 
       ${schedulePanelTemplate(schedule, monthSchedule)}
 
@@ -2640,6 +2820,11 @@ export function createAdminView(container) {  const state = {
   }
 
   function onInput(event) {
+    const reviseInput = event.target.closest('[data-revise-input]');
+    if (reviseInput) {
+      state.revisionDraft = reviseInput.value;
+      return;
+    }
     if (event.target.matches('[data-photo-memo]')) {
       state.survey.photoMemo = event.target.value;
       return;
@@ -2823,6 +3008,19 @@ export function createAdminView(container) {  const state = {
     if (scheduleMonth) {
       const delta = scheduleMonth.dataset.scheduleMonth === 'prev' ? -1 : 1;
       state.scheduleMonth = shiftMonthKey(state.scheduleMonth || monthKeyOf(), delta);
+      state.calendarDate = '';
+      await render();
+      return;
+    }
+    const scheduleView = event.target.closest('[data-schedule-view]');
+    if (scheduleView) {
+      state.scheduleView = scheduleView.dataset.scheduleView === 'grid' ? 'grid' : 'list';
+      await render();
+      return;
+    }
+    const calDate = event.target.closest('[data-cal-date]');
+    if (calDate) {
+      state.calendarDate = calDate.dataset.calDate || '';
       await render();
       return;
     }
@@ -3083,6 +3281,34 @@ export function createAdminView(container) {  const state = {
     const approveButton = event.target.closest('[data-approve-report]');
     if (approveButton) {
       await approveReportToCustomer(approveButton.dataset.approveReport, approveButton);
+      return;
+    }
+
+    // 6단계 — 수정 요청 · 보고서 상세(인쇄 / PDF)
+    const reviseOpen = event.target.closest('[data-revise-open]');
+    if (reviseOpen) {
+      state.revisionOpen = state.revisionOpen === reviseOpen.dataset.reviseOpen ? '' : reviseOpen.dataset.reviseOpen;
+      state.revisionDraft = '';
+      await render();
+      const input = $(`[data-revise-input="${state.revisionOpen}"]`, container);
+      if (input) input.focus();
+      return;
+    }
+    const reviseCancel = event.target.closest('[data-revise-cancel]');
+    if (reviseCancel) {
+      state.revisionOpen = '';
+      state.revisionDraft = '';
+      await render();
+      return;
+    }
+    const reviseSend = event.target.closest('[data-revise-send]');
+    if (reviseSend) {
+      await sendRevisionRequest(reviseSend.dataset.reviseSend, reviseSend);
+      return;
+    }
+    const reportDetail = event.target.closest('[data-report-detail]');
+    if (reportDetail) {
+      await openReportSheet(reportDetail.dataset.reportDetail, { actor: state.session });
       return;
     }
 

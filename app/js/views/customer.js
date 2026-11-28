@@ -22,7 +22,7 @@ import {
   toISODate,
   fmtWon,
 } from '../ui.js';
-import { store, countReportPhotos, QUOTE_STATUS, AGREEMENT_STATUS } from '../store.js';
+import { store, countReportPhotos, reportNoOf, QUOTE_STATUS, AGREEMENT_STATUS } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import {
   getSession,
@@ -34,6 +34,7 @@ import {
   demoRegisteredCustomers,
 } from '../auth.js';
 import { openQuoteSheet, openAgreementSheet } from './quote-contract.js';
+import { openReportSheet } from './report-sheet.js';
 import { preparePhoto } from '../photos.js';
 import { peekPendingInvite, clearPendingInvite, inviteKind, inviteLabel } from '../invite.js';
 
@@ -333,6 +334,7 @@ export function createCustomerView(container) {
           <div class="report__title">
             <strong>${esc(fmtTime(report.time))} 완료${rel ? ` · ${esc(rel)}` : ''}</strong>
             <span>${esc(report.leader)} ${esc(report.leaderRole || '팀장')}${report.workDurationText ? '' : report.durationMin ? ` · ${report.durationMin}분` : ''}${report.manualDay ? ` · ${esc(report.manualDay)}요일 청소공정` : ''}</span>
+            <span class="report-no" data-report-no>${esc(reportNoOf(report))}</span>
             ${report.workStartAt || report.workEndAt
               ? `<span class="sched-work-line" data-report-work="${esc(report.id)}">${report.workStartAt ? `시작 ${esc(fmtTime(report.workStartAt))}` : ''}${report.workStartAt && report.workEndAt ? ' → ' : ''}${report.workEndAt ? `완료 ${esc(fmtTime(report.workEndAt))}` : ''}${report.workDurationText ? ` (${esc(report.workDurationText)})` : ''}</span>`
               : ''}
@@ -360,6 +362,9 @@ export function createCustomerView(container) {
           </ul>
           ${report.note ? `<p class="report__note">${esc(report.note)}</p>` : ''}
           ${issueCount && !report.issueNote ? `<p class="tiny muted">특이사항 사진 ${issueCount}장이 등록되었습니다.</p>` : ''}
+          <div class="report__actions">
+            <button class="link-btn" type="button" data-report-print="${esc(report.id)}">인쇄 · PDF 저장</button>
+          </div>
         </div>
       </article>
     `;
@@ -1248,6 +1253,12 @@ export function createCustomerView(container) {
   }
 
   async function onClick(event) {
+    const reportPrint = event.target.closest('[data-report-print]');
+    if (reportPrint) {
+      await openReportSheet(reportPrint.dataset.reportPrint, { actor: state.session });
+      return;
+    }
+
     const roomTab = event.target.closest('[data-room-tab]');
     if (roomTab) {
       state.roomTab = roomTab.dataset.roomTab;

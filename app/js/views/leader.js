@@ -24,11 +24,12 @@ import {
   openLightbox,
   modeSwitchTemplate,
 } from '../ui.js';
-import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, canUseSupply, MAX_BASELINE_PHOTOS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, HANDOVER_ACCESS_TYPES, SCHEDULE_STATUS, SCHEDULE_DAYS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, scheduleDayText, scheduleTimeText, durationText } from '../store.js';
+import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, reportStatusKey, reportNoOf, canUseSupply, MAX_BASELINE_PHOTOS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, HANDOVER_ACCESS_TYPES, SCHEDULE_STATUS, SCHEDULE_DAYS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, scheduleDayText, scheduleTimeText, durationText, monthGrid, entriesByDate, CALENDAR_WEEKDAYS } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
 import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
 import { openStaffContractSheet } from './quote-contract.js';
+import { openReportSheet } from './report-sheet.js';
 import { peekPendingInvite, clearPendingInvite, inviteKind, inviteLabel } from '../invite.js';
 import { supplyStaffPanel, openSupplyReceipt, submitSupplyRequest, refreshSupplyTotal } from './supply.js';
 
@@ -430,6 +431,13 @@ export function createLeaderView(container) {
     scheduleMonthSchedule: { entries: [] },
     scheduleBusy: '',
     visitForm: { siteId: '', kind: 'arrive', reason: 'indoor', note: '', error: '' },
+    // 6단계 — 월간 격자 달력 · 수정 요청 보완
+    scheduleView: 'list',
+    calendarDate: '',
+    editingReportId: '',
+    editingReport: null,
+    existingPhotos: null,
+    revisionCounts: {},
     busy: false,
   };
   const sampleCursor = { security: 0, cleaning: 0, issue: 0 };
@@ -465,6 +473,85 @@ export function createLeaderView(container) {
     const staleManual = days.length > 0 && !days.some((day) => day.key === (state.draft && state.draft.manualDay));
     if (!state.draft || state.draft.checks.length !== site.checklist.length || staleManual) startDraft(session, site);
     return state.draft;
+  }
+
+  /* ---------------- 6단계 — 수정 요청 보완 ---------------- */
+
+  /** 수정 요청받은 보고서 내용을 그대로 폼에 채웁니다(사진은 기존 것 유지 + 새로 추가). */
+  function revisionDraft(session, site, report) {
+    const rows = new Map((report.checklist || []).map((row) => [row.label, !!row.done]));
+    const draft = {
+      date: report.date || toISODate(),
+      time: report.time || nowHHMM(),
+      leader: report.leader || session.name,
+      leaderRole: report.leaderRole || session.title || '팀장',
+      duration: report.durationMin || 90,
+      durationTouched: true,
+      note: report.note || '',
+      issueNote: report.issueNote || '',
+      photos: emptyPhotos(),
+      checks: site.checklist.map((label) => rows.get(label) || false),
+      manualDay: defaultManualDay(site),
+      manual: {},
+    };
+    if (manualDays(site).length) {
+      const info = manualItems(site, draft.manualDay);
+      info.items.forEach((item) => {
+        const label = item.area ? `${item.area} · ${item.label}` : item.label;
+        if (rows.get(label)) draft.manual[item.id] = true;
+      });
+    }
+    return draft;
+  }
+
+  async function startRevision(reportId) {
+    const report = await store.getReport(reportId);
+    if (!report || !state.session) return;
+    const site = (await store.getSiteFor(state.session, report.siteId)) || (await store.getSite(report.siteId));
+    if (!site) {
+      toast('현장 정보를 찾을 수 없습니다.', { tone: 'error' });
+      return;
+    }
+    if (reportStatusKey(report) !== 'returned') {
+      toast('지금은 수정 요청된 보고가 아닙니다.', { tone: 'error' });
+      return;
+    }
+    state.siteId = report.siteId;
+    state.sent = null;
+    state.editingReportId = report.id;
+    state.editingReport = report;
+    state.existingPhotos = report.photos;
+    state.draft = revisionDraft(state.session, site, report);
+    await render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function cancelRevision() {
+    state.editingReportId = '';
+    state.editingReport = null;
+    state.existingPhotos = null;
+    if (state.session) {
+      const site = state.siteId ? await store.getSiteFor(state.session, state.siteId) : null;
+      if (site) startDraft(state.session, site);
+    }
+    await render();
+  }
+
+  function revisionBannerTemplate() {
+    const report = state.editingReport;
+    if (!state.editingReportId || !report) return '';
+    return `
+      <section class="panel sent-card revision-banner" data-revision-banner="${esc(report.id)}">
+        <span class="sent-card__icon">${icons.clipboard}</span>
+        <div>
+          <strong>수정 요청 보완 · ${esc(reportNoOf(report))}</strong>
+          <p>${report.revisionReason ? `${esc(report.revisionReason)}` : '대표가 수정 요청한 보고입니다.'}</p>
+          <p class="sent-card__hint">고친 뒤 [보완해서 다시 제출]을 누르면 대표 확인 대기로 돌아갑니다. 기존 사진은 그대로 유지되고 새 사진이 더해집니다.</p>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn--quiet btn--sm" type="button" data-revision-cancel>수정 취소</button>
+        </div>
+      </section>`;
   }
 
   /* ---------------- login ---------------- */
@@ -723,6 +810,82 @@ export function createLeaderView(container) {
     return `${year}년 ${month}월`;
   }
 
+  function scheduleCalendarTemplate() {
+    const monthKey = state.scheduleMonth || monthKeyOf();
+    const source = state.scheduleMonthSchedule || { entries: [] };
+    const today = source.today || toISODate();
+    const entries = (source.entries || []).filter(
+      (entry) => entry.date >= today || entry.arrive || entry.done || entry.reportId,
+    );
+    const grid = monthGrid(monthKey, { today });
+    const byDate = entriesByDate(entries);
+    const selected = (state.calendarDate && state.calendarDate.startsWith(`${grid.key}-`))
+      ? state.calendarDate
+      : (today.startsWith(`${grid.key}-`) ? today : '');
+    const dayEntries = selected ? byDate[selected] || [] : [];
+    return `
+      <div class="cal-grid" data-schedule-calendar="${esc(grid.key)}">
+        <div class="cal-weekdays" role="row">
+          ${CALENDAR_WEEKDAYS.map((day) => `<span role="columnheader">${esc(day.label)}</span>`).join('')}
+        </div>
+        ${grid.weeks
+          .map(
+            (week) => `<div class="cal-week" role="row">
+              ${week
+                .map((cell) => {
+                  if (!cell.inMonth) return '<span class="cal-cell is-empty" aria-hidden="true"></span>';
+                  const rows = byDate[cell.date] || [];
+                  const classes = ['cal-cell'];
+                  if (cell.isToday) classes.push('is-today');
+                  if (cell.date === selected) classes.push('is-selected');
+                  if (cell.weekday === 0) classes.push('is-sunday');
+                  if (cell.weekday === 6) classes.push('is-saturday');
+                  return `<button class="${classes.join(' ')}" type="button" data-cal-date="${esc(cell.date)}"
+                    aria-pressed="${cell.date === selected}" aria-label="${esc(`${grid.month}월 ${cell.day}일 · 일정 ${rows.length}건`)}"
+                    ${rows.length ? `data-cal-count="${rows.length}"` : ''} data-cal-statuses="${esc(rows.map((row) => row.status).join(','))}">
+                    <span class="cal-cell__day">${cell.day}${cell.isToday ? '<span class="cal-cell__today">오늘</span>' : ''}</span>
+                    <span class="cal-cell__marks">${rows
+                      .slice(0, 4)
+                      .map(
+                        (entry) => `<i class="cal-mark cal-mark--${esc(entry.status)}" title="${esc(entry.siteName)} · ${esc(entry.statusLabel)}" aria-hidden="true">${esc(entry.siteName)} ${esc(entry.statusLabel)}</i>`,
+                      )
+                      .join('')}</span>
+                    ${rows.length ? `<span class="cal-cell__count">${rows.length}건</span>` : ''}
+                  </button>`;
+                })
+                .join('')}
+            </div>`,
+          )
+          .join('')}
+      </div>
+      <div class="cal-legend" aria-hidden="true">
+        ${['planned', 'active', 'done', 'missed', 'off']
+          .map((key) => `<span><i class="cal-mark cal-mark--${key}"></i>${esc((SCHEDULE_STATUS[key] || {}).short || key)}</span>`)
+          .join('')}
+      </div>
+      <div class="cal-detail" data-cal-detail="${esc(selected)}">
+        <div class="cal-detail__head">
+          <strong>${selected ? esc(fmtDateLong(selected)) : '날짜를 누르면 일정이 보입니다'}</strong>
+          <span class="tiny muted">${selected ? `${dayEntries.length}곳` : ''}</span>
+        </div>
+        ${
+          selected && dayEntries.length
+            ? dayEntries
+                .map(
+                  (entry) => `<div class="sched-row" data-schedule-site="${esc(entry.siteId)}" data-schedule-status="${esc(entry.status)}">
+                    <span>${esc(entry.siteName)}</span>
+                    <span class="tiny muted">${esc(entry.time || '시간 미설정')}</span>
+                    <span class="badge ${esc(entry.statusBadge)}">${esc(entry.statusLabel)}</span>
+                  </div>`,
+                )
+                .join('')
+            : selected
+              ? '<p class="tiny muted cal-empty">이 날은 일정이 없습니다.</p>'
+              : ''
+        }
+      </div>`;
+  }
+
   function scheduleMonthTemplate() {
     const monthKey = state.scheduleMonth || monthKeyOf();
     const monthSource = state.scheduleMonthSchedule || { entries: [] };
@@ -740,19 +903,31 @@ export function createLeaderView(container) {
             <button class="link-btn" type="button" data-schedule-month="next" aria-label="다음달">${esc(monthLabelOf(shiftMonthKey(monthKey, 1)))} ›</button>
           </div>
         </div>
-        <div class="sched-month" data-schedule-month-list>
-          ${entries.length
-            ? entries
-                .map(
-                  (entry) => `<div class="sched-month__row" data-schedule-site="${esc(entry.siteId)}" data-schedule-status="${esc(entry.status)}">
-                    <span class="sched-month__date">${esc(entry.date.slice(5).replace('-', '.'))} (${esc(entry.weekdayLabel)})</span>
-                    <span class="sched-month__name">${esc(entry.siteName)}</span>
-                    <span class="tiny muted">${esc(entry.time || '시간 미설정')}</span>
-                    <span class="badge ${esc(entry.statusBadge)}">${esc(entry.statusLabel)}</span>
-                  </div>`,
-                )
-                .join('')
-            : '<p class="tiny muted">이 달에는 일정이 없습니다.</p>'}
+        <div class="cal-toolbar">
+          <span class="tiny muted">${entries.length}건</span>
+          <div class="cal-view-toggle" role="group" aria-label="월간 일정 보기 방식">
+            <button type="button" data-schedule-view="list" aria-pressed="${state.scheduleView !== 'grid'}">목록</button>
+            <button type="button" data-schedule-view="grid" aria-pressed="${state.scheduleView === 'grid'}">달력</button>
+          </div>
+        </div>
+        <div class="sched-view" data-schedule-view-panel="grid"${state.scheduleView === 'grid' ? '' : ' hidden'}>
+          ${scheduleCalendarTemplate()}
+        </div>
+        <div class="sched-view" data-schedule-view-panel="list"${state.scheduleView === 'grid' ? ' hidden' : ''}>
+          <div class="sched-month" data-schedule-month-list>
+            ${entries.length
+              ? entries
+                  .map(
+                    (entry) => `<div class="sched-month__row" data-schedule-site="${esc(entry.siteId)}" data-schedule-status="${esc(entry.status)}">
+                      <span class="sched-month__date">${esc(entry.date.slice(5).replace('-', '.'))} (${esc(entry.weekdayLabel)})</span>
+                      <span class="sched-month__name">${esc(entry.siteName)}</span>
+                      <span class="tiny muted">${esc(entry.time || '시간 미설정')}</span>
+                      <span class="badge ${esc(entry.statusBadge)}">${esc(entry.statusLabel)}</span>
+                    </div>`,
+                  )
+                  .join('')
+              : '<p class="tiny muted">이 달에는 일정이 없습니다.</p>'}
+          </div>
         </div>
         <p class="tiny muted">정기 청소 요일을 기준으로 만든 한 달 일정입니다. 대표가 휴무 · 보강 · 시간 변경을 넣으면 바로 반영됩니다.</p>
       </section>`;
@@ -1163,6 +1338,10 @@ export function createLeaderView(container) {
         const meta = CATEGORY_META[site.category] || {};
         let badge = '<span class="badge">기록 없음</span>';
         if (doneToday) badge = '<span class="badge badge--done">오늘 보고 완료</span>';
+        const revisions = Number(state.revisionCounts[site.id]) || 0;
+        if (revisions) {
+          badge = `<span class="badge badge--revise" data-site-revision="${esc(site.id)}">수정 요청 ${revisions}건</span>`;
+        }
         else if (last) {
           const due = daysBetween(last.date) >= (site.intervalDays || 7) - 1;
           badge = due
@@ -1331,6 +1510,10 @@ export function createLeaderView(container) {
         const meta = CATEGORY_META[site.category] || {};
         let badge = '<span class="badge">기록 없음</span>';
         if (doneToday) badge = '<span class="badge badge--done">오늘 보고 완료</span>';
+        const revisions = Number(state.revisionCounts[site.id]) || 0;
+        if (revisions) {
+          badge = `<span class="badge badge--revise" data-site-revision="${esc(site.id)}">수정 요청 ${revisions}건</span>`;
+        }
         else if (last) {
           const due = daysBetween(last.date) >= (site.intervalDays || 7) - 1;
           badge = due
@@ -1409,20 +1592,35 @@ export function createLeaderView(container) {
 
   function photoSectionTemplate(group, site, draft, index) {
     const photos = draft.photos[group.key] || [];
+    // 수정 요청 보완 — 기존 보고서 사진은 지우지 않고 그대로 둔 채 새 사진만 더합니다.
+    const kept = (state.existingPhotos && state.existingPhotos[group.key]) || [];
     const label = group.key === 'cleaning'
       ? `${CATEGORY_META[site.category]?.cleaningLabel || group.label} 사진`
       : `${group.label} 사진`;
     const required = group.required;
     const max = Number(group.max) || 0;
-    const full = max > 0 && photos.length >= max;
+    const full = max > 0 && photos.length + kept.length >= max;
+    const keptBlock = kept.length
+      ? `<div class="kept-photos" data-kept-group="${esc(group.key)}">
+           <p class="tiny muted">기존 사진 ${kept.length}장 · 유지됩니다 (새 사진은 뒤에 더해집니다)</p>
+           <div class="thumbs">
+             ${kept
+               .map(
+                 (photo) => `<div class="thumb"><img src="${esc(store.photoThumbUrl(photo))}" alt="기존 보고 사진" loading="lazy" decoding="async"></div>`,
+               )
+               .join('')}
+           </div>
+         </div>`
+      : '';
 
     return `
       <section class="panel photo-panel photo-panel--${group.key}">
         <div class="section-head">
           <h2><span class="step-badge">${index + 1}</span>${esc(label)} ${required ? '<span class="req">*</span>' : '<span class="opt">선택</span>'}</h2>
-          <p><span data-photo-count="${group.key}">${photos.length}</span>${max ? `/${max}` : ''}장</p>
+          <p><span data-photo-count="${group.key}">${photos.length + kept.length}</span>${max ? `/${max}` : ''}장</p>
         </div>
         <p class="tiny muted" style="margin:-6px 0 10px">${esc(group.hint)}${max ? ` · 최대 ${max}장` : ''}</p>
+        ${keptBlock}
         ${
           full
             ? `<p class="upload-full">${max}장을 모두 채웠습니다. 더 넣으려면 아래에서 사진을 삭제해 주세요.</p>`
@@ -1632,6 +1830,7 @@ export function createLeaderView(container) {
     return `
       ${leaderBarTemplate(session)}
       ${state.sent ? sentTemplate(state.sent) : ''}
+      ${revisionBannerTemplate()}
 
       ${staffPayTemplate(site, session)}
 
@@ -1725,11 +1924,13 @@ export function createLeaderView(container) {
       </section>
 
       <p class="tiny muted" style="text-align:center;margin:4px 0 8px">
-        등록한 보고는 <strong>최고관리자(대표) 확인</strong>을 거쳐 고객사에 제출됩니다.
+        ${state.editingReportId
+          ? '고친 내용을 다시 제출하면 <strong>대표 확인 대기</strong>로 돌아갑니다. 고객에게는 대표가 제출한 뒤에 보입니다.'
+          : '등록한 보고는 <strong>최고관리자(대표) 확인</strong>을 거쳐 고객사에 제출됩니다.'}
       </p>
 
       <div class="submit-bar">
-        <button class="btn btn--primary" type="button" data-action="submit-report">보고 등록하기</button>
+        <button class="btn btn--primary" type="button" data-action="submit-report">${state.editingReportId ? '보완해서 다시 제출' : '보고 등록하기'}</button>
       </div>
 
       <section class="panel">
@@ -1745,15 +1946,18 @@ export function createLeaderView(container) {
   }
 
   function sentTemplate(sent) {
+    const revised = !!sent.revised;
     return `
       <section class="sent-card">
         <span class="sent-card__icon">${icons.check}</span>
         <div>
-          <strong>보고를 등록했습니다 · 관리자 확인 대기</strong>
-          <p>${esc(sent.siteName)} · ${esc(fmtDateLong(sent.date))} ${esc(fmtTime(sent.time))}<br>
+          <strong>${revised ? '보완해서 다시 제출했습니다 · 대표 확인 대기' : '보고를 등록했습니다 · 관리자 확인 대기'}</strong>
+          <p>${esc(sent.siteName)} · ${esc(fmtDateLong(sent.date))} ${esc(fmtTime(sent.time))}${sent.reportNo ? ` · ${esc(sent.reportNo)}` : ''}<br>
           시건장치 ${sent.photos.security.length}장 · 맞춤 청소 ${sent.photos.cleaning.length}장 · 특이사항 ${sent.photos.issue.length}장 ·
           점검 ${sent.doneCount}/${sent.totalCount}</p>
-          <p class="sent-card__hint">최고관리자(대표)가 확인해 고객사에 제출하면 그때 고객 방에 보입니다.</p>
+          <p class="sent-card__hint">${revised
+            ? '수정 요청에 대한 보완 내용이 대표에게 전달됐습니다. 대표가 확인해 고객사에 제출하면 그때 고객 방에 보입니다.'
+            : '최고관리자(대표)가 확인해 고객사에 제출하면 그때 고객 방에 보입니다.'}</p>
         </div>
         <div class="btn-row">
           <button class="btn btn--quiet btn--sm" type="button" data-action="dismiss-sent">닫기</button>
@@ -1979,15 +2183,24 @@ export function createLeaderView(container) {
       .map(
         (report) => {
           const status = reportStatus(report);
+          const key = reportStatusKey(report);
+          const returned = key === 'returned';
           return `
-          <div class="my-report">
-            <div>
+          <div class="my-report" data-my-report="${esc(report.id)}" data-report-status="${esc(key)}">
+            <div class="my-report__body">
               <strong>${esc(names.get(report.siteId) || report.siteName)}</strong>
+              <span class="report-no" data-report-no>${esc(reportNoOf(report))}</span>
               <span>${esc(fmtDateLong(report.date))} ${esc(fmtTime(report.time))} · 사진 ${countReportPhotos(report)}장</span>
               <em class="badge ${status.badge} my-report__status">${esc(status.label)}</em>
+              ${returned && report.revisionReason ? `<p class="my-report__reason" data-revision-reason><strong>수정 요청 사유</strong> ${esc(report.revisionReason)}</p>` : ''}
+              <div class="my-report__actions">
+                ${returned ? `<button class="btn btn--primary btn--sm" type="button" data-revise-start="${esc(report.id)}">보완해서 다시 제출</button>` : ''}
+                <button class="link-btn" style="background:var(--surface-3);color:var(--body);border-color:var(--line)"
+                        type="button" data-report-detail="${esc(report.id)}">상세 · 인쇄</button>
+                ${returned ? '' : `<button class="link-btn" style="background:var(--surface-3);color:var(--body);border-color:var(--line)"
+                        type="button" data-delete-report="${esc(report.id)}">삭제</button>`}
+              </div>
             </div>
-            <button class="link-btn" style="background:var(--surface-3);color:var(--body);border-color:var(--line)"
-                    type="button" data-delete-report="${esc(report.id)}">삭제</button>
           </div>`;
         },
       )
@@ -2113,6 +2326,14 @@ export function createLeaderView(container) {
     // 5단계 — 본인 일정(대표는 전체) + 오늘 현장 도착/완료 기록. 서버·기기 어느 쪽에서든
     //  배정된 업장만 내려옵니다(store.listSchedule 이 권한별로 거릅니다).
     state.schedule = await store.listSchedule({}, { actor: state.session });
+    // 6단계 — 수정 요청이 온 보고를 업장 목록에서 바로 알아볼 수 있게 셉니다.
+    state.revisionCounts = {};
+    if (!state.managerMode) {
+      const returnedRows = await store.listReports({ status: 'returned' }, { actor: state.session }).catch(() => []);
+      returnedRows.forEach((row) => {
+        state.revisionCounts[row.siteId] = (Number(state.revisionCounts[row.siteId]) || 0) + 1;
+      });
+    }
     const monthRange = monthRangeOf(state.scheduleMonth || monthKeyOf());
     state.scheduleMonthSchedule = await store.listSchedule(
       { from: monthRange.from, to: monthRange.to },
@@ -2272,11 +2493,13 @@ export function createLeaderView(container) {
     const session = state.session;
     if (!draft || !session || state.busy) return;
 
-    if (!draft.photos.security.length) {
+    // 수정 요청 보완에서는 기존 사진이 그대로 남으므로 새 사진이 없어도 됩니다.
+    const kept = state.existingPhotos || emptyPhotos();
+    if (!draft.photos.security.length && !(kept.security || []).length) {
       toast('시건장치 확인 사진을 1장 이상 추가해 주세요.', { tone: 'error' });
       return;
     }
-    if (!draft.photos.cleaning.length) {
+    if (!draft.photos.cleaning.length && !(kept.cleaning || []).length) {
       toast('업장별 맞춤 청소 사진을 1장 이상 추가해 주세요.', { tone: 'error' });
       return;
     }
@@ -2324,39 +2547,62 @@ export function createLeaderView(container) {
         }
       }
 
-      const report = await store.addReport({
-        siteId: site.id,
-        date: draft.date,
-        time: draft.time,
-        leader: draft.leader,
-        leaderRole: draft.leaderRole,
-        // 로그인한 계정을 그대로 연결해 보고서 → 팀장 계약 → 업장이 이어집니다.
-        accountId: session.accountId || '',
-        durationMin: draft.duration,
-        checklist: checkRows,
-        note: draft.note,
-        issueNote: draft.issueNote,
-        manualDay: manual && manualDayInfo.day ? manualDayInfo.day.label : '',
-        manualTime: manual && site.manual ? site.manual.time || '' : '',
-        photos: photoRefs,
-      });
+      const revisionId = state.editingReportId;
+      const report = revisionId
+        ? await store.resubmitReport(
+            revisionId,
+            {
+              by: draft.leader,
+              checklist: checkRows,
+              note: draft.note,
+              issueNote: draft.issueNote,
+              durationMin: draft.duration,
+              photos: photoRefs,
+            },
+            { actor: session },
+          )
+        : await store.addReport({
+            siteId: site.id,
+            date: draft.date,
+            time: draft.time,
+            leader: draft.leader,
+            leaderRole: draft.leaderRole,
+            // 로그인한 계정을 그대로 연결해 보고서 → 팀장 계약 → 업장이 이어집니다.
+            accountId: session.accountId || '',
+            durationMin: draft.duration,
+            checklist: checkRows,
+            note: draft.note,
+            issueNote: draft.issueNote,
+            manualDay: manual && manualDayInfo.day ? manualDayInfo.day.label : '',
+            manualTime: manual && site.manual ? site.manual.time || '' : '',
+            photos: photoRefs,
+          });
 
       state.sent = {
         id: report.id,
         siteId: site.id,
         siteCode: site.code,
         siteName: site.name,
+        reportNo: reportNoOf(report),
         date: report.date,
         time: report.time,
         photos: report.photos,
         doneCount: report.checklist.filter((item) => item.done).length,
         totalCount: report.checklist.length,
+        revised: !!revisionId,
       };
 
+      state.editingReportId = '';
+      state.editingReport = null;
+      state.existingPhotos = null;
       startDraft(session, site);
       await render();
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      toast('보고를 등록했습니다. 최고관리자(대표) 확인 후 고객사에 제출됩니다.');
+      toast(
+        revisionId
+          ? '보완한 보고를 다시 제출했습니다. 대표 확인 후 고객사에 제출됩니다.'
+          : '보고를 등록했습니다. 최고관리자(대표) 확인 후 고객사에 제출됩니다.',
+      );
     } catch (error) {
       console.error('[leader] submit failed', error);
       const message =
@@ -2533,6 +2779,19 @@ export function createLeaderView(container) {
     if (scheduleMonth) {
       const delta = scheduleMonth.dataset.scheduleMonth === 'prev' ? -1 : 1;
       state.scheduleMonth = shiftMonthKey(state.scheduleMonth || monthKeyOf(), delta);
+      state.calendarDate = '';
+      await render();
+      return;
+    }
+    const scheduleView = event.target.closest('[data-schedule-view]');
+    if (scheduleView) {
+      state.scheduleView = scheduleView.dataset.scheduleView === 'grid' ? 'grid' : 'list';
+      await render();
+      return;
+    }
+    const calDate = event.target.closest('[data-cal-date]');
+    if (calDate) {
+      state.calendarDate = calDate.dataset.calDate || '';
       await render();
       return;
     }
@@ -2709,10 +2968,30 @@ export function createLeaderView(container) {
       closeBaselineSheet();
       state.siteId = pick.dataset.pickSite;
       state.sent = null;
+      state.editingReportId = '';
+      state.editingReport = null;
+      state.existingPhotos = null;
       const site = await store.getSiteFor(state.session, state.siteId);
       if (site && state.session) startDraft(state.session, site);
       await render();
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    // 6단계 — 수정 요청 보완 · 보고서 상세(인쇄 / PDF)
+    const reviseStart = event.target.closest('[data-revise-start]');
+    if (reviseStart) {
+      await startRevision(reviseStart.dataset.reviseStart);
+      return;
+    }
+    const revisionCancel = event.target.closest('[data-revision-cancel]');
+    if (revisionCancel) {
+      await cancelRevision();
+      return;
+    }
+    const reportDetail = event.target.closest('[data-report-detail]');
+    if (reportDetail) {
+      await openReportSheet(reportDetail.dataset.reportDetail, { actor: state.session });
       return;
     }
 
@@ -2798,6 +3077,9 @@ export function createLeaderView(container) {
       closeBaselineSheet();
       state.siteId = null;
       state.draft = null;
+      state.editingReportId = '';
+      state.editingReport = null;
+      state.existingPhotos = null;
       await render();
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;

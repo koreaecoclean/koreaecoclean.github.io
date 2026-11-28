@@ -3647,3 +3647,195 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .sched-month__row .tiny { flex: none; font-size: 10.5px; white-space: nowrap; }
 .sched-month__row .badge { flex: none; font-size: 10px; padding: 2px 6px; white-space: nowrap; }
 .schedule-month .sched-month { max-height: 340px; overflow-y: auto; }
+
+/* ---------- 29. 6단계 — 보고서 번호 · 수정 요청 · 인쇄 / 월간 격자 달력 ---------- */
+.badge--revise { color: #8a4b0f; background: #fdf1dd; }
+
+.report-no {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--surface-3, #f1f3ef);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: .02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* 카드 머리글의 span 은 block 으로 내려가므로, 번호 칩은 제 크기만 차지하게 둡니다. */
+.report__title span.report-no,
+.approval-card__head span.report-no,
+.my-report span.report-no { display: inline-block; margin-top: 2px; color: var(--muted); font-size: 10.5px; }
+.approval-card__no { margin: 2px 0 4px; }
+
+.approval-revise { display: grid; gap: 6px; margin-top: 10px; }
+.approval-revise textarea { min-height: 64px; }
+.approval-revise .btn-row { display: flex; gap: 6px; }
+.approval-reason {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #fdf1dd;
+  color: #7a4407;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.approval-reason strong { display: block; font-size: 11px; letter-spacing: .02em; }
+.approval-actions { flex-wrap: wrap; }
+.approval-detail-btn { margin-left: auto; }
+
+.my-report__body { min-width: 0; }
+.my-report__reason {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #fdf1dd;
+  color: #7a4407;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.my-report__actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+
+/* 월간 격자 달력 */
+.cal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.cal-view-toggle { display: inline-flex; padding: 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2, #f7f8f5); }
+.cal-view-toggle button {
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.cal-view-toggle button[aria-pressed="true"] { background: var(--brand-700, #14532d); color: #fff; }
+
+.cal-grid { margin-top: 6px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #fff; }
+.cal-weekdays,
+.cal-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.cal-weekdays { background: var(--surface-2, #f7f8f5); border-bottom: 1px solid var(--line); }
+.cal-weekdays span {
+  padding: 5px 0;
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--muted);
+}
+.cal-weekdays span:first-child { color: #b4423a; }
+.cal-weekdays span:last-child { color: #2a5d9f; }
+.cal-week + .cal-week { border-top: 1px solid var(--line); }
+.cal-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-height: 58px;
+  padding: 4px 3px 5px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: #fff;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cal-cell:last-child { border-right: 0; }
+.cal-cell.is-empty { background: var(--surface-2, #f7f8f5); cursor: default; }
+.cal-cell.is-sunday .cal-cell__day { color: #b4423a; }
+.cal-cell.is-saturday .cal-cell__day { color: #2a5d9f; }
+.cal-cell.is-today { background: #eef6ea; box-shadow: inset 0 0 0 2px rgba(20, 83, 45, .35); }
+.cal-cell.is-selected { background: #e3efe0; box-shadow: inset 0 0 0 2px var(--brand-700, #14532d); }
+.cal-cell__day { display: flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.cal-cell__today { font-size: 8.5px; font-weight: 800; color: #fff; background: var(--brand-700, #14532d); border-radius: 999px; padding: 0 3px; }
+.cal-cell__marks { display: flex; flex-wrap: wrap; gap: 2px; margin-top: auto; }
+.cal-mark {
+  display: inline-block;
+  width: 100%;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line-strong, #cfd6c9);
+  overflow: hidden;
+  text-indent: -999px;
+}
+.cal-mark--planned { background: #c9d4c4; }
+.cal-mark--active { background: #d8a13a; }
+.cal-mark--done { background: #3f8a37; }
+.cal-mark--missed { background: #c0564a; }
+.cal-mark--off { background: #9aa39a; }
+.cal-cell__count { font-size: 9px; font-weight: 800; color: var(--muted); text-align: right; line-height: 1.1; }
+
+.cal-detail { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.cal-detail__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.cal-detail__head strong { font-size: 13px; }
+.cal-empty { padding: 10px 2px; }
+
+/* 보고서 상세 · 인쇄 시트 */
+.report-doc { font-size: 12.5px; }
+.report-doc__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.report-doc__logo { flex: none; border-radius: 10px; }
+.report-doc__meta { margin-top: 10px; }
+.report-doc__sub { color: var(--muted); font-size: 11px; font-weight: 600; }
+.report-doc__block { margin-top: 14px; break-inside: avoid; }
+.report-doc__block h3,
+.report-doc__group h3 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+  letter-spacing: -.01em;
+}
+.report-doc__block h3 span,
+.report-doc__group h3 span { font-size: 10.5px; font-weight: 700; color: var(--muted); }
+.report-doc__checks { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 3px 10px; font-size: 11.5px; }
+.report-doc__checks li { display: flex; gap: 5px; color: var(--muted); }
+.report-doc__checks li.is-done { color: var(--body, #2a352b); }
+.report-doc__checks li span { flex: none; font-weight: 800; }
+.report-doc__group { margin-top: 14px; break-inside: avoid; }
+.report-doc__photos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.report-doc__photos figure { margin: 0; }
+.report-doc__photos img {
+  display: block;
+  width: 100%;
+  height: 84px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2, #f7f8f5);
+}
+.report-doc__photos figcaption { margin-top: 2px; font-size: 10px; color: var(--muted); }
+.report-doc__reason { margin: 10px 0 0; padding: 8px 10px; border-radius: 10px; background: #fdf1dd; color: #7a4407; font-size: 11.5px; }
+.report-doc__history { margin: 0; padding-left: 16px; font-size: 11px; color: var(--muted); }
+.report-doc__history li { margin-bottom: 5px; }
+.report-doc__history strong { color: var(--body, #2a352b); }
+.report-doc__history span { margin-left: 4px; }
+.report-doc__history p { margin: 2px 0 0; }
+.report-doc__changes { color: #7a4407; }
+.report-doc__foot { margin-top: 18px; }
+.report-doc__hint { margin: 0; }
+
+@media print {
+  .report-doc { font-size: 10.5pt; }
+  .report-doc__photos { grid-template-columns: repeat(3, 1fr); gap: 4mm; }
+  .report-doc__photos img { height: 46mm; border-radius: 0; }
+  .report-doc__block, .report-doc__group { break-inside: avoid; }
+  .report-doc__logo { border-radius: 0; }
+}
+
+.report__actions { margin-top: 8px; display: flex; justify-content: flex-end; }
+.kept-photos { margin: 0 0 10px; padding: 8px; border: 1px dashed var(--line-strong, #cfd6c9); border-radius: 10px; background: var(--surface-2, #f7f8f5); }
+.kept-photos .thumbs { margin-top: 6px; }
+.kept-photos .thumb img { opacity: .92; }
+.revision-banner { border: 1px solid #e6c78a; background: #fffaf0; }
+.revision-banner .sent-card__icon { background: #fdf1dd; color: #8a4b0f; }
+.cal-legend { display: flex; flex-wrap: wrap; gap: 5px 10px; margin: 6px 2px 0; font-size: 10px; color: var(--muted); }
+.cal-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.cal-legend .cal-mark { width: 12px; height: 4px; }
+.sched-view[hidden] { display: none !important; }

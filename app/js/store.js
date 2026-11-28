@@ -137,12 +137,193 @@ function normalizePhotos(photos) {
 /**
  * 청소 보고 상태 — 팀장이 등록하면 `pending`(관리자 확인 대기),
  * 최고관리자(대표)가 확인해 고객사에 제출하면 `submitted`(고객사 제출 완료)입니다.
+ * 대표가 [수정 요청]을 누르면 `returned`(수정 요청)가 되어 팀장이 보완해 다시 제출합니다.
  * 고객 방에는 `submitted` 만 보입니다.
  */
 export const REPORT_STATUS = {
   pending: { label: '관리자 확인 대기', short: '확인 대기', badge: 'badge--wait' },
+  returned: { label: '수정 요청', short: '수정 요청', badge: 'badge--revise' },
   submitted: { label: '고객사 제출 완료', short: '제출 완료', badge: 'badge--done' },
 };
+
+/* ------------------------------------------------------------------ */
+/* 6단계 — 보고서 번호 · 수정 요청 · 원본/수정 이력                      */
+/* ------------------------------------------------------------------ */
+
+/** 보고서 번호 형식 — `R-YYYYMM-NNN` (예: R-202611-001). */
+export const REPORT_NO_PREFIX = 'R';
+
+/** 보고서에 남기는 이력 종류. */
+export const REPORT_REVISION_ACTIONS = {
+  created: '보고 등록',
+  'revision-requested': '수정 요청',
+  resubmitted: '보완 재제출',
+  submitted: '고객사 제출',
+};
+
+/** 보고서 한 건에 보관하는 이력은 최근 40건까지(서버 동기화되는 레코드라 무한히 커지지 않게). */
+export const MAX_REPORT_REVISIONS = 40;
+
+function pad3(value) {
+  return String(Math.max(0, Math.trunc(Number(value) || 0))).padStart(3, '0');
+}
+
+function monthKeyOfDate(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{4})-(\d{2})/);
+  if (match) return `${match[1]}${match[2]}`;
+  return todayISO().slice(0, 7).replace('-', '');
+}
+
+/**
+ * 보고서 번호 — 저장된 번호가 있으면 그대로, 없으면(예전 보고서) 날짜와 id 로
+ * 만든 안전한 임시 번호를 돌려줍니다(화면·조회가 빈칸이 되지 않게).
+ */
+export function reportNoOf(report) {
+  const stored = toText(report && report.reportNo);
+  if (new RegExp(`^${REPORT_NO_PREFIX}-\\d{6}-\\d{3}$`).test(stored)) return stored;
+  const month = monthKeyOfDate((report && (report.date || report.createdAt)) || '');
+  const id = toText(report && report.id) || toText(report && report.siteId);
+  let sum = 0;
+  for (let index = 0; index < id.length; index += 1) sum = (sum * 33 + id.charCodeAt(index)) % 1000;
+  // 예전 보고서는 900번대 임시 번호 — 새로 발급하는 001번대 순서와 섞이지 않습니다.
+  return `${REPORT_NO_PREFIX}-${month}-${900 + (sum % 100)}`;
+}
+
+/** 같은 달 보고서 중 가장 큰 번호 다음 번호를 만듭니다(`R-YYYYMM-NNN`). */
+export function nextReportNo(reports, month = todayISO().slice(0, 7).replace('-', '')) {
+  const key = toText(month).replace(/[^0-9]/g, '').slice(0, 6) || todayISO().slice(0, 7).replace('-', '');
+  let max = 0;
+  for (const row of Array.isArray(reports) ? reports : []) {
+    const match = toText(row && row.reportNo).match(new RegExp(`^${REPORT_NO_PREFIX}-(\\d{6})-(\\d{3})$`));
+    if (match && match[1] === key) max = Math.max(max, Number(match[2]));
+  }
+  return `${REPORT_NO_PREFIX}-${key}-${pad3(max + 1)}`;
+}
+
+/** 보고서 이력 한 건 — 누가 · 언제 · 무엇을(사유) · 무엇이 바뀌었는지. */
+export function normalizeRevision(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const action = toText(source.action);
+  const changes = (Array.isArray(source.changes) ? source.changes : [])
+    .map((row) => ({ field: toText(row && row.field), from: toText(row && row.from), to: toText(row && row.to) }))
+    .filter((row) => row.field);
+  return {
+    id: toText(source.id),
+    at: toText(source.at),
+    action: REPORT_REVISION_ACTIONS[action] ? action : 'created',
+    actionLabel: REPORT_REVISION_ACTIONS[action] || toText(source.actionLabel),
+    by: toText(source.by),
+    statusFrom: toText(source.statusFrom),
+    statusTo: toText(source.statusTo),
+    note: toText(source.note),
+    changes,
+  };
+}
+
+/** 이력 배열 — 최신이 앞. 같은 id 는 한 번만, 최근 40건. */
+export function normalizeRevisions(list) {
+  const rows = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    const row = normalizeRevision(item);
+    if (!row.at && !row.action) continue;
+    if (row.id) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+    }
+    rows.push(row);
+  }
+  return rows.slice(0, MAX_REPORT_REVISIONS);
+}
+
+function withRevisions(list, entry) {
+  if (!entry) return normalizeRevisions(list);
+  return normalizeRevisions([entry, ...(Array.isArray(list) ? list : [])]);
+}
+
+/** 처음 등록한 상태(원본) — 수정 요청이 오간 보고서에서 무엇이 바뀌었는지 비교합니다. */
+export function normalizeReportOriginal(original) {
+  const source = original && typeof original === 'object' ? original : {};
+  const photos = source.photos && typeof source.photos === 'object' && !Array.isArray(source.photos) ? source.photos : {};
+  // 원본은 분류별 «장수»로 보관합니다(사진 원본은 report.photos 가 가집니다).
+  const countOf = (key) => (Array.isArray(photos[key]) ? photos[key].length : Math.max(0, Number(photos[key]) || 0));
+  return {
+    at: toText(source.at),
+    note: toText(source.note),
+    issueNote: toText(source.issueNote),
+    checklist: (Array.isArray(source.checklist) ? source.checklist : []).map((item) => ({
+      label: toText(item && item.label),
+      done: !!(item && item.done),
+    })),
+    photos: {
+      security: countOf('security'),
+      cleaning: countOf('cleaning'),
+      issue: countOf('issue'),
+    },
+  };
+}
+
+/** 보고서 이력 중 사람이 읽는 «변경 요약» 줄. */
+export function revisionSummary(entry) {
+  const row = normalizeRevision(entry);
+  const parts = [row.actionLabel].filter(Boolean);
+  if (row.by) parts.push(row.by);
+  if (row.note) parts.push(row.note);
+  if (row.changes.length) parts.push(row.changes.map((item) => item.field).join(' · ') + ' 변경');
+  return parts.join(' · ');
+}
+
+/**
+ * 보고서 한 건의 «무엇이 바뀌었는지» — 재제출 때 이력에 남깁니다.
+ * (메모·특이사항·점검 항목 완료 수·분류별 사진 장수)
+ */
+export function reportRevisionChanges(before, after) {
+  const changes = [];
+  const prev = before || {};
+  const next = after || {};
+  const clip = (value) => {
+    const text = toText(value).replace(/\s+/g, ' ');
+    if (!text) return '없음';
+    return text.length > 14 ? `${text.slice(0, 14)}…` : text;
+  };
+  if (toText(prev.note) !== toText(next.note)) changes.push({ field: '전달 메모', from: clip(prev.note), to: clip(next.note) });
+  if (toText(prev.issueNote) !== toText(next.issueNote)) {
+    changes.push({ field: '특이사항 메모', from: clip(prev.issueNote), to: clip(next.issueNote) });
+  }
+  const doneOf = (row) => (Array.isArray(row && row.checklist) ? row.checklist.filter((item) => item && item.done).length : 0);
+  if (doneOf(prev) !== doneOf(next)) changes.push({ field: '점검 완료', from: `${doneOf(prev)}개`, to: `${doneOf(next)}개` });
+  const groupCount = (row, key) => (((row && row.photos) || {})[key] || []).length;
+  for (const key of ['security', 'cleaning', 'issue']) {
+    if (groupCount(prev, key) !== groupCount(next, key)) {
+      const label = key === 'security' ? '시건장치 사진' : key === 'cleaning' ? '맞춤청소 사진' : '특이사항 사진';
+      changes.push({ field: label, from: `${groupCount(prev, key)}장`, to: `${groupCount(next, key)}장` });
+    }
+  }
+  return changes;
+}
+
+/**
+ * 고객 방에 내보내는 보고서 — 승인·제출된 최종 내용만.
+ * 내부 반려 사유 · 수정 이력 · 원본 스냅샷은 고객에게 보내지 않습니다.
+ */
+export function customerReportView(report) {
+  if (!report) return report;
+  const {
+    revisions,
+    original,
+    revisionReason,
+    revisionRequestedAt,
+    revisionRequestedBy,
+    revisionCount,
+    resubmittedAt,
+    resubmittedBy,
+    accountId,
+    history,
+    ...rest
+  } = report;
+  return rest;
+}
 
 /** 상태 값이 없는 예전 보고는 이미 고객에게 보이던 기록이라 `submitted` 로 봅니다. */
 export function reportStatusKey(report) {
@@ -174,6 +355,15 @@ function normalizeReport(report) {
     photos: normalizePhotos(report.photos),
     issueNote: report.issueNote || '',
     status: reportStatusKey(report),
+    reportNo: reportNoOf(report),
+    revisions: normalizeRevisions(report.revisions),
+    original: normalizeReportOriginal(report.original),
+    revisionReason: toText(report.revisionReason),
+    revisionRequestedAt: toText(report.revisionRequestedAt),
+    revisionRequestedBy: toText(report.revisionRequestedBy),
+    revisionCount: Number(report.revisionCount) || 0,
+    resubmittedAt: toText(report.resubmittedAt),
+    resubmittedBy: toText(report.resubmittedBy),
     approvedAt: report.approvedAt || '',
     approvedBy: report.approvedBy || '',
     workStartAt,
@@ -1124,6 +1314,83 @@ export const SCHEDULE_OVERRIDE_TYPES = {
   extra: { label: '보강 일정 추가', badge: 'badge--wait', short: '보강' },
   change: { label: '시간 변경', badge: 'badge--wait', short: '변경' },
 };
+
+/* ------------------------------------------------------------------ */
+/* 6단계 — 월간 격자형 달력 (일~토 7열)                                  */
+/* ------------------------------------------------------------------ */
+
+/** 달력 머리글 — 일요일부터 토요일까지 7열. */
+export const CALENDAR_WEEKDAYS = [
+  { key: 'sun', label: '일', js: 0 },
+  { key: 'mon', label: '월', js: 1 },
+  { key: 'tue', label: '화', js: 2 },
+  { key: 'wed', label: '수', js: 3 },
+  { key: 'thu', label: '목', js: 4 },
+  { key: 'fri', label: '금', js: 5 },
+  { key: 'sat', label: '토', js: 6 },
+];
+
+function pad2(value) {
+  return String(Math.trunc(Number(value) || 0)).padStart(2, '0');
+}
+
+/**
+ * 한 달을 일~토 7열 격자로 만듭니다.
+ *  { key, label, year, month, daysInMonth, today, weeks: [[7칸 × 5~6주]] }
+ * 칸: { date:'YYYY-MM-DD'|'', day:number|'', inMonth:boolean, weekday:0~6, isToday, isSunday }
+ * 앞뒤 빈 칸은 date 가 '' 입니다(다른 달 날짜를 섞지 않음).
+ */
+export function monthGrid(monthKey, { today = todayISO() } = {}) {
+  const source = String(monthKey || '').trim();
+  const match = source.match(/^(\d{4})-(\d{2})$/);
+  const now = new Date();
+  const year = match ? Number(match[1]) : now.getFullYear();
+  const month = match ? Math.min(12, Math.max(1, Number(match[2]))) : now.getMonth() + 1;
+  const first = new Date(year, month - 1, 1, 12);
+  const daysInMonth = new Date(year, month, 0, 12).getDate();
+  const lead = first.getDay();
+  const cells = [];
+  for (let index = 0; index < lead; index += 1) {
+    cells.push({ date: '', day: '', inMonth: false, weekday: index, isToday: false, isSunday: index === 0 });
+  }
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = `${year}-${pad2(month)}-${pad2(day)}`;
+    const weekday = (lead + day - 1) % 7;
+    cells.push({
+      date,
+      day,
+      inMonth: true,
+      weekday,
+      isToday: date === today,
+      isSunday: weekday === 0,
+    });
+  }
+  while (cells.length % 7 !== 0) {
+    cells.push({ date: '', day: '', inMonth: false, weekday: cells.length % 7, isToday: false, isSunday: cells.length % 7 === 0 });
+  }
+  const weeks = [];
+  for (let index = 0; index < cells.length; index += 7) weeks.push(cells.slice(index, index + 7));
+  return {
+    key: `${year}-${pad2(month)}`,
+    label: `${year}년 ${month}월`,
+    year,
+    month,
+    daysInMonth,
+    today,
+    weeks,
+  };
+}
+
+/** 일정 목록을 날짜별로 묶습니다 — 달력 칸과 날짜 상세가 함께 씁니다. */
+export function entriesByDate(entries) {
+  const map = {};
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (!entry || !entry.date) continue;
+    if (!map[entry.date]) map[entry.date] = [];
+    map[entry.date].push(entry);
+  }
+  return map;
+}
 
 /** 위치 인증이 안 될 때 고르는 사유 — 무작정 막히지 않게 하되 예외로 표시합니다. */
 export const GPS_EXCEPTION_REASONS = [
@@ -7043,9 +7310,14 @@ export class Store {
     const givenMin = input.workDurationMin === undefined || input.workDurationMin === null || input.workDurationMin === ''
       ? null
       : Number(input.workDurationMin);
+    const createdAt = new Date().toISOString();
+    // 보고서 번호 — 그 달의 마지막 번호 다음으로 붙입니다(R-YYYYMM-NNN).
+    const rows = await this.adapter.getAll('reports');
+    const reportNo = nextReportNo(rows, monthKeyOfDate(input.date));
 
     const report = {
       id: uid('rep'),
+      reportNo,
       siteId: site.id,
       siteCode: site.code,
       siteName: site.name,
@@ -7075,7 +7347,31 @@ export class Store {
       status: 'pending',
       approvedAt: '',
       approvedBy: '',
-      createdAt: new Date().toISOString(),
+      // 6단계 — 처음 등록한 상태(원본)와 수정 이력.
+      original: normalizeReportOriginal({
+        at: createdAt,
+        note: String(input.note || '').trim(),
+        issueNote: String(input.issueNote || '').trim(),
+        checklist: (input.checklist || []).map((item) => ({ label: item.label, done: !!item.done })),
+        photos: normalizePhotos(input.photos),
+      }),
+      revisions: [
+        normalizeRevision({
+          id: uid('rev'),
+          at: createdAt,
+          action: 'created',
+          by: toText(input.leader) || toText(input.actor),
+          statusTo: 'pending',
+          note: `${toText(input.date)} ${toText(input.time)} 등록`,
+        }),
+      ],
+      revisionCount: 0,
+      revisionReason: '',
+      revisionRequestedAt: '',
+      revisionRequestedBy: '',
+      resubmittedAt: '',
+      resubmittedBy: '',
+      createdAt,
       source: 'app',
     };
 
@@ -7083,7 +7379,7 @@ export class Store {
     await this.recordHistory('sites', site.id, {
       actor: toText(input.leader) || toText(input.actor) || '팀장',
       action: '청소 보고 등록',
-      note: `${report.date} ${report.time || ''} · ${report.leader} · 사진 ${countReportPhotos(report)}장`,
+      note: `${reportNo} · ${report.date} ${report.time || ''} · ${report.leader} · 사진 ${countReportPhotos(report)}장`,
     });
     this._notify();
     return normalizeReport(report);
@@ -7092,20 +7388,154 @@ export class Store {
   /** 최고관리자(대표)가 내용을 확인하고 고객사에 제출합니다 — 이때 고객 방에 보입니다. */
   async approveReport(id, { by = '', actor = null } = {}) {
     denyStaff(actor, '보고서 고객사 제출');
+    if (isCustomerActor(actor)) throw new StoreError('permission-denied', '고객은 보고서를 제출할 수 없습니다.');
     const report = await this.getReport(id);
     if (!report) throw new StoreError('no-report', '보고를 찾지 못했습니다.');
-    if (reportStatusKey(report) === 'submitted') return report;
+    const key = reportStatusKey(report);
+    if (key === 'submitted') return report;
+    if (key === 'returned') {
+      throw new StoreError('revision-open', '수정 요청 중인 보고입니다. 팀장이 보완해 다시 제출한 뒤에 제출할 수 있습니다.');
+    }
+    const at = new Date().toISOString();
+    const author = String(by || '').trim();
     const next = {
       ...report,
       status: 'submitted',
-      approvedAt: new Date().toISOString(),
-      approvedBy: String(by || '').trim(),
+      approvedAt: at,
+      approvedBy: author,
+      revisionReason: '',
+      revisions: withRevisions(
+        report.revisions,
+        normalizeRevision({
+          id: uid('rev'),
+          at,
+          action: 'submitted',
+          by: author,
+          statusFrom: key,
+          statusTo: 'submitted',
+          note: '고객 방 공개',
+        }),
+      ),
     };
     await this.adapter.put('reports', next);
     await this.recordHistory('sites', report.siteId, {
-      actor: String(by || '').trim() || '최고관리자',
+      actor: author || '최고관리자',
       action: '고객사 제출',
-      note: `${report.date} ${report.time || ''} 보고 확인 · 고객 방 공개`,
+      note: `${reportNoOf(report)} · ${report.date} ${report.time || ''} 보고 확인 · 고객 방 공개`,
+    });
+    this._notify();
+    return normalizeReport(next);
+  }
+
+  /**
+   * 대표가 보고를 확인하다 [수정 요청]을 누를 때 — 사유를 남기면
+   * 상태가 `returned`(수정 요청)로 바뀌고 팀장 화면에 사유가 보입니다.
+   * (고객 방에는 계속 보이지 않습니다.)
+   */
+  async requestReportRevision(id, { reason = '', by = '', actor = null } = {}) {
+    denyStaff(actor, '보고서 수정 요청');
+    if (isCustomerActor(actor)) throw new StoreError('permission-denied', '고객은 보고서 수정을 요청할 수 없습니다.');
+    const report = await this.getReport(id);
+    if (!report) throw new StoreError('no-report', '보고를 찾지 못했습니다.');
+    const note = toText(reason);
+    if (!note) throw new StoreError('no-reason', '수정 요청 사유를 입력해 주세요.');
+    const key = reportStatusKey(report);
+    if (key === 'submitted') {
+      throw new StoreError('already-submitted', '이미 고객사에 제출한 보고는 수정 요청할 수 없습니다.');
+    }
+    if (key === 'returned') return report;
+    const at = new Date().toISOString();
+    const author = String(by || '').trim();
+    const next = {
+      ...report,
+      status: 'returned',
+      revisionReason: note,
+      revisionRequestedAt: at,
+      revisionRequestedBy: author,
+      revisionCount: (Number(report.revisionCount) || 0) + 1,
+      revisions: withRevisions(
+        report.revisions,
+        normalizeRevision({
+          id: uid('rev'),
+          at,
+          action: 'revision-requested',
+          by: author,
+          statusFrom: key,
+          statusTo: 'returned',
+          note,
+        }),
+      ),
+    };
+    await this.adapter.put('reports', next);
+    await this.recordHistory('sites', report.siteId, {
+      actor: author || '최고관리자',
+      action: '보고 수정 요청',
+      note: `${reportNoOf(report)} · ${report.date} ${report.time || ''} · 사유: ${note}`,
+    });
+    this._notify();
+    return normalizeReport(next);
+  }
+
+  /**
+   * 팀장이 수정 요청을 받아 내용·사진을 보완해 다시 제출합니다.
+   * - 새 사진은 기존 분류별 사진 뒤에 붙입니다(지우지 않음).
+   * - 점검 항목 · 전달 메모 · 특이사항을 보낸 값으로 바꿉니다.
+   * - 상태는 다시 `pending`(관리자 확인 대기)이 되고 이력에 변경 요약이 남습니다.
+   */
+  async resubmitReport(id, input = {}, { actor = null } = {}) {
+    const report = await this.getReport(id);
+    if (!report) throw new StoreError('no-report', '보고를 찾지 못했습니다.');
+    if (isCustomerActor(actor)) throw new StoreError('permission-denied', '고객은 보고서를 다시 제출할 수 없습니다.');
+    if (reportStatusKey(report) !== 'returned') {
+      throw new StoreError('not-returned', '수정 요청된 보고만 다시 제출할 수 있습니다.');
+    }
+    if (isStaffActor(actor)) {
+      const own = report.accountId === actor.accountId || (!report.accountId && report.leader === actor.name);
+      if (!own) throw new StoreError('permission-denied', '다른 직원의 보고는 다시 제출할 수 없습니다.');
+    }
+    const checklist = Array.isArray(input.checklist)
+      ? input.checklist.map((item) => ({ label: toText(item && item.label), done: !!(item && item.done) }))
+      : report.checklist;
+    const added = normalizePhotos(input.photos);
+    const photos = {
+      security: [...report.photos.security, ...added.security],
+      cleaning: [...report.photos.cleaning, ...added.cleaning],
+      issue: [...report.photos.issue, ...added.issue],
+    };
+    const next = {
+      ...report,
+      checklist,
+      note: input.note === undefined ? report.note : String(input.note || '').trim(),
+      issueNote: input.issueNote === undefined ? report.issueNote : String(input.issueNote || '').trim(),
+      photos,
+      durationMin:
+        input.durationMin === undefined || input.durationMin === null || input.durationMin === ''
+          ? report.durationMin
+          : Number(input.durationMin) || report.durationMin,
+      status: 'pending',
+      revisionReason: '',
+      resubmittedAt: new Date().toISOString(),
+      resubmittedBy: String(input.by || '').trim(),
+    };
+    const changes = reportRevisionChanges(report, next);
+    next.revisions = withRevisions(
+      report.revisions,
+      normalizeRevision({
+        id: uid('rev'),
+        at: next.resubmittedAt,
+        action: 'resubmitted',
+        by: next.resubmittedBy,
+        statusFrom: 'returned',
+        statusTo: 'pending',
+        note: input.reason ? toText(input.reason) : '수정 요청 보완',
+        changes,
+      }),
+    );
+    await this.adapter.put('reports', next);
+    await this.recordHistory('sites', report.siteId, {
+      actor: next.resubmittedBy || report.leader || '팀장',
+      action: '보고 보완 재제출',
+      note: `${reportNoOf(report)} · ${report.date} ${report.time || ''} · 사진 ${countReportPhotos(next)}장 · 관리자 확인 대기`,
     });
     this._notify();
     return normalizeReport(next);
@@ -7633,7 +8063,8 @@ export class Store {
   /** customerFacing: 고객 방(그리고 그 미리보기)에서 쓰는 값 — 승인 전 보고는 빼고 셉니다. */
   async statsForSite(site, { customerFacing = false } = {}) {
     const all = await this.listReports({ siteId: site.id });
-    const reports = customerFacing ? all.filter(isReportVisible) : all;
+    // 고객에게는 승인·제출된 최종 보고서만, 내부 반려 사유·수정 이력은 빼고 넘깁니다.
+    const reports = customerFacing ? all.filter(isReportVisible).map(customerReportView) : all;
     const monthKey = new Date().toISOString().slice(0, 7);
     const last = reports[0] || null;
     const photoCount = reports.reduce((sum, report) => sum + countReportPhotos(report), 0);
