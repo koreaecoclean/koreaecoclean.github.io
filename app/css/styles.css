@@ -3854,3 +3854,98 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .cal-detail .sched-row > span:first-child { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cal-detail .sched-row .badge { flex: none; white-space: nowrap; }
 .cal-detail .sched-row .tiny { flex: 0 1 auto; min-width: 0; font-size: 11px; }
+
+/* ---------- 30. 7단계 — 특이사항 · 추가 영업 ---------- */
+.issue-panel .section-head { align-items: flex-start; }
+.issue-summary { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 12px; }
+.issue-summary .badge { white-space: nowrap; }
+.issue-card {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+.issue-card--discovered { border-color: #e6c78a; background: #fffdf7; }
+.issue-card--quoted { border-color: #cfe0c6; }
+.issue-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.issue-card__head strong { display: block; font-size: 13.5px; line-height: 1.3; }
+.issue-card__head > .badge { flex: none; white-space: nowrap; }
+.issue-card__meta { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); }
+.issue-card__note {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.issue-thumbs { display: flex; gap: 6px; margin-top: 8px; overflow-x: auto; }
+.issue-thumbs .photo-btn { flex: none; padding: 0; border: 0; background: none; }
+.issue-thumbs img {
+  display: block;
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--surface-2, #f7f8f5);
+}
+.issue-quote {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px dashed var(--line-strong, #cfd6c9);
+  border-radius: 12px;
+  background: var(--surface-2, #f7f8f5);
+}
+.issue-quote__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.issue-quote__head strong { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.issue-quote__head .badge { flex: none; white-space: nowrap; }
+.issue-quote__amount { display: flex; align-items: flex-end; gap: 8px; margin: 8px 0 6px; }
+.issue-quote__amount .field { flex: 1 1 auto; margin: 0; }
+.issue-quote__amount .btn { flex: none; margin-bottom: 2px; }
+.issue-quote .btn-row { margin-top: 8px; }
+.issue-card__actions { flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.issue-card__actions .btn { flex: 1 1 0; min-width: 0; }
+.issue-card__actions .btn--primary { flex: 1 1 100%; }
+.issue-card__result {
+  margin: 8px 0 0;
+  padding: 7px 9px;
+  border-radius: 9px;
+  background: #eef6ea;
+  color: #2c6b26;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.issue-card__result strong { margin-right: 4px; font-size: 11px; }
+.issue-close { display: grid; gap: 6px; margin-top: 10px; padding: 9px; border-radius: 11px; background: #fdf1dd; }
+.issue-close .textarea { min-height: 58px; background: #fff; }
+.issue-close .btn-row { display: flex; gap: 6px; }
+.issue-history { margin-top: 10px; }
+.issue-history summary { font-size: 11.5px; font-weight: 700; color: var(--muted); cursor: pointer; }
+.issue-history ul { margin: 6px 0 0; padding-left: 16px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.issue-history li { margin-bottom: 3px; }
+.issue-history strong { color: var(--body, #2a352b); font-size: 11px; }
+.issue-closed { margin-top: 10px; }
+.issue-closed summary { font-size: 12px; font-weight: 800; color: var(--muted); cursor: pointer; }
+/* 팀장 현장 보고 — 본인 업장 특이사항 */
+.issue-site-list { display: grid; gap: 6px; margin: 0 0 10px; }
+.issue-site-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 9px; border-radius: 10px; background: var(--surface-2, #f7f8f5); }
+.issue-site-row__body { min-width: 0; flex: 1 1 auto; }
+.issue-site-row__body strong { display: block; font-size: 12px; line-height: 1.35; word-break: break-word; }
+.issue-site-row__body span { display: block; margin-top: 2px; font-size: 10.5px; color: var(--muted); }
+.issue-site-row > .badge { flex: none; white-space: nowrap; }
+.issue-form { display: grid; gap: 6px; margin-top: 6px; }
+.issue-form .textarea { min-height: 60px; }
+.issue-form__photos { display: flex; flex-wrap: wrap; gap: 6px; }
+.issue-form__photos img { width: 54px; height: 54px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+/* 고객 — 추가 작업 안내 · 추가 견적 승인 */
+.extra-quote-card { border: 1px solid #cfe0c6; background: #fbfdf8; }
+.extra-quote-card .kv { margin-top: 6px; }
+.extra-quote-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.extra-quote-decision { margin: 8px 0 0; font-size: 11.5px; font-weight: 700; color: #2c6b26; }
+.extra-quote-decision--hold { color: var(--gold-600); }
+.customer-issue-list { display: grid; gap: 8px; margin-top: 8px; }
+.customer-issue { padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.customer-issue__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.customer-issue__head strong { font-size: 12.5px; line-height: 1.35; }
+.customer-issue__head > .badge { flex: none; white-space: nowrap; }
+.customer-issue p { margin: 6px 0 0; font-size: 12px; line-height: 1.5; white-space: pre-wrap; }

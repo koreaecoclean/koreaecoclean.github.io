@@ -24,7 +24,7 @@ import {
   openLightbox,
   modeSwitchTemplate,
 } from '../ui.js';
-import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, reportStatusKey, reportNoOf, canUseSupply, MAX_BASELINE_PHOTOS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, HANDOVER_ACCESS_TYPES, SCHEDULE_STATUS, SCHEDULE_DAYS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, scheduleDayText, scheduleTimeText, durationText, monthGrid, entriesByDate, CALENDAR_WEEKDAYS } from '../store.js';
+import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, reportStatusKey, reportNoOf, canUseSupply, MAX_BASELINE_PHOTOS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, HANDOVER_ACCESS_TYPES, SCHEDULE_STATUS, SCHEDULE_DAYS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, scheduleDayText, scheduleTimeText, durationText, monthGrid, entriesByDate, CALENDAR_WEEKDAYS, ISSUE_STATUS, issueTitleOf, issueStatusKey } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
 import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
@@ -439,6 +439,9 @@ export function createLeaderView(container) {
     existingPhotos: null,
     revisionCounts: {},
     busy: false,
+    // 7단계 — 이 업장의 특이사항 · 현장에서 직접 등록하는 입력값
+    siteIssues: [],
+    issueDraft: { note: '', photos: [] },
   };
   const sampleCursor = { security: 0, cleaning: 0, issue: 0 };
   let mounted = false;
@@ -1923,6 +1926,8 @@ export function createLeaderView(container) {
         <p class="tiny muted memo-hint">칩을 누르면 한 줄에 하나씩 <strong>- 항목</strong> 으로 들어갑니다. 직접 쓰셔도 됩니다.</p>
       </section>
 
+      ${issuePanelTemplate(site)}
+
       <p class="tiny muted" style="text-align:center;margin:4px 0 8px">
         ${state.editingReportId
           ? '고친 내용을 다시 제출하면 <strong>대표 확인 대기</strong>로 돌아갑니다. 고객에게는 대표가 제출한 뒤에 보입니다.'
@@ -1943,6 +1948,128 @@ export function createLeaderView(container) {
 
       ${settingsTemplate(session)}
     `;
+  }
+
+  /* ---------------- 7단계 — 특이사항 (본인 업장) ---------------- */
+
+  /**
+   * 본인 업장의 특이사항 — 진행 상태만 보입니다(금액 · 다른 업장 · 다른 직원 정보 없음).
+   * 보고서 없이 발견한 특이사항도 여기서 바로 등록합니다.
+   */
+  function issuePanelTemplate(site) {
+    const rows = state.siteIssues || [];
+    const draft = state.issueDraft || { note: '', photos: [] };
+    const open = rows.filter((row) => issueStatusKey(row) !== 'done' && issueStatusKey(row) !== 'closed');
+    const rowsHtml = rows.length
+      ? `<div class="issue-site-list">${rows
+          .slice(0, 6)
+          .map((row) => {
+            const status = ISSUE_STATUS[issueStatusKey(row)] || ISSUE_STATUS.discovered;
+            const meta = [
+              row.date ? fmtDateLong(row.date) : '',
+              row.reportNo ? `보고 ${row.reportNo}` : '직접 등록',
+              row.quoteStatus ? '추가 견적 진행' : '',
+            ]
+              .filter(Boolean)
+              .join(' · ');
+            return `
+              <div class="issue-site-row" data-site-issue="${esc(row.id)}" data-issue-status="${esc(issueStatusKey(row))}">
+                <div class="issue-site-row__body">
+                  <strong>${esc(issueTitleOf(row))}</strong>
+                  <span>${esc(meta)}</span>
+                </div>
+                <span class="badge ${status.badge}">${esc(status.label)}</span>
+              </div>`;
+          })
+          .join('')}</div>`
+      : '<p class="tiny muted">등록된 특이사항이 없습니다.</p>';
+    return `
+      <section class="panel issue-site" data-site-issues="${esc(site.id)}">
+        <div class="section-head">
+          <h2>특이사항</h2>
+          <p>${open.length ? `진행 ${open.length}건` : '진행 중 없음'}</p>
+        </div>
+        <p class="tiny muted" style="margin:-6px 0 10px">
+          보고서에 적은 특이사항은 자동으로 대표에게 전달됩니다. 보고서에 없던 내용도 여기서 바로 등록할 수 있고,
+          진행 상태는 대표가 바꾸면 이 화면에도 보입니다.
+        </p>
+        ${rowsHtml}
+        <div class="issue-form" data-issue-form="${esc(site.id)}">
+          <textarea class="textarea" id="issue-note" rows="2" maxlength="1000"
+            placeholder="예: 계단 난간 페인트 벗겨짐 · 보수 필요">${esc(draft.note)}</textarea>
+          ${draft.photos.length ? `<div class="issue-form__photos">${draft.photos.map((photo) => `<img src="${esc(photo.thumb)}" alt="특이사항 사진">`).join('')}</div>` : ''}
+          <div class="btn-row btn-row--stack">
+            <label class="btn btn--quiet btn--sm">사진 추가
+              <input type="file" accept="image/*" capture="environment" hidden data-issue-photo-input>
+            </label>
+            ${draft.note || draft.photos.length ? '<button class="btn btn--quiet btn--sm" type="button" data-issue-clear>입력 지우기</button>' : ''}
+            <button class="btn btn--primary btn--sm" type="button" data-issue-submit="${esc(site.id)}">특이사항 등록</button>
+          </div>
+        </div>
+      </section>`;
+  }
+
+  async function submitIssue(siteId, button) {
+    const draft = state.issueDraft || { note: '', photos: [] };
+    const note = String(draft.note || '').trim();
+    if (!note && !draft.photos.length) {
+      toast('특이사항 내용이나 사진을 1개 이상 넣어 주세요.', { tone: 'error' });
+      return;
+    }
+    if (state.busy) return;
+    state.busy = true;
+    setBusy(button, true, '등록 중…');
+    try {
+      const photos = [];
+      for (const photo of draft.photos) {
+        photos.push(
+          await store.savePhoto({
+            dataUrl: photo.dataUrl,
+            thumb: photo.thumb,
+            width: photo.width,
+            height: photo.height,
+            caption: photo.caption || '특이사항',
+          }),
+        );
+      }
+      await store.addIssue(
+        { siteId, note, photos, actor: state.session ? state.session.name : '팀장' },
+        { actor: state.session },
+      );
+      state.issueDraft = { note: '', photos: [] };
+      await render();
+      toast('특이사항을 등록했습니다. 대표 확인 후 추가 견적으로 이어집니다.', { duration: 7000 });
+    } catch (error) {
+      toast(error.message || '특이사항을 등록하지 못했습니다.', { tone: 'error' });
+    } finally {
+      state.busy = false;
+      setBusy(button, false);
+    }
+  }
+
+  async function addIssuePhoto(files) {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    const draft = state.issueDraft || { note: '', photos: [] };
+    const remaining = Math.max(0, 3 - draft.photos.length);
+    if (!remaining) {
+      toast('특이사항 사진은 3장까지 넣을 수 있습니다.', { tone: 'error' });
+      return;
+    }
+    const accepted = list.slice(0, remaining);
+    if (accepted.length < list.length) toast(`사진은 3장까지라 ${accepted.length}장만 넣었습니다.`, { tone: 'error' });
+    for (const file of accepted) {
+      try {
+        toast('사진 처리 중…', { duration: 1200 });
+        const prepared = await preparePhoto(file);
+        draft.photos.push({ ...prepared, caption: '특이사항' });
+      } catch (error) {
+        console.warn('[leader] issue photo failed', error);
+      }
+    }
+    state.issueDraft = draft;
+    await render();
+    toast(`사진 ${accepted.length}장을 넣었습니다. [특이사항 등록]을 눌러 저장하세요.`);
   }
 
   function sentTemplate(sent) {
@@ -2240,6 +2367,8 @@ export function createLeaderView(container) {
     if (options && options.tab && ['sites', 'contracts', 'supply', 'assign', 'schedule'].includes(options.tab)) {
       state.leaderTab = options.tab;
     }
+    // 업장 바로 열기(초대·알림·테스트에서 씁니다) — 권한은 아래 배정 업장 목록으로 다시 검사합니다.
+    if (options && options.siteId) state.siteId = options.siteId;
     const session = await getSession();
     state.session = session && (session.role === 'leader' || session.role === 'admin') ? session : null;
 
@@ -2376,6 +2505,8 @@ export function createLeaderView(container) {
     state.siteStaff = state.managerMode
       ? await store.listStaffContracts({ siteId: site.id }, { actor: state.session })
       : [];
+    // 7단계 — 이 업장의 특이사항(본인 업장 · 진행 상태만, 금액 없음).
+    state.siteIssues = await store.listIssues({ siteId: site.id }, { actor: state.session }).catch(() => []);
 
 
     container.innerHTML = formTemplate(state.session, site);
@@ -2693,6 +2824,14 @@ export function createLeaderView(container) {
     const target = event.target;
     const draft = state.draft;
 
+    const issuePhoto = target.closest('[data-issue-photo-input]');
+    if (issuePhoto) {
+      const files = Array.from(issuePhoto.files || []);
+      issuePhoto.value = '';
+      await addIssuePhoto(files);
+      return;
+    }
+
     const photoInput = target.closest('[data-photo-input]');
     if (photoInput) {
       const files = Array.from(photoInput.files || []);
@@ -2730,6 +2869,11 @@ export function createLeaderView(container) {
       return;
     }
     const target = event.target;
+    // 7단계 — 특이사항 직접 등록 입력값 (사진을 넣어 다시 그려도 글이 남게)
+    if (target.id === 'issue-note') {
+      state.issueDraft = { ...(state.issueDraft || { photos: [] }), note: target.value };
+      return;
+    }
     const draft = state.draft;
     if (!draft) return;
     if (target.id === 'r-note') draft.note = target.value;
@@ -2743,6 +2887,19 @@ export function createLeaderView(container) {
   }
 
   async function onClick(event) {
+    /* -------- 7단계 — 특이사항 등록 -------- */
+    const issueSubmit = event.target.closest('[data-issue-submit]');
+    if (issueSubmit) {
+      await submitIssue(issueSubmit.dataset.issueSubmit, issueSubmit);
+      return;
+    }
+    const issueClear = event.target.closest('[data-issue-clear]');
+    if (issueClear) {
+      state.issueDraft = { note: '', photos: [] };
+      await render();
+      return;
+    }
+
     /* -------- 5단계 — 현장 도착(GPS) · 청소 완료 · 예외 기록 -------- */
     const arriveButton = event.target.closest('[data-visit-arrive]');
     if (arriveButton) {
@@ -2973,6 +3130,7 @@ export function createLeaderView(container) {
       state.editingReportId = '';
       state.editingReport = null;
       state.existingPhotos = null;
+      state.issueDraft = { note: '', photos: [] };
       const site = await store.getSiteFor(state.session, state.siteId);
       if (site && state.session) startDraft(state.session, site);
       await render();

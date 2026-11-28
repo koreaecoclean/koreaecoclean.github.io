@@ -10,6 +10,7 @@ import {
   esc,
   icons,
   toast,
+  confirmDialog,
   fmtDateLong,
   fmtMonthLabel,
   fmtMonthDay,
@@ -22,7 +23,7 @@ import {
   toISODate,
   fmtWon,
 } from '../ui.js';
-import { store, countReportPhotos, reportNoOf, QUOTE_STATUS, AGREEMENT_STATUS } from '../store.js';
+import { store, countReportPhotos, reportNoOf, QUOTE_STATUS, AGREEMENT_STATUS, isExtraQuote } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import {
   getSession,
@@ -569,13 +570,121 @@ export function createCustomerView(container) {
       </div>`;
   }
 
+  /* ---------------- 7단계 — 추가 작업 견적 · 특이사항 안내 ---------------- */
+
+  const CUSTOMER_ISSUE_BADGE = {
+    discovered: 'badge--wait',
+    reviewing: 'badge--wait',
+    quoted: 'badge--revise',
+    scheduled: 'badge--wait',
+    done: 'badge--done',
+    closed: 'badge--wait',
+  };
+
+  /** 추가 작업(1회) 견적 — 정기 청소와 별도 금액. 고객이 바로 승인/보류합니뀀. */
+  function extraQuoteCardTemplate(quote) {
+    const status = QUOTE_STATUS[quote.status] || QUOTE_STATUS.draft;
+    const statusText = quote.customerDecision === 'approved'
+      ? '승인 완료'
+      : quote.customerDecision === 'declined'
+        ? '보류'
+        : quote.status === 'sent'
+          ? '확인 대기'
+          : status.label;
+    const decided = quote.customerDecision === 'approved'
+      ? '승인하셨습니다'
+      : quote.customerDecision === 'declined'
+        ? '이번에는 진행하지 않기로 하셨습니다'
+        : '';
+    const decidedAt = quote.customerDecidedAt ? fmtDateLong(String(quote.customerDecidedAt).slice(0, 10)) : '';
+    const work = quote.scope || quote.issueTitle || '';
+    // 안내 문구가 작업 내용과 같으면 두 번 보여 주지 않습니다.
+    const memo = String(quote.memo || '').trim();
+    const showMemo = memo && memo !== work && memo !== String(quote.issueTitle || '').trim();
+    return `
+      <section class="panel doc-tab extra-quote-card" data-extra-quote="${esc(quote.id)}">
+        <div class="section-head">
+          <div>
+            <h2>추가 작업 견적</h2>
+            <p>${esc(quote.no)} · ${esc(quote.issueTitle || work || '현장 추가 작업')}</p>
+          </div>
+          <span class="badge ${quote.customerDecision === 'approved' ? 'badge--done' : status.badge}">${esc(statusText)}</span>
+        </div>
+        <dl class="kv kv--left">
+          <dt>작업 내용</dt><dd>${esc(work || '-')}</dd>
+          <dt>작업 구분</dt><dd>추가 작업 · 1회 (정기 청소와 별도)</dd>
+          <dt>견적 금액</dt><dd><strong>${esc(fmtWon(quote.amount))}</strong> <span class="tiny muted">${quote.vatIncluded ? '부가세 포함' : '부가세 별도'}</span></dd>
+          ${showMemo ? `<dt>안내</dt><dd>${esc(memo)}</dd>` : ''}
+        </dl>
+        ${quotePhotosTemplate(quote)}
+        ${
+          decided
+            ? `<p class="extra-quote-decision${quote.customerDecision === 'declined' ? ' extra-quote-decision--hold' : ''}" data-extra-quote-decision="${esc(quote.id)}">${esc(decided)}${decidedAt ? ` · ${esc(decidedAt)}` : ''}</p>`
+            : ''
+        }
+        ${
+          quote.status === 'sent' && !quote.customerDecision
+            ? `<div class="extra-quote-actions">
+                 <button class="btn btn--primary btn--sm" type="button" data-extra-quote-accept="${esc(quote.id)}">이 추가 견적 승인</button>
+                 <button class="btn btn--quiet btn--sm" type="button" data-extra-quote-decline="${esc(quote.id)}">이번에는 진행 안 함</button>
+               </div>`
+            : ''
+        }
+      </section>`;
+  }
+
+  /** 현장에서 발견한 특이사항과 진행 상태 — 공개된 건만 넘어옵니다(직원 id · 내부 메모 없음). */
+  function customerIssueListTemplate(issues) {
+    const rows = Array.isArray(issues) ? issues : [];
+    if (!rows.length) return '';
+    return `
+      <section class="panel" data-customer-issues>
+        <div class="section-head">
+          <h2>추가 작업 안내</h2>
+          <p>${rows.length}건</p>
+        </div>
+        <p class="tiny muted" style="margin:-6px 0 8px">
+          현장에서 발견한 특이사항과 진행 상태입니다. 추가 작업 견적은 위에서 확인하고 승인하실 수 있습니다.
+        </p>
+        <div class="customer-issue-list">
+          ${rows
+            .map(
+              (issue) => `
+            <div class="customer-issue" data-customer-issue="${esc(issue.id)}">
+              <div class="customer-issue__head">
+                <strong>${esc(issue.title || '현장 특이사항')}</strong>
+                <span class="badge ${CUSTOMER_ISSUE_BADGE[issue.status] || 'badge--wait'}">${esc(issue.statusLabel || '안내')}</span>
+              </div>
+              ${issue.note ? `<p>${esc(issue.note)}</p>` : ''}
+              ${issue.date ? `<p class="tiny muted">발견 ${esc(fmtDateLong(issue.date))}</p>` : ''}
+              ${
+                issue.photos && issue.photos.length
+                  ? `<div class="doc-thumbs">${issue.photos
+                      .map((photo) => `<img src="${esc(store.photoThumbUrl(photo))}" alt="특이사항 사진" loading="lazy" decoding="async">`)
+                      .join('')}</div>`
+                  : ''
+              }
+              ${issue.quoteAmount ? `<p class="tiny muted">추가 작업 견적 ${esc(fmtWon(issue.quoteAmount))}${issue.customerDecision === 'approved' ? ' · 승인 완료' : ''}</p>` : ''}
+            </div>`,
+            )
+            .join('')}
+        </div>
+      </section>`;
+  }
+
   function quoteTabTemplate(documents) {
-    const quotes = (documents.quotes || []).filter((quote) => quote.status !== 'draft');
-    if (!quotes.length) {
+    const all = (documents.quotes || []).filter((quote) => quote.status !== 'draft');
+    const extra = all.filter(isExtraQuote);
+    const quotes = all.filter((quote) => !isExtraQuote(quote));
+    const issues = documents.issues || [];
+    const empty = !quotes.length && !extra.length && !issues.length;
+    if (empty) {
       return `<section class="panel">${emptyDoc('아직 견적서가 없습니다', '견적서가 도착하면 이곳에서 확인하실 수 있습니다.')}</section>`;
     }
     return `
       <div class="stack-10">
+        ${extra.length ? `<div class="stack-10" data-extra-quotes>${extra.map(extraQuoteCardTemplate).join('')}</div>` : ''}
+        ${customerIssueListTemplate(issues)}
         ${quotes
           .map((quote) => {
             const status = QUOTE_STATUS[quote.status] || QUOTE_STATUS.draft;
@@ -1003,6 +1112,8 @@ export function createCustomerView(container) {
     const documents = {
       quotes: await store.listQuotes({ siteId: site.id }, { actor: session }),
       agreements: await store.listAgreements({ siteId: site.id }, { actor: session }),
+      // 7단계 — 본인 업장의 공개된 추가 작업 안내만(서버가 걸러서 넘깁니다).
+      issues: await store.listIssues({ siteId: site.id }, { actor: session }).catch(() => []),
     };
     if (!['quote', 'contract', 'manage'].includes(state.roomTab)) state.roomTab = 'manage';
     if (token !== renderToken) return;
@@ -1055,6 +1166,7 @@ export function createCustomerView(container) {
       // v2.8.2 유지 — 직원(팀장·본부장) 미리보기에는 고객 견적서·계약서를 넘기지 않습니다.
       quotes: session.role === 'admin' ? await store.listQuotes({ siteId: site.id }) : [],
       agreements: session.role === 'admin' ? await store.listAgreements({ siteId: site.id }) : [],
+      issues: session.role === 'admin' ? await store.listIssues({ siteId: site.id }, { actor: session }).catch(() => []) : [],
     };
 
     const viewer = {
@@ -1252,7 +1364,50 @@ export function createCustomerView(container) {
     await uploadBizLicense(input.dataset.bizLicenseInput, files);
   }
 
+  /* ---------------- 7단계 — 추가 견적 승인 / 보류 ---------------- */
+
+  async function decideExtraQuote(quoteId, decision, button) {
+    const approved = decision === 'approved';
+    const ok = await confirmDialog({
+      title: approved ? '추가 작업을 진행할까요?' : '이번에는 진행하지 않을까요?',
+      message: approved
+        ? '승인하시면 코리아 에코크린에서 작업 일정을 잡아 안내드립니다.'
+        : '보류로 기록됩니다. 필요하실 때 다시 문의하실 수 있습니다.',
+      confirmLabel: approved ? '승인' : '보류',
+    });
+    if (!ok) return;
+    if (button) button.disabled = true;
+    try {
+      await store.decideExtraQuote(quoteId, {
+        decision: approved ? 'approved' : 'declined',
+        by: state.session ? state.session.name : '',
+        actor: state.session,
+      });
+      await render();
+      toast(
+        approved
+          ? '추가 작업 견적을 승인했습니다. 일정은 코리아 에코크린에서 안내드립니다.'
+          : '보류로 기록했습니다. 필요하실 때 다시 문의해 주세요.',
+        { duration: 8000 },
+      );
+    } catch (error) {
+      if (button) button.disabled = false;
+      toast(error.message || '처리하지 못했습니다. 잠시 후 다시 시도해 주세요.', { tone: 'error' });
+    }
+  }
+
   async function onClick(event) {
+    const extraAccept = event.target.closest('[data-extra-quote-accept]');
+    if (extraAccept) {
+      await decideExtraQuote(extraAccept.dataset.extraQuoteAccept, 'approved', extraAccept);
+      return;
+    }
+    const extraDecline = event.target.closest('[data-extra-quote-decline]');
+    if (extraDecline) {
+      await decideExtraQuote(extraDecline.dataset.extraQuoteDecline, 'declined', extraDecline);
+      return;
+    }
+
     const reportPrint = event.target.closest('[data-report-print]');
     if (reportPrint) {
       await openReportSheet(reportPrint.dataset.reportPrint, { actor: state.session });

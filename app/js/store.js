@@ -2075,6 +2075,180 @@ export function revenueTotals(sites) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 7단계 — 특이사항 · 추가 영업 (기획서 21장)                          */
+/*  · 특이사항은 업장(site) 안 `issues[]` 에 쌓습니다. 새 서버 컬렉션을  */
+/*    만들지 않아 Supabase 스키마(허용 collection 목록)를 건드리지 않고, */
+/*    updateSiteVisit · handover · visits 와 같은 방식으로 동기화됩니다. */
+/* ------------------------------------------------------------------ */
+
+export const ISSUE_STATUS = {
+  discovered: { label: '발견 · 미검토', badge: 'badge--wait', step: 0 },
+  reviewing: { label: '검토 중', badge: 'badge--wait', step: 1 },
+  quoted: { label: '추가 견적', badge: 'badge--revise', step: 2 },
+  scheduled: { label: '작업 예정', badge: 'badge--wait', step: 3 },
+  done: { label: '현장 처리 완료', badge: 'badge--done', step: 4 },
+  closed: { label: '보류 · 종결', badge: 'badge--wait', step: 5 },
+};
+
+/** 한 업장에 쌓아 두는 특이사항 최대 건수 (레코드가 무한히 커지지 않게). */
+export const MAX_SITE_ISSUES = 120;
+
+/** 특이사항 사진은 건당 최대 6장. */
+export const MAX_ISSUE_PHOTOS = 6;
+
+/** 진행 상태 순서 — 목록에서 미검토 발견 건이 먼저 오도록. */
+export const ISSUE_STATUS_ORDER = ['discovered', 'reviewing', 'quoted', 'scheduled', 'done', 'closed'];
+
+/** 아직 대표가 처리하지 않은(미검토) 상태. */
+export function isIssueOpen(issue) {
+  const key = issueStatusKey(issue);
+  return key === 'discovered' || key === 'reviewing';
+}
+
+/** 고객에게 안내할(공개된 견적과 연결된) 특이사항인지. */
+export function isIssuePublic(issue) {
+  if (!issue) return false;
+  const key = issueStatusKey(issue);
+  if (key === 'discovered' || key === 'reviewing' || key === 'closed') return false;
+  return !!toText(issue.quoteId);
+}
+
+export function issueStatusKey(issue) {
+  const key = issue && issue.status;
+  return ISSUE_STATUS[key] ? key : 'discovered';
+}
+
+export function issueStatus(issue) {
+  return ISSUE_STATUS[issueStatusKey(issue)];
+}
+
+/** 목록에 쓰는 짧은 제목 — 메모 첫 줄(없으면 사진/기본 문구). */
+export function issueTitleOf(issue) {
+  const note = toText(issue && issue.note);
+  if (!note) return issue && toText(issue.title) ? toText(issue.title) : '현장 특이사항';
+  const first = note.split(/\r?\n/)[0].trim();
+  return first.length > 40 ? `${first.slice(0, 40)}…` : first;
+}
+
+/** 특이사항 한 건 — 업장 안에 저장되는 모양. */
+export function normalizeIssue(input) {
+  const source = input && typeof input === 'object' ? input : {};
+  const photos = Array.isArray(source.photos) ? source.photos.slice(0, MAX_ISSUE_PHOTOS) : [];
+  const resolution = source.resolution && typeof source.resolution === 'object' ? source.resolution : {};
+  return {
+    id: toText(source.id) || uid('issue'),
+    siteId: toText(source.siteId),
+    siteCode: toText(source.siteCode),
+    siteName: toText(source.siteName),
+    reportId: toText(source.reportId),
+    reportNo: toText(source.reportNo),
+    leaderId: toText(source.leaderId),
+    leader: toText(source.leader),
+    leaderRole: toText(source.leaderRole),
+    date: isoDateOf(source.date) || isoDateOf(source.discoveredAt) || '',
+    discoveredAt: toText(source.discoveredAt),
+    note: toText(source.note).slice(0, 1000),
+    photos,
+    status: ISSUE_STATUS[source.status] ? source.status : 'discovered',
+    quoteId: toText(source.quoteId),
+    quoteNo: toText(source.quoteNo),
+    quoteAmount: toAmount(source.quoteAmount),
+    quoteStatus: toText(source.quoteStatus),
+    quoteSentAt: toText(source.quoteSentAt),
+    customerDecision: source.customerDecision === 'approved' || source.customerDecision === 'declined'
+      ? source.customerDecision
+      : '',
+    customerDecidedAt: toText(source.customerDecidedAt),
+    resolution: {
+      kind: resolution.kind === 'done' || resolution.kind === 'closed' ? resolution.kind : '',
+      note: toText(resolution.note).slice(0, 400),
+      by: toText(resolution.by),
+      at: toText(resolution.at),
+    },
+    source: source.source === 'report' ? 'report' : 'manual',
+    createdAt: toText(source.createdAt),
+    updatedAt: toText(source.updatedAt),
+    history: normalizeHistory(source.history),
+  };
+}
+
+/** 업장에 저장된 특이사항 배열 — 최신이 앞, 같은 id 는 한 번만, 최대 120건. */
+export function normalizeIssues(list) {
+  const rows = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    const row = normalizeIssue(item);
+    if (!row.id) continue;
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    rows.push(row);
+  }
+  return rows
+    .sort((a, b) => String(b.discoveredAt || b.date).localeCompare(String(a.discoveredAt || a.date)))
+    .slice(0, MAX_SITE_ISSUES);
+}
+
+/** 목록 정렬 — 미검토가 먼저, 그 안에서는 최신이 먼저. */
+export function sortIssues(list) {
+  const rows = Array.isArray(list) ? list.slice() : [];
+  return rows.sort((a, b) => {
+    const orderA = ISSUE_STATUS_ORDER.indexOf(issueStatusKey(a));
+    const orderB = ISSUE_STATUS_ORDER.indexOf(issueStatusKey(b));
+    if (orderA !== orderB) return orderA - orderB;
+    return String(b.discoveredAt || b.date || '').localeCompare(String(a.discoveredAt || a.date || ''));
+  });
+}
+
+/** 특이사항 묶음 합계 — 대표 화면 머리글. */
+export function issueStats(list) {
+  const rows = Array.isArray(list) ? list : [];
+  const by = { discovered: 0, reviewing: 0, quoted: 0, scheduled: 0, done: 0, closed: 0 };
+  for (const row of rows) by[issueStatusKey(row)] += 1;
+  return {
+    total: rows.length,
+    ...by,
+    open: by.discovered + by.reviewing,
+    active: by.quoted + by.scheduled,
+    finished: by.done + by.closed,
+  };
+}
+
+/**
+ * 고객에게 보내는 특이사항 — 공개된 추가 견적과 연결된 안내만.
+ * 내부 검토 메모 · 직원 id · 이력은 빼고, 현장 사진과 진행 상태 · 금액만 남깁니다.
+ */
+export function customerIssueView(issue) {
+  if (!issue) return issue;
+  return {
+    id: toText(issue.id),
+    siteId: toText(issue.siteId),
+    date: toText(issue.date),
+    title: issueTitleOf(issue),
+    note: toText(issue.note),
+    photos: Array.isArray(issue.photos) ? issue.photos.slice() : [],
+    status: issueStatusKey(issue),
+    statusLabel: issueStatus(issue).label,
+    quoteId: toText(issue.quoteId),
+    quoteNo: toText(issue.quoteNo),
+    quoteAmount: toAmount(issue.quoteAmount),
+    quoteStatus: toText(issue.quoteStatus),
+    customerDecision: toText(issue.customerDecision),
+    customerDecidedAt: toText(issue.customerDecidedAt),
+    resolvedLabel: issue.resolution && issue.resolution.kind === 'done' ? '작업 완료' : '',
+  };
+}
+
+/** 특이사항에서 만든 추가 견적인지 — 요금은 월 계약과 별도(1회). */
+export function isExtraQuote(quote) {
+  return !!quote && quote.kind === 'extra';
+}
+
+/** 추가 견적 문구 — 「추가 작업 · 1회」. */
+export function quoteKindLabel(quote) {
+  return isExtraQuote(quote) ? '추가 작업 견적' : '정기 청소 견적';
+}
+
+/* ------------------------------------------------------------------ */
 /* quotes (견적) · contracts (도급 계약서) — 대표 전용                */
 /* ------------------------------------------------------------------ */
 
@@ -2152,6 +2326,15 @@ export function normalizeQuote(input) {
     validUntil: toText(source.validUntil),
     status: QUOTE_STATUS[source.status] ? source.status : 'draft',
     photos: Array.isArray(source.photos) ? source.photos.slice() : [],
+    // 7단계 — 특이사항에서 만든 추가(특수) 작업 견적. 정기 청소 견적은 `regular`.
+    kind: source.kind === 'extra' ? 'extra' : 'regular',
+    issueId: toText(source.issueId),
+    issueTitle: toText(source.issueTitle),
+    customerDecision: source.customerDecision === 'approved' || source.customerDecision === 'declined'
+      ? source.customerDecision
+      : '',
+    customerDecidedAt: toText(source.customerDecidedAt),
+    customerDecidedBy: toText(source.customerDecidedBy),
     inviteCode: toText(source.inviteCode),
     inviteIssuedAt: toText(source.inviteIssuedAt),
     inviteUsedAt: toText(source.inviteUsedAt),
@@ -2483,6 +2666,8 @@ function normalizeSite(site) {
     schedule: normalizeScheduleConfig(site.schedule),
     scheduleOverrides: normalizeScheduleOverrides(site.scheduleOverrides),
     visits: normalizeVisits(site.visits),
+    // 7단계 — 업장 특이사항(발견 → 검토 → 추가 견적 → 작업 → 보류/종결).
+    issues: normalizeIssues(site.issues),
     // 업장(siteId) 중심 연결 고리 — 이 업장이 어느 견적/계약/팀장 계약에서 왔는지.
     quoteId: toText(site.quoteId),
     contractId: toText(site.contractId),
@@ -3196,6 +3381,8 @@ export class Store {
     await this._ensureSeedSupply();
     // 마지막에 업장(siteId) 중심 연결 고리를 채웁니다 — 시드 · 기존 기기 모두 같은 결과가 됩니다.
     await this._migrateSiteLinks();
+    // 7단계 — 예전(v2.12.0 이전) 보고서의 특이사항 메모 · 사진도 읽기 호환되도록 업장 특이사항으로 옮깁니다.
+    await this._migrateReportIssues();
   }
 
   /**
@@ -3588,6 +3775,74 @@ export class Store {
       staffContracts: staffContractCount,
       reports: reportCount,
     };
+  }
+
+  /**
+   * 7단계 — v2.12.0 이전에 등록된 보고서의 특이사항 메모 · 사진을 업장 특이사항으로 옮깁니다.
+   *  · 보고서 기록은 **한 글자도 바꾸지 않습니다**(읽기 호환용 복사본).
+   *  · 같은 보고서로 이미 만든 건이 있으면 건너뜀니다(다시 돌아도 중복 없음).
+   */
+  async _migrateReportIssues() {
+    const reports = await this.adapter.getAll('reports');
+    if (!reports.length) return { sites: 0, issues: 0 };
+    const sites = await this.adapter.getAll('sites');
+    const byId = new Map(sites.map((site) => [site.id, site]));
+    const pending = new Map();
+    let created = 0;
+    for (const raw of reports) {
+      const report = normalizeReport(raw);
+      const note = toText(report.issueNote);
+      const photos = (report.photos && report.photos.issue) || [];
+      if (!note && !photos.length) continue;
+      const site = byId.get(report.siteId);
+      if (!site) continue;
+      const list = pending.get(site.id) || normalizeIssues(site.issues);
+      if (list.some((row) => row.reportId && row.reportId === report.id)) {
+        pending.set(site.id, list);
+        continue;
+      }
+      const at = toText(report.createdAt) || (report.date ? `${report.date}T00:00:00.000Z` : new Date().toISOString());
+      const issue = normalizeIssue({
+        id: `issue_from_${report.id}`,
+        siteId: site.id,
+        siteCode: site.code,
+        siteName: site.name,
+        reportId: report.id,
+        reportNo: reportNoOf(report),
+        leaderId: toText(report.accountId),
+        leader: toText(report.leader),
+        leaderRole: toText(report.leaderRole) || '팀장',
+        date: report.date,
+        discoveredAt: at,
+        note,
+        photos,
+        status: 'discovered',
+        source: 'report',
+        createdAt: at,
+        updatedAt: at,
+        history: withHistory([], {
+          ...makeHistoryEntry({
+            actor: '시스템',
+            action: '기존 보고에서 이관',
+            note: `${reportNoOf(report)} · 기존 보고서의 특이사항을 그대로 옮겼습니다.`,
+          }),
+          at,
+        }),
+      });
+      list.push(issue);
+      pending.set(site.id, list);
+      created += 1;
+    }
+    let touched = 0;
+    for (const [siteId, list] of pending) {
+      const site = byId.get(siteId);
+      const before = normalizeIssues(site.issues).length;
+      if (before === list.length) continue;
+      await this.adapter.put('sites', normalizeSite({ ...site, issues: normalizeIssues(list) }));
+      touched += 1;
+    }
+    if (created) this._notify();
+    return { sites: touched, issues: created };
   }
 
   /**
@@ -5423,8 +5678,10 @@ export class Store {
     };
     const company = toText(fromSite.clientCompany);
     if (!company) throw new StoreError('company-empty', '고객사명(상호)을 입력해 주세요.');
+    const kind = input.kind === 'extra' ? 'extra' : 'regular';
     const amount = toAmount(input.amount);
-    if (!amount) throw new StoreError('amount-empty', '월 계약금액을 입력해 주세요.');
+    // 추가 작업 견적 초안은 금액을 비워 두고 먼저 만들 수 있습니다(대표가 나중에 입력).
+    if (!amount && kind !== 'extra') throw new StoreError('amount-empty', '월 계약금액을 입력해 주세요.');
 
     const months = Number(input.periodMonths) > 0 ? Math.round(Number(input.periodMonths)) : 12;
     const startDate = toText(input.startDate) || todayISO();
@@ -5442,7 +5699,7 @@ export class Store {
       ...typed,
       siteId: fromSite.siteId,
       id: uid('quote'),
-      no: toText(input.no) || (await this._nextDocNumber('quotes', 'Q')),
+      no: toText(input.no) || (await this._nextDocNumber('quotes', kind === 'extra' ? 'A' : 'Q')),
       clientCompany: company,
       amount,
       periodMonths: months,
@@ -5492,6 +5749,8 @@ export class Store {
       clientCompany: patch.clientCompany || site.clientName || site.name,
       clientAddress: patch.clientAddress || site.address,
       clientContact: patch.clientContact || site.contactName,
+      // 7단계 — 추가 견적도 업장에 적힌 담당자 연락처로 바로 보낼 수 있게 합니다.
+      clientPhone: patch.clientPhone || site.contactPhone,
       clientBizNumber: patch.clientBizNumber || site.bizNumber,
       clientTaxEmail: patch.clientTaxEmail || site.taxEmail,
       clientCategory: patch.clientCategory || site.category,
@@ -5512,9 +5771,12 @@ export class Store {
       updatedAt: new Date().toISOString(),
     });
     if (!next.clientCompany) throw new StoreError('company-empty', '고객사명(상호)을 입력해 주세요.');
-    if (!next.amount) throw new StoreError('amount-empty', '월 계약금액을 입력해 주세요.');
+    // 추가 작업 견적은 금액을 비워 둔 초안을 고칠 수 있습니다(발송할 때 금액을 확인).
+    if (!next.amount && !isExtraQuote(next)) throw new StoreError('amount-empty', '월 계약금액을 입력해 주세요.');
     const changes = [];
-    if (quote.amount !== next.amount) changes.push({ field: '월 견적금액', from: String(quote.amount), to: String(next.amount) });
+    if (quote.amount !== next.amount) {
+      changes.push({ field: isExtraQuote(quote) ? '추가 견적금액' : '월 견적금액', from: String(quote.amount), to: String(next.amount) });
+    }
     if (quote.clientCompany !== next.clientCompany) changes.push({ field: '고객사', from: quote.clientCompany, to: next.clientCompany });
     if (quote.frequency !== next.frequency) changes.push({ field: '청소 주기', from: quote.frequency, to: next.frequency });
     if (quote.area !== next.area) changes.push({ field: '면적', from: quote.area, to: next.area });
@@ -5714,6 +5976,9 @@ export class Store {
     const quote = await this.getQuote(id);
     if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
     if (quote.status === 'contracted') return quote;
+    if (isExtraQuote(quote) && !quote.amount) {
+      throw new StoreError('amount-empty', '추가 작업 견적 금액을 먼저 입력해 주세요.');
+    }
     const now = new Date().toISOString();
     const next = { ...quote, status: 'sent', sentAt: quote.sentAt || now, updatedAt: now };
     await this.adapter.put('quotes', next);
@@ -7381,6 +7646,8 @@ export class Store {
       action: '청소 보고 등록',
       note: `${reportNo} · ${report.date} ${report.time || ''} · ${report.leader} · 사진 ${countReportPhotos(report)}장`,
     });
+    // 7단계 — 보고서에 적힌 특이사항(메모 · 특이사항 사진)을 업장 특이사항으로 자동 등록합니다.
+    await this._syncReportIssue(site.id, normalizeReport(report));
     this._notify();
     return normalizeReport(report);
   }
@@ -7537,6 +7804,8 @@ export class Store {
       action: '보고 보완 재제출',
       note: `${reportNoOf(report)} · ${report.date} ${report.time || ''} · 사진 ${countReportPhotos(next)}장 · 관리자 확인 대기`,
     });
+    // 7단계 — 보완한 특이사항(사진 추가 · 메모 수정)을 같은 특이사항 건에 반영합니다.
+    await this._syncReportIssue(report.siteId, normalizeReport(next));
     this._notify();
     return normalizeReport(next);
   }
@@ -7563,6 +7832,501 @@ export class Store {
     });
     this._notify();
     return true;
+  }
+
+  /* ---------------- 7단계 — 특이사항 · 추가 영업 (기획서 21장) ---------------- */
+
+  /**
+   * 특이사항 목록 — 업장 안에 쌓인 `issues[]` 를 모아 정렬합니다.
+   *  · 대표: 전체 (금액 · 견적 연결 · 이력 모두)
+   *  · 직원/본부장: 본인 배정 업장만, **금액 · 견적 id · 내부 이력 없이** 진행 상태만
+   *  · 고객: 본인 업장의 **공개된 추가 견적과 연결된 안내만** (직원 id · 내부 메모 없음)
+   */
+  async listIssues({ siteId = null, status = null, open = null, limit = 0 } = {}, { actor = null } = {}) {
+    let sites = await this.listSites();
+    if (isStaffActor(actor)) {
+      const mine = new Set(assignedSiteIdsOf(actor));
+      sites = sites.filter((site) => mine.has(site.id));
+    } else if (isCustomerActor(actor)) {
+      const mine = await this._customerSiteIds(actor);
+      sites = sites.filter((site) => mine.includes(site.id));
+    }
+    if (siteId) {
+      if (isStaffActor(actor) && !sites.some((site) => site.id === siteId)) {
+        throw new StoreError('permission-denied', '다른 업장의 특이사항은 볼 수 없습니다.');
+      }
+      if (isCustomerActor(actor) && !sites.some((site) => site.id === siteId)) {
+        throw new StoreError('permission-denied', '다른 업장의 특이사항은 볼 수 없습니다.');
+      }
+      sites = sites.filter((site) => site.id === siteId);
+    }
+
+    let rows = [];
+    for (const site of sites) {
+      for (const issue of site.issues || []) {
+        rows.push({
+          ...issue,
+          siteCode: issue.siteCode || site.code,
+          siteName: issue.siteName || site.name,
+          title: issueTitleOf(issue),
+          statusLabel: issueStatus(issue).label,
+        });
+      }
+    }
+    if (isCustomerActor(actor)) {
+      rows = rows.filter(isIssuePublic).map(customerIssueView);
+    } else {
+      if (open === true) rows = rows.filter(isIssueOpen);
+      if (status) rows = rows.filter((row) => issueStatusKey(row) === status);
+      rows = sortIssues(rows);
+      if (isStaffActor(actor)) {
+        rows = rows.map((row) => {
+          const { quoteAmount, quoteId, quoteNo, leaderId, history, ...rest } = row;
+          return { ...rest, quoteAmount: 0, quoteId: '', quoteNo: '', leaderId: '', history: [] };
+        });
+      }
+    }
+    return limit > 0 ? rows.slice(0, limit) : rows;
+  }
+
+  /** 특이사항 한 건 — 업장 · 건 id 로 찾습니다. */
+  async getIssue(siteId, issueId, { actor = null } = {}) {
+    const site = await this.getSite(siteId);
+    if (!site) return null;
+    if (isStaffActor(actor) && !canOpenSite(actor, site.id)) {
+      throw new StoreError('permission-denied', '다른 업장의 특이사항은 볼 수 없습니다.');
+    }
+    if (isCustomerActor(actor)) {
+      const mine = await this._customerSiteIds(actor);
+      if (!mine.includes(site.id)) throw new StoreError('permission-denied', '다른 업장의 특이사항은 볼 수 없습니다.');
+    }
+    const issue = (site.issues || []).find((row) => row.id === issueId);
+    if (!issue) return null;
+    if (isCustomerActor(actor)) return isIssuePublic(issue) ? customerIssueView(issue) : null;
+    if (isStaffActor(actor)) {
+      const { quoteAmount, quoteId, quoteNo, leaderId, history, ...rest } = issue;
+      return { ...rest, quoteAmount: 0, quoteId: '', quoteNo: '', leaderId: '', history: [] };
+    }
+    return issue;
+  }
+
+  /** 업장의 특이사항 배열을 저장합니다(업장 레코드 안). */
+  async _saveSiteIssues(site, issues) {
+    const now = new Date().toISOString();
+    const next = normalizeSite({ ...site, issues: normalizeIssues(issues), updatedAt: now });
+    await this.adapter.put('sites', next);
+    return next;
+  }
+
+  /**
+   * 특이사항 등록 — 보고서 없이 **대표·팀장이 현장에서 직접** 넣을 수 있습니다.
+   * (보고서에 적힌 특이사항은 addReport · resubmitReport 가 자동으로 등록합니다.)
+   */
+  async addIssue(input = {}, { actor = null } = {}) {
+    if (isCustomerActor(actor)) {
+      throw new StoreError('permission-denied', '고객은 특이사항을 등록할 수 없습니다.');
+    }
+    const siteId = toText(input.siteId);
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    if (isStaffActor(actor) && !canOpenSite(actor, site.id)) {
+      throw new StoreError('permission-denied', '본인 배정 업장에만 특이사항을 등록할 수 있습니다.');
+    }
+    const note = toText(input.note);
+    const photos = (Array.isArray(input.photos) ? input.photos : []).slice(0, MAX_ISSUE_PHOTOS);
+    if (!note && !photos.length) {
+      throw new StoreError('issue-empty', '특이사항 내용이나 사진을 1개 이상 넣어 주세요.');
+    }
+    const who = toText(input.actor) || (actor && actor.name) || '앱';
+    const now = new Date().toISOString();
+    const issue = normalizeIssue({
+      id: uid('issue'),
+      siteId: site.id,
+      siteCode: site.code,
+      siteName: site.name,
+      reportId: toText(input.reportId),
+      reportNo: toText(input.reportNo),
+      leaderId: toText(input.leaderId) || (actor && actor.accountId) || '',
+      leader: toText(input.leader) || (actor && actor.name) || who,
+      leaderRole: toText(input.leaderRole) || (actor && actor.title) || '',
+      date: toText(input.date) || todayISO(),
+      discoveredAt: now,
+      note,
+      photos,
+      status: ISSUE_STATUS[input.status] ? input.status : 'discovered',
+      source: toText(input.source) === 'report' ? 'report' : 'manual',
+      createdAt: now,
+      updatedAt: now,
+      history: withHistory([], makeHistoryEntry({
+        actor: who,
+        action: '특이사항 등록',
+        note: `${site.name} · ${photos.length ? `사진 ${photos.length}장` : '메모'} · ${issueTitleOf({ note })}`,
+      })),
+    });
+    const saved = await this._saveSiteIssues(site, [issue, ...(site.issues || [])]);
+    await this.recordHistory('sites', site.id, {
+      actor: who,
+      action: '특이사항 등록',
+      note: `${issueTitleOf(issue)} · 발견 · ${issue.date}`,
+    });
+    this._notify();
+    return (saved.issues || []).find((row) => row.id === issue.id) || issue;
+  }
+
+  /**
+   * 보고서에 적힌 특이사항(메모 · 특이사항 사진)을 업장 특이사항으로 옮깁니다.
+   * 같은 보고서로 이미 만든 건이 있으면 **사진만 더하고 메모 변화를 이력**에 남깁니다(중복 생성 금지).
+   */
+  async _syncReportIssue(siteId, report) {
+    const note = toText(report && report.issueNote);
+    const photos = ((report && report.photos && report.photos.issue) || []).slice();
+    if (!note && !photos.length) return null;
+    const site = await this.getSite(siteId);
+    if (!site) return null;
+    const list = (site.issues || []).slice();
+    const index = list.findIndex((row) => row.reportId && row.reportId === report.id);
+    const now = new Date().toISOString();
+    const who = toText(report.leader) || '팀장';
+    if (index >= 0) {
+      const existing = list[index];
+      const merged = existing.photos.slice();
+      for (const photo of photos) {
+        if (!photo || !photo.id) continue;
+        if (merged.some((row) => row.id === photo.id)) continue;
+        merged.push(photo);
+      }
+      const changes = [];
+      if (note && note !== existing.note) {
+        changes.push({ field: '특이사항 메모', from: existing.note ? '이전 메모' : '없음', to: '보완된 메모' });
+      }
+      if (merged.length !== existing.photos.length) {
+        changes.push({ field: '특이사항 사진', from: `${existing.photos.length}장`, to: `${merged.length}장` });
+      }
+      if (!changes.length) return existing;
+      const next = normalizeIssue({
+        ...existing,
+        note: note || existing.note,
+        photos: merged,
+        reportNo: existing.reportNo || toText(report.reportNo),
+        updatedAt: now,
+        history: withHistory(existing.history, makeHistoryEntry({
+          actor: who,
+          action: '보고 보완 반영',
+          note: '다시 제출한 보고의 특이사항을 반영했습니다.',
+          changes,
+        })),
+      });
+      list[index] = next;
+      await this._saveSiteIssues(site, list);
+      return next;
+    }
+    const issue = normalizeIssue({
+      id: uid('issue'),
+      siteId: site.id,
+      siteCode: site.code,
+      siteName: site.name,
+      reportId: toText(report.id),
+      reportNo: toText(report.reportNo) || reportNoOf(report),
+      leaderId: toText(report.accountId),
+      leader: who,
+      leaderRole: toText(report.leaderRole) || '팀장',
+      date: toText(report.date) || todayISO(),
+      discoveredAt: toText(report.createdAt) || now,
+      note,
+      photos,
+      status: 'discovered',
+      source: 'report',
+      createdAt: toText(report.createdAt) || now,
+      updatedAt: now,
+      history: withHistory([], makeHistoryEntry({
+        actor: who,
+        action: '특이사항 등록',
+        note: `보고서 ${toText(report.reportNo) || reportNoOf(report)} 에서 자동 등록 · 사진 ${photos.length}장`,
+      })),
+    });
+    await this._saveSiteIssues(site, [issue, ...list]);
+    await this.recordHistory('sites', site.id, {
+      actor: who,
+      action: '특이사항 등록',
+      note: `${toText(report.reportNo) || reportNoOf(report)} · ${issueTitleOf(issue)}`,
+    });
+    return issue;
+  }
+
+  /** 특이사항 상태 변경 — 대표만. 전/후 상태와 사유를 이력에 남깁니다. */
+  async setIssueStatus(siteId, issueId, { status = '', note = '', by = '', actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '특이사항 처리는 대표(최고관리자)만 할 수 있습니다.');
+    }
+    if (!ISSUE_STATUS[status]) throw new StoreError('status-invalid', '알 수 없는 특이사항 상태입니다.');
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const list = (site.issues || []).slice();
+    const index = list.findIndex((row) => row.id === issueId);
+    if (index < 0) throw new StoreError('no-issue', '특이사항을 찾을 수 없습니다.');
+    const issue = list[index];
+    const from = issueStatusKey(issue);
+    if (from === status) return issue;
+    const now = new Date().toISOString();
+    const who = toText(by) || (actor && actor.name) || '대표';
+    const reason = toText(note);
+    const next = normalizeIssue({
+      ...issue,
+      status,
+      updatedAt: now,
+      resolution: status === 'done' || status === 'closed'
+        ? { kind: status, note: reason, by: who, at: now }
+        : issue.resolution,
+      history: withHistory(issue.history, makeHistoryEntry({
+        actor: who,
+        action: status === 'closed' ? '보류 · 종결' : ISSUE_STATUS[status].label,
+        note: reason,
+        changes: [{ field: '상태', from: ISSUE_STATUS[from].label, to: ISSUE_STATUS[status].label }],
+      })),
+    });
+    list[index] = next;
+    await this._saveSiteIssues(site, list);
+    await this.recordHistory('sites', site.id, {
+      actor: who,
+      action: '특이사항 상태 변경',
+      note: `${issueTitleOf(issue)} · ${ISSUE_STATUS[from].label} → ${ISSUE_STATUS[status].label}${reason ? ` · ${reason}` : ''}`,
+    });
+    this._notify();
+    return next;
+  }
+
+  /** 특이사항 카드에 붙일 견적 — 없으면 null. */
+  async _issueQuote(issue) {
+    if (!issue || !issue.quoteId) return null;
+    return this.getQuote(issue.quoteId).catch(() => null);
+  }
+
+  /**
+   * [추가 견적 초안 만들기] — 업장 정보 · 고객 연락처 · 특이사항 내용 · 사진이
+   * 그대로 연결된 **추가 작업 견적 초안**을 만듭니다(기존 createQuoteForSite 재사용).
+   * 금액은 비워 둘 수 있고, 대표가 금액을 넣고 고객에게 발송합니다.
+   */
+  async createIssueQuoteDraft(siteId, issueId, { amount = 0, scope = '', memo = '', by = '', actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '추가 견적은 대표(최고관리자)만 만들 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const list = (site.issues || []).slice();
+    const index = list.findIndex((row) => row.id === issueId);
+    if (index < 0) throw new StoreError('no-issue', '특이사항을 찾을 수 없습니다.');
+    const issue = list[index];
+    if (issue.quoteId) {
+      const existing = await this._issueQuote(issue);
+      if (existing) return { issue, quote: existing, created: false };
+    }
+    const who = toText(by) || (actor && actor.name) || '대표';
+    const title = issueTitleOf(issue);
+    const quote = await this.createQuoteForSite(site.id, {
+      kind: 'extra',
+      issueId: issue.id,
+      issueTitle: title,
+      amount: toAmount(amount),
+      scope: toText(scope) || title,
+      memo: toText(memo) || issue.note,
+      area: site.area,
+      frequency: '추가 작업 · 1회 (정기 청소와 별도)',
+      startDate: todayISO(),
+      periodMonths: 1,
+      actor: who,
+    });
+    const now = new Date().toISOString();
+    const next = normalizeIssue({
+      ...issue,
+      status: issueStatusKey(issue) === 'discovered' ? 'reviewing' : issueStatusKey(issue),
+      quoteId: quote.id,
+      quoteNo: quote.no,
+      quoteAmount: quote.amount,
+      quoteStatus: quote.status,
+      updatedAt: now,
+      history: withHistory(issue.history, makeHistoryEntry({
+        actor: who,
+        action: '추가 견적 초안',
+        note: `${quote.no} · ${title}${quote.amount ? ` · ${quote.amount.toLocaleString('ko-KR')}원` : ' · 금액 미정'}`,
+        changes: [{ field: '상태', from: ISSUE_STATUS[issueStatusKey(issue)].label, to: ISSUE_STATUS.reviewing.label }],
+      })),
+    });
+    list[index] = next;
+    await this._saveSiteIssues(site, list);
+    await this.recordHistory('sites', site.id, {
+      actor: who,
+      action: '추가 견적 초안',
+      note: `${quote.no} · ${title} · 고객 발송 전`,
+    });
+    this._notify();
+    return { issue: next, quote, created: true };
+  }
+
+  /** 추가 견적의 항목 · 금액 저장 — 대표만. */
+  async updateIssueQuote(siteId, issueId, { amount = null, scope = null, memo = null, by = '', actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '추가 견적 금액은 대표(최고관리자)만 정할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const list = (site.issues || []).slice();
+    const index = list.findIndex((row) => row.id === issueId);
+    if (index < 0) throw new StoreError('no-issue', '특이사항을 찾을 수 없습니다.');
+    const issue = list[index];
+    const quote = await this._issueQuote(issue);
+    if (!quote) throw new StoreError('no-quote', '추가 견적 초안이 없습니다. 먼저 초안을 만들어 주세요.');
+    if (quote.status !== 'draft') {
+      throw new StoreError('already-sent', '이미 고객에게 발송한 견적은 금액을 바꿀 수 없습니다.');
+    }
+    const who = toText(by) || (actor && actor.name) || '대표';
+    const patch = {};
+    if (amount !== null && amount !== undefined && amount !== '') patch.amount = toAmount(amount);
+    if (scope !== null && scope !== undefined) patch.scope = toText(scope);
+    if (memo !== null && memo !== undefined) patch.memo = toText(memo);
+    const nextQuote = await this.updateQuote(quote.id, { ...patch, actor: who });
+    const now = new Date().toISOString();
+    const changes = [];
+    if (nextQuote.amount !== quote.amount) {
+      changes.push({ field: '추가 견적 금액', from: quote.amount ? `${quote.amount.toLocaleString('ko-KR')}원` : '미정', to: nextQuote.amount ? `${nextQuote.amount.toLocaleString('ko-KR')}원` : '미정' });
+    }
+    const next = normalizeIssue({
+      ...issue,
+      quoteNo: nextQuote.no,
+      quoteAmount: nextQuote.amount,
+      quoteStatus: nextQuote.status,
+      updatedAt: now,
+      history: changes.length
+        ? withHistory(issue.history, makeHistoryEntry({ actor: who, action: '추가 견적 금액', changes }))
+        : issue.history,
+    });
+    list[index] = next;
+    await this._saveSiteIssues(site, list);
+    this._notify();
+    return { issue: next, quote: nextQuote };
+  }
+
+  /** [고객에게 발송] — 추가 견적을 고객 방에 열고 특이사항을 `quoted` 로 올립니다. */
+  async sendIssueQuote(siteId, issueId, { by = '', actor = null } = {}) {
+    if (!isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '추가 견적 발송은 대표(최고관리자)만 할 수 있습니다.');
+    }
+    const site = await this.getSite(siteId);
+    if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
+    const list = (site.issues || []).slice();
+    const index = list.findIndex((row) => row.id === issueId);
+    if (index < 0) throw new StoreError('no-issue', '특이사항을 찾을 수 없습니다.');
+    const issue = list[index];
+    const quote = await this._issueQuote(issue);
+    if (!quote) throw new StoreError('no-quote', '추가 견적 초안이 없습니다. 먼저 초안을 만들어 주세요.');
+    if (!quote.amount) throw new StoreError('amount-empty', '추가 작업 견적 금액을 먼저 입력해 주세요.');
+    const who = toText(by) || (actor && actor.name) || '대표';
+    // 대표 승인 기록(금액 · 승인자 · 시각)을 견적에 남깁니다 — 계약서를 새로 만들지는 않습니다.
+    const approved = normalizeQuote({
+      ...quote,
+      approval: normalizeQuoteApproval({ status: 'approved', by: who, at: new Date().toISOString(), amount: quote.amount, note: '추가 작업 견적' }),
+      updatedAt: new Date().toISOString(),
+    });
+    await this.adapter.put('quotes', approved);
+    const sent = await this.sendQuote(quote.id, { actor });
+    const now = new Date().toISOString();
+    const from = issueStatusKey(issue);
+    const next = normalizeIssue({
+      ...issue,
+      status: 'quoted',
+      quoteId: sent.id,
+      quoteNo: sent.no,
+      quoteAmount: sent.amount,
+      quoteStatus: sent.status,
+      quoteSentAt: now,
+      updatedAt: now,
+      history: withHistory(issue.history, makeHistoryEntry({
+        actor: who,
+        action: '추가 견적 발송',
+        note: `${sent.no} · ${sent.amount.toLocaleString('ko-KR')}원 · 고객 확인 대기`,
+        changes: [{ field: '상태', from: ISSUE_STATUS[from].label, to: ISSUE_STATUS.quoted.label }],
+      })),
+    });
+    list[index] = next;
+    await this._saveSiteIssues(site, list);
+    await this.recordHistory('sites', site.id, {
+      actor: who,
+      action: '추가 견적 발송',
+      note: `${sent.no} · ${issueTitleOf(issue)} · ${sent.amount.toLocaleString('ko-KR')}원 · 고객 확인 대기`,
+    });
+    this._notify();
+    return { issue: next, quote: sent };
+  }
+
+  /**
+   * [현장 처리 완료] / [보류 · 종결] — 견적 없이 처리하거나 미룰 때, 사유를 남깁니다.
+   * 견적서 없이 처리한 경우에도 업장 이력에 그대로 남습니다.
+   */
+  async completeIssue(siteId, issueId, { status = 'done', note = '', by = '', actor = null } = {}) {
+    const target = status === 'closed' ? 'closed' : 'done';
+    return this.setIssueStatus(siteId, issueId, { status: target, note, by, actor });
+  }
+
+  /** 고객이 추가 견적을 승인 · 보류합니다 — 본인 업장의 발송된 추가 견적만. */
+  async decideExtraQuote(quoteId, { decision = 'approved', note = '', by = '', actor = null } = {}) {
+    if (!isCustomerActor(actor) && !isCeoActor(actor)) {
+      throw new StoreError('permission-denied', '추가 견적 승인은 고객과 대표만 할 수 있습니다.');
+    }
+    const quote = await this.getQuote(quoteId, { actor });
+    if (!quote) throw new StoreError('no-quote', '견적을 찾을 수 없습니다.');
+    if (!isExtraQuote(quote)) throw new StoreError('not-extra', '추가 작업 견적만 승인할 수 있습니다.');
+    if (quote.status !== 'sent') throw new StoreError('not-sent', '아직 발송되지 않은 견적입니다.');
+    if (quote.customerDecision === decision) return quote;
+    const now = new Date().toISOString();
+    const who = toText(by) || (actor && actor.name) || '고객';
+    const next = normalizeQuote({
+      ...quote,
+      customerDecision: decision === 'declined' ? 'declined' : 'approved',
+      customerDecidedAt: now,
+      customerDecidedBy: who,
+      updatedAt: now,
+      history: withHistory(quote.history, makeHistoryEntry({
+        actor: who,
+        action: decision === 'declined' ? '추가 견적 보류' : '추가 견적 승인',
+        note: toText(note) || (decision === 'declined' ? '고객이 이번에는 진행하지 않겠다고 했습니다.' : `${quote.amount.toLocaleString('ko-KR')}원 승인`),
+      })),
+    });
+    await this.adapter.put('quotes', next);
+    const site = quote.siteId ? await this.getSite(quote.siteId) : null;
+    if (site) {
+      const list = (site.issues || []).slice();
+      const index = list.findIndex((row) => row.quoteId === quote.id);
+      if (index >= 0) {
+        const issue = list[index];
+        const from = issueStatusKey(issue);
+        const to = decision === 'declined' ? 'closed' : 'scheduled';
+        list[index] = normalizeIssue({
+          ...issue,
+          status: to,
+          customerDecision: decision === 'declined' ? 'declined' : 'approved',
+          customerDecidedAt: now,
+          quoteStatus: next.status,
+          quoteAmount: next.amount,
+          updatedAt: now,
+          resolution: to === 'closed'
+            ? { kind: 'closed', note: toText(note) || '고객이 추가 작업을 진행하지 않기로 했습니다.', by: who, at: now }
+            : issue.resolution,
+          history: withHistory(issue.history, makeHistoryEntry({
+            actor: who,
+            action: decision === 'declined' ? '고객 보류' : '고객 승인',
+            note: toText(note) || (decision === 'declined' ? '추가 작업 미진행' : '추가 작업 진행 승인'),
+            changes: [{ field: '상태', from: ISSUE_STATUS[from].label, to: ISSUE_STATUS[to].label }],
+          })),
+        });
+        await this._saveSiteIssues(site, list);
+        await this.recordHistory('sites', site.id, {
+          actor: who,
+          action: decision === 'declined' ? '추가 견적 보류' : '추가 견적 승인',
+          note: `${quote.no} · ${issueTitleOf(issue)} · ${quote.amount.toLocaleString('ko-KR')}원`,
+        });
+      }
+    }
+    this._notify();
+    return normalizeQuote(await this.adapter.get('quotes', quote.id));
   }
 
   /* ---------------- photos ---------------- */
@@ -8109,6 +8873,7 @@ export class Store {
     await this.adapter.clear();
     await this._writeSeed();
     await this._migrateSiteLinks();
+    await this._migrateReportIssues();
     this._notify();
   }
 }

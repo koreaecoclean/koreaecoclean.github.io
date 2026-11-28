@@ -7,7 +7,7 @@
  */
 
 import { $, esc, icons, toast, confirmDialog, copyText, setBusy, fmtWon, fmtNumber, toISODate, fmtDateLong, fmtTime, openLightbox, modeSwitchTemplate } from '../ui.js';
-import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, reportNoOf, countReportPhotos, reportStatusKey, monthGrid, entriesByDate, CALENDAR_WEEKDAYS, QUOTE_STATUS, AGREEMENT_STATUS, SURVEY_PHOTO_AREAS, QUOTE_TEAM_SIZES, QUOTE_DIFFICULTIES, parsePyeong, estimateQuote, handoverPhotoCatalog, HANDOVER_ACCESS_TYPES, HANDOVER_CHECK_KEYS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, SCHEDULE_DAYS, SCHEDULE_STATUS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, DEFAULT_GPS_RADIUS_M, siteSchedule, scheduleDayText, scheduleTimeText, visitWorkOf, clockOfISO, clockLabel } from '../store.js';
+import { store, netProfit, MAX_BASELINE_PHOTOS, reportStatus, reportNoOf, countReportPhotos, reportStatusKey, monthGrid, entriesByDate, CALENDAR_WEEKDAYS, QUOTE_STATUS, AGREEMENT_STATUS, SURVEY_PHOTO_AREAS, QUOTE_TEAM_SIZES, QUOTE_DIFFICULTIES, parsePyeong, estimateQuote, handoverPhotoCatalog, HANDOVER_ACCESS_TYPES, HANDOVER_CHECK_KEYS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, SCHEDULE_DAYS, SCHEDULE_STATUS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, DEFAULT_GPS_RADIUS_M, siteSchedule, scheduleDayText, scheduleTimeText, visitWorkOf, clockOfISO, clockLabel, ISSUE_STATUS, issueStatus, issueStatusKey, issueTitleOf, issueStats, isIssueOpen, isExtraQuote } from '../store.js';
 import { openReportSheet } from './report-sheet.js';
 import { CATEGORY_META, PHOTO_GROUPS } from '../seed.js';
 import { preparePhoto } from '../photos.js';
@@ -118,6 +118,8 @@ export function createAdminView(container) {  const state = {
     revisionDraft: '',
     scheduleView: 'list',
     calendarDate: '',
+    // 7단계 — 특이사항 · 추가 영업 (처리/보류 사유 입력 상자)
+    issueClose: null,
   };
   let mounted = false;
   let renderToken = 0;
@@ -1033,6 +1035,282 @@ export function createAdminView(container) {  const state = {
         }
       </section>
     `;
+  }
+
+  /* ---------------- 7단계 — 특이사항 · 추가 영업 (기획서 21장) ---------------- */
+
+  function issueThumbsTemplate(issue) {
+    const photos = issue.photos || [];
+    if (!photos.length) return '';
+    return `<div class="issue-thumbs">${photos
+      .map(
+        (photo, index) => `
+        <button class="photo-btn" type="button" data-issue-photo="${esc(issue.id)}" data-issue-site="${esc(issue.siteId)}"
+                data-issue-photo-index="${index}" aria-label="특이사항 사진 크게 보기">
+          <img src="${esc(store.photoThumbUrl(photo))}" alt="${esc(photo.caption || '특이사항 사진')}" loading="lazy" decoding="async">
+        </button>`,
+      )
+      .join('')}</div>`;
+  }
+
+  /** 특이사항에 연결된 추가 견적 — 초안이면 금액 입력 + [고객에게 발송]. */
+  function issueQuoteBlockTemplate(issue) {
+    if (!issue.quoteId) return '';
+    const amount = issue.quoteAmount ? fmtWon(issue.quoteAmount) : '금액 미정';
+    if (issue.quoteStatus === 'draft') {
+      return `
+        <div class="issue-quote" data-issue-quote="${esc(issue.id)}">
+          <div class="issue-quote__head">
+            <strong>${esc(issue.quoteNo || '추가 견적')} · 초안</strong>
+            <span class="badge badge--wait">고객 발송 전</span>
+          </div>
+          <div class="field-row issue-quote__amount">
+            <div class="field">
+              <label for="issue-amount-${esc(issue.id)}">추가 작업 금액(원)</label>
+              <input class="input" id="issue-amount-${esc(issue.id)}" type="number" inputmode="numeric" min="0" step="1000"
+                     data-issue-amount="${esc(issue.id)}" value="${esc(issue.quoteAmount || '')}" placeholder="예: 150000">
+            </div>
+            <button class="btn btn--quiet btn--sm" type="button" data-issue-amount-save="${esc(issue.id)}">금액 저장</button>
+          </div>
+          <p class="tiny muted">현재 ${esc(amount)} · 고객에게 보낼 항목은 <strong>${esc(issueTitleOf(issue))}</strong> 입니다. 업장 정보·연락처·사진은 견적서에 함께 들어가 있습니다.</p>
+          <div class="btn-row btn-row--stack">
+            <button class="btn btn--primary btn--sm" type="button" data-issue-quote-send="${esc(issue.id)}">고객에게 발송</button>
+            <button class="btn btn--quiet btn--sm" type="button" data-open-quote="${esc(issue.quoteId)}">견적서 보기</button>
+          </div>
+        </div>`;
+    }
+    const decision = issue.customerDecision === 'approved'
+      ? { label: '고객 승인', badge: 'badge--done' }
+      : issue.customerDecision === 'declined'
+        ? { label: '고객 보류', badge: 'badge--wait' }
+        : { label: '고객 확인 대기', badge: 'badge--revise' };
+    const sentDate = issue.quoteSentAt ? String(issue.quoteSentAt).slice(0, 10) : '';
+    return `
+      <div class="issue-quote" data-issue-quote="${esc(issue.id)}">
+        <div class="issue-quote__head">
+          <strong>${esc(issue.quoteNo || '추가 견적')} · ${esc(amount)}</strong>
+          <span class="badge ${decision.badge}">${esc(decision.label)}</span>
+        </div>
+        <p class="tiny muted">${esc((QUOTE_STATUS[issue.quoteStatus] || {}).label || '발송 완료')}${sentDate ? ` · 발송 ${esc(fmtDateLong(sentDate))}` : ''}</p>
+        <div class="btn-row">
+          <button class="btn btn--quiet btn--sm" type="button" data-open-quote="${esc(issue.quoteId)}">견적서 보기</button>
+        </div>
+      </div>`;
+  }
+
+  function issueCardTemplate(issue) {
+    const key = issueStatusKey(issue);
+    const status = ISSUE_STATUS[key] || ISSUE_STATUS.discovered;
+    const reporter = [issue.leader, issue.leaderRole].filter(Boolean).join(' ');
+    const date = issue.date ? fmtDateLong(issue.date) : '';
+    const finished = key === 'done' || key === 'closed';
+    const closeDraft = state.issueClose && state.issueClose.id === issue.id ? state.issueClose : null;
+    const buttons = [];
+    if (!finished) {
+      if (!issue.quoteId) {
+        buttons.push(`<button class="btn btn--primary btn--sm" type="button" data-issue-draft="${esc(issue.id)}" data-issue-site="${esc(issue.siteId)}">추가 견적 초안 만들기</button>`);
+      }
+      buttons.push(`<button class="btn btn--quiet btn--sm" type="button" data-issue-complete="${esc(issue.id)}" data-issue-site="${esc(issue.siteId)}" data-issue-kind="done">${key === 'quoted' || key === 'scheduled' ? '작업 완료' : '현장 처리 완료'}</button>`);
+      buttons.push(`<button class="btn btn--quiet btn--sm" type="button" data-issue-complete="${esc(issue.id)}" data-issue-site="${esc(issue.siteId)}" data-issue-kind="closed">보류 · 종결</button>`);
+    }
+    return `
+      <article class="issue-card issue-card--${esc(key)}" data-issue-card="${esc(issue.id)}" data-issue-status="${esc(key)}" data-issue-site="${esc(issue.siteId)}">
+        <div class="issue-card__head">
+          <div>
+            <strong>${esc(issue.siteName || '')}</strong>
+            <span class="issue-card__meta">${esc([issue.reportNo, reporter, date].filter(Boolean).join(' · '))}</span>
+          </div>
+          <span class="badge ${status.badge}" data-issue-badge>${esc(status.label)}</span>
+        </div>
+        <p class="issue-card__note">${esc(issue.note || '사진으로 등록된 특이사항입니다.')}</p>
+        ${issueThumbsTemplate(issue)}
+        ${issueQuoteBlockTemplate(issue)}
+        ${buttons.length ? `<div class="btn-row issue-card__actions">${buttons.join('')}</div>` : ''}
+        ${finished && issue.resolution && issue.resolution.note ? `<p class="issue-card__result"><strong>${issue.resolution.kind === 'closed' ? '보류 사유' : '처리 내용'}</strong> ${esc(issue.resolution.note)}</p>` : ''}
+        ${
+          closeDraft
+            ? `<div class="issue-close" data-issue-close-form="${esc(issue.id)}">
+                 <label class="tiny muted" for="issue-close-${esc(issue.id)}">${closeDraft.kind === 'closed' ? '보류 · 종결 사유' : '현장 처리 내용'}</label>
+                 <textarea class="textarea" id="issue-close-${esc(issue.id)}" rows="2" maxlength="300"
+                   data-issue-close-note="${esc(issue.id)}" placeholder="${closeDraft.kind === 'closed' ? '예: 고객이 다음 분기로 미루기로 함' : '예: 현장에서 세척 · 보수 완료'}">${esc(closeDraft.note || '')}</textarea>
+                 <div class="btn-row">
+                   <button class="btn btn--primary btn--sm" type="button" data-issue-close-save="${esc(issue.id)}" data-issue-site="${esc(issue.siteId)}">${closeDraft.kind === 'closed' ? '보류로 기록' : '처리 완료로 기록'}</button>
+                   <button class="btn btn--quiet btn--sm" type="button" data-issue-close-cancel="${esc(issue.id)}">취소</button>
+                 </div>
+               </div>`
+            : ''
+        }
+        ${
+          issue.history && issue.history.length
+            ? `<details class="issue-history"><summary>이력 ${issue.history.length}건</summary><ul>${issue.history
+                .slice(0, 6)
+                .map((row) => `<li><strong>${esc(row.action)}</strong>${row.actor ? ` · ${esc(row.actor)}` : ''}${row.note ? ` · ${esc(row.note)}` : ''}</li>`)
+                .join('')}</ul></details>`
+            : ''
+        }
+      </article>`;
+  }
+
+  function issueSalesPanelTemplate({ issues }) {
+    const rows = Array.isArray(issues) ? issues : [];
+    const stats = issueStats(rows);
+    const active = rows.filter((row) => issueStatusKey(row) !== 'done' && issueStatusKey(row) !== 'closed');
+    const finished = rows.filter((row) => issueStatusKey(row) === 'done' || issueStatusKey(row) === 'closed');
+    return `
+      <section class="panel issue-panel" data-issue-panel>
+        <div class="section-head">
+          <h2>특이사항 · 추가 영업</h2>
+          <p>${stats.open ? `미검토 ${stats.open}건` : '미검토 없음'}${stats.active ? ` · 진행 ${stats.active}건` : ''}</p>
+        </div>
+        <p class="tiny muted" style="margin:-4px 0 12px">
+          보고서에 적힌 특이사항은 자동으로 모입니다. <strong>[추가 견적 초안 만들기]</strong>를 누르면 업장 정보 · 고객 연락처 · 특이사항 내용 · 사진이 연결된
+          추가 작업 견적이 만들어지고, 금액을 넣어 <strong>고객에게 발송</strong>하면 고객 방 ① 견적에서 확인 · 승인합니다.
+        </p>
+        <div class="issue-summary">
+          <span class="badge ${ISSUE_STATUS.discovered.badge}">발견 ${stats.discovered}</span>
+          <span class="badge ${ISSUE_STATUS.reviewing.badge}">검토 ${stats.reviewing}</span>
+          <span class="badge ${ISSUE_STATUS.quoted.badge}">추가 견적 ${stats.quoted + stats.scheduled}</span>
+          <span class="badge ${ISSUE_STATUS.done.badge}">완료 ${stats.done}</span>
+          <span class="badge ${ISSUE_STATUS.closed.badge}">보류 ${stats.closed}</span>
+        </div>
+        ${active.length ? `<div class="stack-10" data-issue-list="open">${active.map(issueCardTemplate).join('')}</div>` : '<p class="tiny muted">처리할 특이사항이 없습니다.</p>'}
+        ${
+          finished.length
+            ? `<details class="issue-closed"><summary>완료 · 보류 ${finished.length}건</summary>
+                 <div class="stack-10" style="margin-top:8px" data-issue-list="closed">${finished.map(issueCardTemplate).join('')}</div>
+               </details>`
+            : ''
+        }
+      </section>`;
+  }
+
+  async function findIssue(siteId, issueId) {
+    const rows = await store.listIssues({ siteId }, { actor: state.session });
+    return rows.find((row) => row.id === issueId) || null;
+  }
+
+  async function openIssuePhoto(issueId, siteId, startIndex) {
+    const issue = await findIssue(siteId, issueId);
+    if (!issue) return;
+    const items = [];
+    for (const photo of issue.photos || []) {
+      const url = await store.photoFullUrl(photo);
+      if (!url) continue;
+      items.push({
+        url,
+        caption: [issue.siteName, issueTitleOf(issue), issue.date ? fmtDateLong(issue.date) : '', issue.leader]
+          .filter(Boolean)
+          .join(' · '),
+      });
+    }
+    if (!items.length) {
+      toast('사진을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.', { tone: 'error' });
+      return;
+    }
+    openLightbox(items, Math.min(Number(startIndex) || 0, items.length - 1));
+  }
+
+  async function createIssueDraft(siteId, issueId, button) {
+    if (state.busy) return;
+    state.busy = true;
+    setBusy(button, true, '만드는 중…');
+    try {
+      const result = await store.createIssueQuoteDraft(siteId, issueId, {
+        by: state.session ? state.session.name : '',
+        actor: state.session,
+      });
+      state.issueClose = null;
+      await render();
+      const box = $(`[data-issue-quote="${issueId}"]`, container);
+      if (box) box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      toast(
+        result.created
+          ? `${result.quote.no} 추가 작업 견적 초안을 만들었습니다. 금액을 넣고 [고객에게 발송]을 눌러 주세요.`
+          : `${result.quote.no} 초안이 이미 있습니다. 금액을 확인해 주세요.`,
+        { duration: 8000 },
+      );
+    } catch (error) {
+      toast(error.message || '추가 견적 초안을 만들지 못했습니다.', { tone: 'error' });
+    } finally {
+      state.busy = false;
+      setBusy(button, false);
+    }
+  }
+
+  async function saveIssueAmount(siteId, issueId, button) {
+    const input = $(`[data-issue-amount="${issueId}"]`, container);
+    const amount = input ? input.value : '';
+    if (!amount || Number(String(amount).replace(/[^0-9]/g, '')) <= 0) {
+      toast('추가 작업 금액을 입력해 주세요.', { tone: 'error' });
+      if (input) input.focus();
+      return;
+    }
+    setBusy(button, true, '저장 중…');
+    try {
+      const saved = await store.updateIssueQuote(siteId, issueId, {
+        amount,
+        by: state.session ? state.session.name : '',
+        actor: state.session,
+      });
+      await render();
+      toast(`${saved.quote.no} · ${fmtWon(saved.quote.amount)} 저장했습니다. [고객에게 발송]을 누르면 고객이 볼 수 있습니다.`);
+    } catch (error) {
+      toast(error.message || '금액을 저장하지 못했습니다.', { tone: 'error' });
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function sendIssueQuoteToCustomer(siteId, issueId, button) {
+    const issue = await findIssue(siteId, issueId);
+    if (!issue) return;
+    if (!issue.quoteAmount) {
+      toast('추가 작업 견적 금액을 먼저 입력 · 저장해 주세요.', { tone: 'error' });
+      return;
+    }
+    const ok = await confirmDialog({
+      title: '추가 작업 견적을 고객에게 보낼까요?',
+      message: `${issue.siteName || ''} · ${issue.quoteNo || '추가 견적'} · ${fmtWon(issue.quoteAmount)}\n고객 방 ① 견적에 바로 보이고, 고객이 승인하면 특이사항이 「작업 예정」으로 바뀝니다.`,
+      confirmLabel: '고객에게 발송',
+    });
+    if (!ok) return;
+    setBusy(button, true, '발송 중…');
+    try {
+      await store.sendIssueQuote(siteId, issueId, { by: state.session ? state.session.name : '', actor: state.session });
+      await render();
+      toast('추가 작업 견적을 고객에게 보냈습니다. 고객 확인을 기다립니다.', { duration: 7000 });
+    } catch (error) {
+      toast(error.message || '추가 견적을 발송하지 못했습니다.', { tone: 'error' });
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function completeIssueCard(siteId, issueId, button) {
+    const draft = state.issueClose && state.issueClose.id === issueId ? state.issueClose : { kind: 'done', note: '' };
+    const input = $(`[data-issue-close-note="${issueId}"]`, container);
+    const note = input ? String(input.value || '').trim() : String(draft.note || '').trim();
+    if (!note) {
+      toast(draft.kind === 'closed' ? '보류 · 종결 사유를 적어 주세요.' : '처리 내용을 적어 주세요.', { tone: 'error' });
+      if (input) input.focus();
+      return;
+    }
+    setBusy(button, true, '기록 중…');
+    try {
+      await store.completeIssue(siteId, issueId, {
+        status: draft.kind === 'closed' ? 'closed' : 'done',
+        note,
+        by: state.session ? state.session.name : '',
+        actor: state.session,
+      });
+      state.issueClose = null;
+      await render();
+      toast(draft.kind === 'closed' ? '보류 · 종결로 기록했습니다.' : '현장 처리 완료로 기록했습니다.');
+    } catch (error) {
+      toast(error.message || '처리 내용을 저장하지 못했습니다.', { tone: 'error' });
+    } finally {
+      setBusy(button, false);
+    }
   }
 
   async function openApprovalPhoto(reportId, groupKey, startIndex) {
@@ -2110,6 +2388,8 @@ export function createAdminView(container) {  const state = {
     const pendingReports = await store.listReports({ status: 'pending' });
     const returnedReports = await store.listReports({ status: 'returned' });
     const recentSubmitted = await store.listReports({ status: 'submitted', limit: 3 });
+    // 7단계 — 특이사항 · 추가 영업 (미검토 발견 건이 먼저 오도록 정렬되어 옵니다)
+    const issues = await store.listIssues({}, { actor: session });
     // 업장(siteId) 중심 연결 요약 — 견적 · 계약 · 팀장 계약 · 보고 · 이력을 한 번에 읽습니다.
     const links = await store.listSiteLinks().catch(() => ({}));
     // 5단계 — 일정 · 현장 도착/완료 (대표는 전체 업장 · 팀장별 필터)
@@ -2154,6 +2434,8 @@ export function createAdminView(container) {  const state = {
       </section>
 
       ${reportApprovalPanelTemplate({ pending: pendingReports, returned: returnedReports, recent: recentSubmitted })}
+
+      ${issueSalesPanelTemplate({ issues })}
 
       ${schedulePanelTemplate(schedule, monthSchedule)}
 
@@ -2820,6 +3102,11 @@ export function createAdminView(container) {  const state = {
   }
 
   function onInput(event) {
+    const issueNote = event.target.closest('[data-issue-close-note]');
+    if (issueNote && state.issueClose) {
+      state.issueClose.note = issueNote.value;
+      return;
+    }
     const reviseInput = event.target.closest('[data-revise-input]');
     if (reviseInput) {
       state.revisionDraft = reviseInput.value;
@@ -3309,6 +3596,60 @@ export function createAdminView(container) {  const state = {
     const reportDetail = event.target.closest('[data-report-detail]');
     if (reportDetail) {
       await openReportSheet(reportDetail.dataset.reportDetail, { actor: state.session });
+      return;
+    }
+
+    /* ---------------- 7단계 — 특이사항 · 추가 영업 ---------------- */
+    const issuePhoto = event.target.closest('[data-issue-photo]');
+    if (issuePhoto) {
+      await openIssuePhoto(issuePhoto.dataset.issuePhoto, issuePhoto.dataset.issueSite, issuePhoto.dataset.issuePhotoIndex);
+      return;
+    }
+
+    const issueDraft = event.target.closest('[data-issue-draft]');
+    if (issueDraft) {
+      await createIssueDraft(issueDraft.dataset.issueSite, issueDraft.dataset.issueDraft, issueDraft);
+      return;
+    }
+
+    const issueAmountSave = event.target.closest('[data-issue-amount-save]');
+    if (issueAmountSave) {
+      const card = issueAmountSave.closest('[data-issue-card]');
+      await saveIssueAmount(card ? card.dataset.issueSite : '', issueAmountSave.dataset.issueAmountSave, issueAmountSave);
+      return;
+    }
+
+    const issueQuoteSend = event.target.closest('[data-issue-quote-send]');
+    if (issueQuoteSend) {
+      const card = issueQuoteSend.closest('[data-issue-card]');
+      await sendIssueQuoteToCustomer(card ? card.dataset.issueSite : '', issueQuoteSend.dataset.issueQuoteSend, issueQuoteSend);
+      return;
+    }
+
+    const issueComplete = event.target.closest('[data-issue-complete]');
+    if (issueComplete) {
+      state.issueClose = {
+        id: issueComplete.dataset.issueComplete,
+        siteId: issueComplete.dataset.issueSite,
+        kind: issueComplete.dataset.issueKind === 'closed' ? 'closed' : 'done',
+        note: '',
+      };
+      await render();
+      const input = $(`[data-issue-close-note="${state.issueClose.id}"]`, container);
+      if (input) input.focus();
+      return;
+    }
+
+    const issueCloseCancel = event.target.closest('[data-issue-close-cancel]');
+    if (issueCloseCancel) {
+      state.issueClose = null;
+      await render();
+      return;
+    }
+
+    const issueCloseSave = event.target.closest('[data-issue-close-save]');
+    if (issueCloseSave) {
+      await completeIssueCard(issueCloseSave.dataset.issueSite, issueCloseSave.dataset.issueCloseSave, issueCloseSave);
       return;
     }
 
