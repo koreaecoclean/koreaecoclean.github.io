@@ -11,7 +11,7 @@
  * 역할(role)을 서버에서 검증하세요. README 7장 참고.
  */
 
-import { store, normalizeCode, normalizePhone, prettyPhone } from './store.js';
+import { store, normalizeCode, normalizePhone } from './store.js';
 import { DEMO_ACCOUNTS } from './seed.js';
 import { emailForPhone } from './supabase-client.js';
 
@@ -464,43 +464,8 @@ export function demoAccounts() {
   }));
 }
 
-/** Customers already registered on this device (phone number alone opens the room). */
-export async function demoRegisteredCustomers() {
-  const accounts = await store.listAccounts({ role: 'customer' });
-  const sites = await store.listSites();
-  const siteById = new Map(sites.map((site) => [site.id, site]));
-  return accounts.map((account) => {
-    const site = siteById.get(account.siteId) || null;
-    return {
-      name: account.name,
-      title: account.title || '',
-      phone: account.phonePretty || prettyPhone(account.phone),
-      siteId: account.siteId || '',
-      siteName: site ? site.name : '',
-      siteCode: site ? site.code : '',
-    };
-  });
-}
-
 /*
  * v2.8.2 — 다른 직원의 이름·전화번호·초대코드를 나열하는 데모 목록은 없앴습니다.
  *  초대코드는 대표가 직원에게 직접 전달합니다.
  */
 
-/** Room codes seeded for the demo (shown next to each demo customer account). */
-export async function demoRoomCodes() {
-  const codes = await store.listRoomCodes();
-  const sites = await store.listSites();
-  const bySite = new Map();
-  for (const code of codes) {
-    if (code.usedAt) continue;
-    if (!bySite.has(code.siteId)) bySite.set(code.siteId, []);
-    bySite.get(code.siteId).push(code.code);
-  }
-  return sites.map((site) => ({
-    siteId: site.id,
-    siteName: site.name,
-    siteCode: site.code,
-    codes: bySite.get(site.id) || [],
-  }));
-}
