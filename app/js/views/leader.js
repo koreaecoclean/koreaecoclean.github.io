@@ -27,7 +27,7 @@ import {
 } from '../ui.js';
 import { store, StoreError, countReportPhotos, STAFF_STATUS, reportStatus, reportStatusKey, reportNoOf, canUseSupply, MAX_BASELINE_PHOTOS, ASSIGN_STATUS, ASSIGN_REJECT_REASONS, HANDOVER_ACCESS_TYPES, SCHEDULE_STATUS, SCHEDULE_DAYS, SCHEDULE_OVERRIDE_TYPES, GPS_EXCEPTION_REASONS, scheduleDayText, scheduleTimeText, durationText, monthGrid, entriesByDate, CALENDAR_WEEKDAYS, ISSUE_STATUS, issueTitleOf, issueStatusKey, PAYOUT_STATUS, billingMonthLabel } from '../store.js';
 import { CATEGORY_META, PHOTO_GROUPS, STAFF_TYPES } from '../seed.js';
-import { getSession, loginStaff, loginStaffInvite, logout, demoAccounts, getWorkMode, setWorkMode } from '../auth.js';
+import { getSession, loginStaff, loginStaffInvite, logout, getWorkMode, setWorkMode } from '../auth.js';
 import { preparePhoto, prepareSamplePhoto, makePlaceholderPhoto, dataUrlBytes } from '../photos.js';
 import { openStaffContractSheet } from './quote-contract.js';
 import { openReportSheet } from './report-sheet.js';
@@ -513,9 +513,10 @@ export function createLeaderView(container) {
   }
 
   async function startRevision(reportId) {
-    const report = await store.getReport(reportId);
+    const report = await store.getReport(reportId, { actor: state.session }).catch(() => null);
     if (!report || !state.session) return;
-    const site = (await store.getSiteFor(state.session, report.siteId)) || (await store.getSite(report.siteId));
+    // v2.16.2 — 배정 업장 밖 보고로는 열리지 않습니다(대신 채우지 않음).
+    const site = await store.getSiteFor(state.session, report.siteId);
     if (!site) {
       toast('현장 정보를 찾을 수 없습니다.', { tone: 'error' });
       return;
@@ -565,29 +566,8 @@ export function createLeaderView(container) {
   /* ---------------- login ---------------- */
 
   function demoPanelTemplate() {
-    const rows = demoAccounts().filter((row) => row.role !== 'customer');
-    // 실제 직원 계정은 공개 데모 목록에 올리지 않습니다 — 보여 줄 데모가 없으면 상자를 만들지 않습니다.
-    if (!rows.length) return '';
-    return `
-      <details class="demo-panel">
-        <summary>데모 계정 보기 (테스트용)</summary>
-        <div class="demo-panel__body">
-          <p class="tiny muted">팀장은 전화번호 · 비밀번호 · 팀장 고유코드가 모두 필요합니다.</p>
-          ${rows
-            .map(
-              (row) => `
-              <div class="demo-row">
-                <div>
-                  <strong>${esc(row.roleLabel)} · ${esc(row.name)} ${esc(row.title || '')}</strong>
-                  <span>${esc(row.phone)} / ${esc(row.password)} / 코드 ${esc(row.leaderCode)}</span>
-                </div>
-                <button class="link-btn" type="button" data-fill-staff="${esc(row.phone)}|${esc(row.password)}|${esc(row.leaderCode)}">입력</button>
-              </div>`,
-            )
-            .join('')}
-        </div>
-      </details>
-    `;
+    // v2.16.2 — 로그인 화면에 다른 직원·고객의 번호 · 비밀번호 · 코드를 나열하지 않습니다.
+    return '';
   }
 
   function gateTemplate() {

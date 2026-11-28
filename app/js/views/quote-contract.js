@@ -1536,7 +1536,11 @@ export async function openStaffContractSheet(staffId, options = {}) {
     toast('직원 계약서를 찾을 수 없습니다.', { tone: 'error' });
     return;
   }
-  const sites = await store.listSites();
+  // 별첨에 적을 업장 이름은 이 계약서의 siteIds 만 확인하면 됩니다(범위 밖 업장은 읽지 않음).
+  const annexIds = Array.from(new Set(contract.siteIds || []));
+  const sites = (
+    await Promise.all(annexIds.map((id) => store.getSite(id, { raw: true }).catch(() => null)))
+  ).filter(Boolean);
   // 별첨은 계약서의 siteIds + 팀장 계정에 배정된 업장을 합쳐 그립니다.
   const annexSiteIds = new Set(contract.siteIds || []);
   if (contract.accountId) {

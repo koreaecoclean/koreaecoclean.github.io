@@ -30,7 +30,7 @@ async function signInWithPasswordServer(phone, password) {
   const auth = syncAuth();
   if (!auth) return null;
   const email = emailForPhone(phone);
-  const known = await store.findAccountByPhone(phone).catch(() => null);
+  const known = await store.findAccountByPhone(phone, null, { unscoped: true }).catch(() => null);
   try {
     return await auth.signIn(email, password);
   } catch (error) {
@@ -160,10 +160,17 @@ async function requireActive(account, role) {
 
 export async function getSession() {
   const stored = await store.getSetting(SESSION_KEY, null);
-  if (!stored || !stored.accountId) return null;
-  const account = await store.getAccount(stored.accountId);
-  if (!account || account.active === false) return null;
-  return {
+  if (!stored || !stored.accountId) {
+    await applyScope(null);
+    return null;
+  }
+  // 세션에 적힌 본인 계정은 열람 범위와 상관없이 읽습니다(역할이 바뀌는 순간에도).
+  const account = await store.getAccount(stored.accountId, { raw: true });
+  if (!account || account.active === false) {
+    await applyScope(null);
+    return null;
+  }
+  const session = {
     ...stored,
     role: account.role,
     name: account.name,
@@ -178,17 +185,34 @@ export async function getSession() {
     staffRole: account.staffRole || (account.canManageStaff ? 'manager' : 'leader'),
     account,
   };
+  await applyScope(session);
+  return session;
+}
+
+/**
+ * v2.16.2 — 로그인한 역할의 열람 범위를 저장소에 알립니다.
+ * 고객 · 관리팀장은 지정 업장 밖 자료가 기기에서도 지워집니다.
+ */
+async function applyScope(session) {
+  if (!store || typeof store.setSessionScope !== 'function') return;
+  try {
+    await store.setSessionScope(session);
+  } catch (error) {
+    console.warn('[auth] 열람 범위를 적용하지 못했습니다', error);
+  }
 }
 
 async function startSession(account) {
   const session = publicSession(account);
   await store.setSetting(SESSION_KEY, session);
+  await applyScope(session);
   emitSessionChanged();
   return session;
 }
 
 export async function logout() {
   await store.removeSetting(SESSION_KEY);
+  await applyScope(null);
   setWorkMode('admin');
   const auth = syncAuth();
   if (auth && auth.hasSession()) {
@@ -251,7 +275,7 @@ export async function loginCustomer({ phone, code = '', name = '', title = '', e
     return enterRoomThroughServer({ phone: digits, code: String(code || '').trim(), name, title, email });
   }
 
-  const account = await store.findAccountByPhone(digits);
+  const account = await store.findAccountByPhone(digits, null, { unscoped: true });
   if (account && account.role !== 'customer') {
     throw new AuthError('staff-phone', '팀장·대표 번호로는 고객 방에 입장할 수 없습니다. 담당자에게 문의해 주세요.');
   }
@@ -303,7 +327,7 @@ export async function loginStaff({ phone, password, leaderCode }) {
   if (syncAuth()) {
     await signInWithPasswordServer(digits, String(password).trim());
     await store.syncAfterLogin();
-    const account = await store.findAccountByPhone(digits);
+    const account = await store.findAccountByPhone(digits, null, { unscoped: true });
     if (!account || account.role === 'customer') {
       await syncAuth().signOut();
       throw new AuthError('no-account', '등록된 팀장 계정이 아닙니다.');
@@ -315,7 +339,7 @@ export async function loginStaff({ phone, password, leaderCode }) {
     return startSession(account);
   }
 
-  const account = await store.findAccountByPhone(digits);
+  const account = await store.findAccountByPhone(digits, null, { unscoped: true });
   if (!account || account.role === 'customer') {
     throw new AuthError('no-account', '등록된 팀장 계정이 아닙니다.');
   }
@@ -337,7 +361,7 @@ export async function loginAdmin({ phone, password, leaderCode = '' }) {
   if (syncAuth()) {
     await signInWithPasswordServer(digits, String(password || '').trim());
     await store.syncAfterLogin();
-    const account = await store.findAccountByPhone(digits);
+    const account = await store.findAccountByPhone(digits, null, { unscoped: true });
     const isCeo = account && account.role === 'admin';
     const isManager = account && account.role === 'leader' && account.canManageStaff;
     if (!isCeo && !isManager) {
@@ -356,7 +380,7 @@ export async function loginAdmin({ phone, password, leaderCode = '' }) {
     return startSession(account);
   }
 
-  const account = await store.findAccountByPhone(digits);
+  const account = await store.findAccountByPhone(digits, null, { unscoped: true });
   const isCeo = account && account.role === 'admin';
   const isManager = account && account.role === 'leader' && account.canManageStaff;
   if (!isCeo && !isManager) {
@@ -391,7 +415,7 @@ export async function loginStaffInvite({ phone, code = '' }) {
   }
 
   if (!normalizeCode(code)) {
-    const account = await store.findAccountByPhone(digits);
+    const account = await store.findAccountByPhone(digits, null, { unscoped: true });
     if (account && account.role !== 'customer' && account.staffAccess) {
       await requireActive(account);
       return startSession(account);

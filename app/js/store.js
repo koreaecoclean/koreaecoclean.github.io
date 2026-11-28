@@ -4073,12 +4073,66 @@ export class MemoryAdapter {
 }
 
 /* ------------------------------------------------------------------ */
+/* 열람 범위 어댑터 (v2.16.2)                                          */
+/*  저장소 읽기를 한 곳에서 걸러, 고객 · 관리팀장이 지정 업장 밖 자료를  */
+/*  어떤 화면 · 함수로도 꺼내지 못하게 합니다. (쓰기는 그대로 통과)       */
+/* ------------------------------------------------------------------ */
+
+export class SessionScopeAdapter {
+  constructor(base, store) {
+    this.base = base;
+    this.store = store;
+    this.name = base && base.name ? base.name : 'scoped';
+  }
+
+  init() {
+    return this.base.init();
+  }
+
+  async getAll(table) {
+    const rows = (await this.base.getAll(table)) || [];
+    if (!this.store || !this.store.sessionScope) return rows;
+    return rows.filter((row) => this.store._rowInScope(table, row));
+  }
+
+  async get(table, key) {
+    const row = await this.base.get(table, key);
+    if (!row) return row;
+    if (!this.store || !this.store.sessionScope) return row;
+    return this.store._rowInScope(table, row) ? row : undefined;
+  }
+
+  put(table, value) {
+    return this.base.put(table, value);
+  }
+
+  remove(table, key) {
+    return this.base.remove(table, key);
+  }
+
+  clear(table) {
+    return this.base.clear(table);
+  }
+
+  close() {
+    return this.base.close();
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Store facade                                                        */
 /* ------------------------------------------------------------------ */
 
 export class Store {
   constructor(adapter) {
     this.adapter = adapter;
+    /** 기기 저장소 원본 — 동기화 · 열람 범위를 감싸기 전. */
+    this._baseAdapter = adapter;
+    /** 열람 범위만 적용한 어댑터(동기화 감싸기 전). */
+    this._localAdapter = adapter;
+    /** v2.16.2 — 로그인한 사람의 열람 범위. 고객·관리팀장은 자기 지정 업장만. */
+    this.sessionScope = null;
+    this._scopeKey = '';
     this.adapterName =
       adapter instanceof IndexedDbAdapter ? 'indexeddb' : adapter instanceof LocalStorageAdapter ? 'localstorage' : 'memory';
     this._ready = null;
@@ -4098,23 +4152,160 @@ export class Store {
   }
 
   async _init() {
-    await this.adapter.init();
+    this._baseAdapter = this.adapter;
+    await this._baseAdapter.init();
+    // ⓪ 이 기기에 남은 로그인(역할)을 먼저 읽어 열람 범위를 정합니다 (v2.16.2).
+    //    열람 범위가 정해진 뒤에 서버·시드를 다루어야 다른 업체 자료가 기기에 남지 않습니다.
+    await this._restoreSessionScope();
+    const local = this._localAdapter || this._baseAdapter;
     // ① 서버를 기준으로 기기 캐시를 맞춥니다(서버가 비었으면 이 기기 데이터를 올립니다).
     if (this.remote) {
       try {
-        this.rawAdapter = this.adapter;
-        await this.remote.hydrate(this.adapter);
+        this.rawAdapter = this._baseAdapter;
+        await this.remote.hydrate(local);
         // ② 이후 모든 쓰기가 서버에도 반영되도록 어댑터를 감쌉니다.
-        this.adapter = this.remote.decorate(this.adapter);
+        this.adapter = this.remote.decorate(local);
       } catch (error) {
         console.warn('[store] 서버 동기화를 준비하지 못했습니다', error);
       }
+    } else {
+      this.adapter = local;
     }
     await this._seedIfEmpty();
     await this._migrate();
+    // 기기에 남아 있던 다른 업체 자료를 지웁니다(고객 · 관리팀장 계정).
+    await this.pruneLocalScope();
     // ③ 5초 주기 · 화면 복귀 · 네트워크 복구 때 서버 변경을 받아 옵니다.
     if (this.remote) this.remote.start(this);
     return this;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 열람 범위 (v2.16.2)                                                 */
+  /*  고객 · 관리팀장(부관리자 포함)은 **지정된 업장** 자료만 조회됩니다.  */
+  /*  화면이 어떤 함수를 부르든 저장소 단계에서 걸러, 타 업체 이름·사진 · */
+  /*  견적 · 계약 · 직원 정보가 한 행도 새지 않게 합니다.                 */
+  /* ------------------------------------------------------------------ */
+
+  /** 기기에 남은 로그인 세션에서 열람 범위를 복원합니다. */
+  async _restoreSessionScope() {
+    try {
+      const row = await this._baseAdapter.get('meta', 'session');
+      const session = row && row.value;
+      if (session && session.accountId && session.role) this._setScope(session);
+    } catch (error) {
+      /* 세션을 읽지 못하면 범위 없이 시작합니다(로그인 화면). */
+    }
+  }
+
+  /** 열람 범위를 정합니다. 범위가 그대로면 어댑터를 다시 감싸지 않습니다. */
+  _setScope(session) {
+    const usable = session && session.accountId && session.role;
+    const key = usable
+      ? [session.role, session.accountId, session.siteId || '', (session.assignedSiteIds || []).join(',')].join('|')
+      : '';
+    if (key === this._scopeKey) return false;
+    this._scopeKey = key;
+    this.sessionScope = key
+      ? {
+          role: String(session.role),
+          accountId: String(session.accountId),
+          name: String(session.name || ''),
+          phone: String(session.phone || ''),
+          siteId: String(session.siteId || ''),
+          quoteId: String(session.quoteId || ''),
+          assignedSiteIds: (session.assignedSiteIds || []).map(String),
+        }
+      : null;
+    const restricted = !!this.sessionScope && this.sessionScope.role !== 'admin';
+    this._localAdapter = restricted ? new SessionScopeAdapter(this._baseAdapter, this) : this._baseAdapter;
+    this.adapter = this.remote ? this.remote.decorate(this._localAdapter) : this._localAdapter;
+    return true;
+  }
+
+  /**
+   * 로그인 · 로그아웃 때 auth.js 가 부릅니다.
+   *  · 고객 · 관리팀장이면 그 업장 밖 자료를 기기에서도 지웁니다.
+   */
+  async setSessionScope(session) {
+    const changed = this._setScope(session);
+    if (!changed) return false;
+    const removed = await this.pruneLocalScope();
+    this._notify();
+    return removed;
+  }
+
+  /** 지금 범위에서 볼 수 있는 업장 id (대표는 제한 없음 → null). */
+  _scopeSiteIds() {
+    const scope = this.sessionScope;
+    if (!scope || scope.role === 'admin') return null;
+    if (scope.role === 'customer') return scope.siteId ? [scope.siteId] : [];
+    return scope.assignedSiteIds.slice();
+  }
+
+  /** 이 행이 지금 로그인한 사람의 범위 안인가. */
+  _rowInScope(table, row) {
+    const scope = this.sessionScope;
+    if (!scope || scope.role === 'admin' || !row) return true;
+    const siteIds = this._scopeSiteIds() || [];
+    const has = (value) => value !== undefined && value !== null && value !== '' && siteIds.indexOf(String(value)) >= 0;
+    const me = scope.accountId;
+
+    if (table === 'sites') return has(row.id);
+    if (table === 'reports') return has(row.siteId);
+    if (table === 'accounts') return row.id === me;
+    if (table === 'meta') return true;
+
+    if (scope.role === 'customer') {
+      if (table === 'quotes') return has(row.siteId) || (!!scope.quoteId && row.id === scope.quoteId);
+      if (table === 'contracts') return has(row.siteId) || (!!scope.quoteId && row.quoteId === scope.quoteId);
+      if (table === 'grants') return row.accountId === me && has(row.siteId);
+      if (table === 'roomCodes') return has(row.siteId);
+      if (table === 'supplyCatalog') return true;
+      if (table === 'supplyOrders') return row.requesterAccountId === me || row.toAccountId === me;
+      return false;
+    }
+
+    // 관리팀장 · 부관리자(본부장)
+    if (table === 'staffContracts') return row.accountId === me || (!!row.phone && normalizePhone(row.phone) === normalizePhone(scope.phone));
+    if (table === 'grants') return row.accountId === me;
+    if (table === 'supplyCatalog') return true;
+    if (table === 'supplyOrders') return row.requesterAccountId === me || row.toAccountId === me;
+    // 견적 · 고객 계약 · 직원 평가 · 초대코드 · 상담은 지정 업장 직원에게도 내려가지 않습니다.
+    return false;
+  }
+
+  /** 열람 범위 밖 자료를 기기 저장소에서 지웁니다. (대표 · 로그아웃 상태는 그대로) */
+  async pruneLocalScope() {
+    const scope = this.sessionScope;
+    if (!scope || scope.role === 'admin' || !this._baseAdapter) return 0;
+    // 서버와 연결된 기기에서만 실제로 지웁니다. (예시 데이터로 도는 기기 저장 모드에서는
+    //  역할을 바꿔 보는 데모·시험이 깨지지 않도록 조회 단계의 범위 제한만 적용합니다.)
+    if (!this.remote || !this.remote.authorized) return 0;
+    let removed = 0;
+    for (const table of TABLES) {
+      if (table === 'meta') continue;
+      const rows = (await this._baseAdapter.getAll(table)) || [];
+      for (const row of rows) {
+        if (this._rowInScope(table, row)) continue;
+        await this._baseAdapter.remove(table, row.id ?? row.key);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
+  /** 시드(예시 업체 · 계정)를 넣어도 되는 상태인가 — 고객 · 관리팀장 기기에는 넣지 않습니다. */
+  _seedAllowed() {
+    return !this.sessionScope || this.sessionScope.role === 'admin';
+  }
+
+  /**
+   * 1회용 코드 입장은 아직 그 사람의 범위 밖입니다 — 코드가 업장을 정하므로
+   * 기기 저장소 원본에서 코드를 확인합니다(화면에는 확인된 1건만 넘어감).
+   */
+  _entryReader() {
+    return this.sessionScope && this.sessionScope.role !== 'admin' ? this._baseAdapter || this.adapter : this.adapter;
   }
 
   /**
@@ -4124,7 +4315,7 @@ export class Store {
   async syncAfterLogin() {
     if (!this.remote) return { mode: 'local', rows: 0 };
     try {
-      const result = await this.remote.resume(this.rawAdapter || this.adapter);
+      const result = await this.remote.resume(this._localAdapter || this.rawAdapter || this.adapter);
       this.syncStatus = this.remote.status;
       return result;
     } catch (error) {
@@ -4174,6 +4365,8 @@ export class Store {
 
   /** Keep data written by older versions readable (photo groups, accounts). */
   async _migrate() {
+    // 고객 · 관리팀장 기기에는 예시 업체 · 다른 직원 자료를 다시 넣지 않습니다 (v2.16.2).
+    if (!this._seedAllowed()) return;
     const reports = await this.adapter.getAll('reports');
     for (const report of reports) {
       if (Array.isArray(report.photos)) {
@@ -4750,6 +4943,7 @@ export class Store {
   async _seedIfEmpty() {
     // 로그인 전에는 시드(예시 데이터)를 만들지 않습니다 — 서버 자료를 덮어쓰지 않게.
     if (this.remote && !this.remote.authorized) return false;
+    if (!this._seedAllowed()) return false;
     const sites = await this.adapter.getAll('sites');
     if (sites.length) return false;
     await this._writeSeed();
@@ -4784,7 +4978,7 @@ export class Store {
   async recordHistory(table, id, { actor = '', action = '', note = '', changes = [] } = {}) {
     const key = toText(id);
     if (!key) return null;
-    const row = await this.adapter.get(table, key);
+    const row = await (this._baseAdapter || this.adapter).get(table, key);
     if (!row) return null;
     const entry = makeHistoryEntry({ actor, action, note, changes });
     const next = { ...row, history: withHistory(row.history, entry) };
@@ -4940,8 +5134,14 @@ export class Store {
     return sites.map(normalizeSite).sort((a, b) => String(a.code).localeCompare(String(b.code)));
   }
 
-  async getSite(id) {
-    return normalizeSite(await this.adapter.get('sites', id));
+  /**
+   * 업장 한 곳. 기본은 지금 로그인한 사람의 열람 범위 안에서만 돌러줍니다.
+   * `{ raw: true }` 는 계약 체결처럼 방금 생긴 자기 업장을 다루는 내부 흐름에서만 씁니다.
+   */
+  async getSite(id, { raw = false } = {}) {
+    const reader = raw && this._baseAdapter ? this._baseAdapter : this.adapter;
+    const row = await reader.get('sites', id);
+    return row ? normalizeSite(row) : null;
   }
 
   /**
@@ -6191,7 +6391,8 @@ export class Store {
   async _findAssignment(assignmentId) {
     const id = toText(assignmentId);
     if (!id) return null;
-    const sites = (await this.adapter.getAll('sites')).map(normalizeSite);
+    // 수락·거절은 본인 계정(leaderId) 확인 뒤에만 진행합니다.
+    const sites = ((await (this._baseAdapter || this.adapter).getAll('sites')) || []).map(normalizeSite);
     for (const site of sites) {
       const assignment = site.assignments.find((row) => row.id === id);
       if (assignment) return { site, assignment };
@@ -6426,7 +6627,9 @@ export class Store {
     if (!session || !isStaffActor(session)) return [];
     const accountId = toText(session.accountId);
     if (!accountId) return [];
-    const sites = await this.listSites();
+    // 배정 요청은 '아직 내 업장이 아닌' 현장에 있습니다 — 요청 1건의 제한 정보만 꺼내려고
+    // 기기 저장소 원본을 읽습니다(아래에서 leaderId === 본인 인 요청만 골라 넘깁니다).
+    const sites = ((await (this._baseAdapter || this.adapter).getAll('sites')) || []).map(normalizeSite);
     const out = [];
     for (const site of sites) {
       for (const row of site.assignments) {
@@ -7062,7 +7265,7 @@ export class Store {
   /** 방문 기록 저장 — 비어 있는 칸만 바꾸고, 바뀐 칸은 업장 이력에 남깁니다. */
   async updateSiteSurvey(siteId, patch = {}, { actor = '앱' } = {}) {
     if (typeof actor === 'object' && actor) denyStaff(actor, '현장 방문 · 견적 기록');
-    const site = await this.getSite(siteId);
+    const site = await this.getSite(siteId, { raw: true });
     if (!site) throw new StoreError('no-site', '현장을 찾을 수 없습니다.');
     const before = normalizeSurvey(site.survey);
     const now = new Date().toISOString();
@@ -7089,7 +7292,7 @@ export class Store {
     };
     await this.adapter.put('sites', next);
     this._notify();
-    return normalizeSite(await this.getSite(siteId));
+    return normalizeSite(await this.getSite(siteId, { raw: true }));
   }
 
   /**
@@ -7172,7 +7375,7 @@ export class Store {
   }
 
   async listQuotes({ siteId = null, status = null } = {}, { actor = null } = {}) {
-    denyStaff(actor, '견적서');
+    denyStaff(actor || this.sessionScope, '견적서');
     let rows = (await this.adapter.getAll('quotes')).map(normalizeQuote);
     if (isCustomerActor(actor)) {
       // 3단계 — 고객은 자기 견적만 봅니다(다른 고객·다른 업장 견적은 목록에도 없음).
@@ -7184,7 +7387,7 @@ export class Store {
   }
 
   async getQuote(id, { actor = null } = {}) {
-    denyStaff(actor, '견적서');
+    denyStaff(actor || this.sessionScope, '견적서');
     const row = await this.adapter.get('quotes', id);
     if (!row) return null;
     const quote = normalizeQuote(row);
@@ -7563,7 +7766,7 @@ export class Store {
   async findQuoteByInviteCode(code) {
     const needle = normalizeCode(code);
     if (!needle) return null;
-    const rows = (await this.adapter.getAll('quotes')).map(normalizeQuote);
+    const rows = (await this._entryReader().getAll('quotes')).map(normalizeQuote);
     return rows.find((quote) => normalizeCode(quote.inviteCode) === needle) || null;
   }
 
@@ -7589,7 +7792,7 @@ export class Store {
       throw new StoreError('invite-contracted', '이미 계약이 체결된 견적입니다. 등록된 번호로 입장해 주세요.');
     }
 
-    const accounts = await this.adapter.getAll('accounts');
+    const accounts = await this._entryReader().getAll('accounts');
     let account = accounts.find((row) => row.role === 'customer' && normalizePhone(row.phone) === digits) || null;
     if (account && account.active === false) {
       throw new StoreError('inactive', '사용이 중지된 번호입니다. 대표에게 문의해 주세요.');
@@ -7731,7 +7934,7 @@ export class Store {
   /* ---------------- contracts (도급 계약서 · 대표 전용) ---------------- */
 
   async listAgreements({ siteId = null, status = null } = {}, { actor = null } = {}) {
-    denyStaff(actor, '고객 계약서');
+    denyStaff(actor || this.sessionScope, '고객 계약서');
     let rows = (await this.adapter.getAll('contracts')).map(normalizeAgreement);
     if (isCustomerActor(actor)) {
       // 3단계 — 고객은 자기 계약서만 봅니다.
@@ -7743,7 +7946,7 @@ export class Store {
   }
 
   async getAgreement(id, { actor = null } = {}) {
-    denyStaff(actor, '고객 계약서');
+    denyStaff(actor || this.sessionScope, '고객 계약서');
     const row = await this.adapter.get('contracts', id);
     if (!row) return null;
     const agreement = normalizeAgreement(row);
@@ -7979,7 +8182,7 @@ export class Store {
       throw new StoreError('contract-not-sent', '대표가 계약서를 발송하면 서명할 수 있습니다.');
     }
     if (agreement.status === 'signed' && agreement.siteId) {
-      return { agreement, site: await this.getSite(agreement.siteId) };
+      return { agreement, site: await this.getSite(agreement.siteId, { raw: true }) };
     }
     if (agreement.status === 'renewed' || agreement.status === 'terminated') {
       throw new StoreError('contract-closed', '갱신·종료된 계약서에는 다시 서명할 수 없습니다.');
@@ -8015,7 +8218,7 @@ export class Store {
       toText(parsePyeong(quote ? quote.area : '')) ||
       '';
 
-    let site = agreement.siteId ? await this.getSite(agreement.siteId) : null;
+    let site = agreement.siteId ? await this.getSite(agreement.siteId, { raw: true }) : null;
     if (!site) {
       site = (await this.listSites()).find((row) => row.name === client.businessName) || null;
     }
@@ -8101,7 +8304,7 @@ export class Store {
 
     // 견적에 남긴 현장 방문 기록을 업장으로 옮깁니다 — 계약 뒤에도 업장 관리에서 그대로 봅니다.
     if (quote && quote.survey && quote.survey.visitDate) {
-      const current = await this.getSite(site.id);
+      const current = await this.getSite(site.id, { raw: true });
       if (!current.survey || !current.survey.visitDate) {
         site = await this.updateSiteSurvey(site.id, quote.survey, { actor: '고객 계약' });
       }
@@ -8109,7 +8312,7 @@ export class Store {
 
     // 3단계 — 업장 관리방(기획서 9장)을 계약과 함께 엽니다.
     {
-      const current = await this.getSite(site.id);
+      const current = await this.getSite(site.id, { raw: true });
       const currentRoom = normalizeRoom(current.room);
       const nextRoom = normalizeRoom({
         ...currentRoom,
@@ -8129,13 +8332,13 @@ export class Store {
         }
       }
       await this.adapter.put('sites', { ...current, ...patch });
-      site = normalizeSite(await this.getSite(site.id));
+      site = normalizeSite(await this.getSite(site.id, { raw: true }));
       await this.recordHistory('sites', site.id, {
         actor: '고객',
         action: '고객 계약 체결 · 업장 관리방 생성',
         note: `${agreement.no} · ${client.businessName} · 월 ${agreement.amount.toLocaleString('ko-KR')}원 · ${frequency}${pyeong ? ` · ${pyeong}평` : ''}`,
       });
-      site = await this.getSite(site.id);
+      site = await this.getSite(site.id, { raw: true });
     }
 
     // 서명 이미지는 Storage 에 올려 여러 기기에서 같은 서명을 보게 합니다(실패 시 dataURL).
@@ -8203,7 +8406,7 @@ export class Store {
 
     // 업장 → 견적 · 계약 연결 (비어 있는 칸만). 팀장 계약 별첨도 이 업장을 포함합니다.
     {
-      const current = await this.getSite(site.id);
+      const current = await this.getSite(site.id, { raw: true });
       const patch = {};
       if (!current.quoteId && quote) patch.quoteId = quote.id;
       if (!current.contractId) patch.contractId = agreement.id;
@@ -8236,6 +8439,11 @@ export class Store {
         updatedAt: now,
       });
       await this.createGrant(account.id, site.id, '');
+      // 서명한 고객의 열람 범위를 새 업장으로 옮깁니다(견적 방 → 우리 현장 방).
+      const scope = this.sessionScope;
+      if (scope && scope.role === 'customer' && scope.accountId === account.id) {
+        this._setScope({ ...scope, siteId: site.id, quoteId: '' });
+      }
     }
 
     this._notify();
@@ -8374,7 +8582,7 @@ export class Store {
     });
     await this.adapter.put('contracts', next);
 
-    let site = agreement.siteId ? await this.getSite(agreement.siteId) : null;
+    let site = agreement.siteId ? await this.getSite(agreement.siteId, { raw: true }) : null;
     if (site) {
       const room = normalizeRoom(site.room);
       if (room.createdAt) {
@@ -8410,16 +8618,19 @@ export class Store {
   }
 
   async getStaffContract(id, { actor = null } = {}) {
-    const row = await this.adapter.get('staffContracts', id);
+    // 본인 확인을 먼저 해야 '다른 직원 계약서'를 분명히 거절할 수 있습니다(v2.16.2).
+    const reader = this._baseAdapter || this.adapter;
+    const row = await reader.get('staffContracts', id);
     if (!row) return null;
     requireOwnStaffRecord(actor, row, '다른 직원의 계약서');
+    if (this.sessionScope && this.sessionScope.role !== 'admin' && !this._rowInScope('staffContracts', row)) return null;
     return normalizeStaffContract(row);
   }
 
   async findStaffContractByInviteCode(code) {
     const needle = normalizeCode(code);
     if (!needle) return null;
-    const rows = (await this.adapter.getAll('staffContracts')).map(normalizeStaffContract);
+    const rows = (await this._entryReader().getAll('staffContracts')).map(normalizeStaffContract);
     return rows.find((row) => normalizeCode(row.inviteCode) === needle) || null;
   }
 
@@ -8632,7 +8843,7 @@ export class Store {
       throw new StoreError('staff-code-draft', '아직 발송 전인 계약서입니다. 대표에게 확인해 주세요.');
     }
 
-    const accounts = await this.adapter.getAll('accounts');
+    const accounts = await this._entryReader().getAll('accounts');
     let account = accounts.find((row) => normalizePhone(row.phone) === digits) || null;
     if (account && account.role === 'customer') {
       throw new StoreError('staff-customer', '고객 번호로는 직원관리방에 입장할 수 없습니다.');
@@ -9613,8 +9824,13 @@ export class Store {
   }
 
   async getReport(id, { actor = null } = {}) {
-    const row = await this.adapter.get('reports', id);
+    // 열람 범위를 먼저 확인해 '다른 업장 보고'를 분명히 거절합니다(v2.16.2).
+    const row = await (this._baseAdapter || this.adapter).get('reports', id);
     if (!row) return null;
+    const scopeSiteIds = this._scopeSiteIds();
+    if (scopeSiteIds && scopeSiteIds.indexOf(toText(row.siteId)) < 0) {
+      throw new StoreError('permission-denied', '다른 업장의 청소 보고는 볼 수 없습니다.');
+    }
     if (isCustomerActor(actor)) {
       const mine = await this._customerSiteIds(actor);
       if (mine.indexOf(toText(row.siteId)) < 0) {
@@ -10490,14 +10706,17 @@ export class Store {
     return filtered.sort((a, b) => String(a.name).localeCompare(String(b.name)));
   }
 
-  async getAccount(id) {
-    return this.adapter.get('accounts', id);
+  async getAccount(id, { raw = false } = {}) {
+    const reader = raw && this._baseAdapter ? this._baseAdapter : this.adapter;
+    return reader.get('accounts', id);
   }
 
-  async findAccountByPhone(phone, role = null) {
+  async findAccountByPhone(phone, role = null, { unscoped = false } = {}) {
     const needle = normalizePhone(phone);
     if (!needle) return null;
-    const rows = await this.adapter.getAll('accounts');
+    // 로그인 화면은 아직 그 사람의 범위 밖이므로, 저장소 원본에서 번호로 계정을 찾습니다.
+    const reader = unscoped && this._baseAdapter ? this._baseAdapter : this.adapter;
+    const rows = await reader.getAll('accounts');
     return (
       rows.find((row) => normalizePhone(row.phone) === needle && (!role || row.role === role)) || null
     );
@@ -10752,7 +10971,7 @@ export class Store {
     const needle = normalizeCode(rawCode);
     if (!needle) throw new StoreError('code-empty', '청소코드를 입력해 주세요.');
 
-    const rows = await this.adapter.getAll('roomCodes');
+    const rows = await this._entryReader().getAll('roomCodes');
     const found = rows.find((row) => normalizeCode(row.code) === needle);
     if (!found) {
       throw new StoreError('code-not-found', '등록되지 않은 청소코드입니다. 코드를 다시 확인해 주세요.');
@@ -10782,7 +11001,8 @@ export class Store {
     const needle = normalizeCode(code);
     if (!needle) throw new StoreError('code-required', '1회용 코드를 입력해 주세요.');
 
-    const rows = await this.adapter.getAll('roomCodes');
+    const reader = this._entryReader();
+    const rows = await reader.getAll('roomCodes');
     const found = rows.find((row) => normalizeCode(row.code) === needle);
     if (!found) {
       throw new StoreError('code-not-found', '등록되지 않은 청소코드입니다. 코드를 다시 확인해 주세요.');
@@ -10793,10 +11013,11 @@ export class Store {
         '이미 사용된 코드입니다. 추가 인원은 관리자에게 새 1회용 코드를 발급받아 주세요.',
       );
     }
-    const site = await this.getSite(found.siteId);
+    const siteRow = await reader.get('sites', found.siteId);
+    const site = siteRow ? normalizeSite(siteRow) : null;
     if (!site) throw new StoreError('no-site', '코드에 연결된 현장을 찾을 수 없습니다.');
 
-    const accounts = await this.adapter.getAll('accounts');
+    const accounts = await reader.getAll('accounts');
     let account = accounts.find((row) => row.role === 'customer' && normalizePhone(row.phone) === digits) || null;
     if (account && account.active === false) {
       throw new StoreError('inactive', '사용이 중지된 번호입니다. 관리자에게 문의해 주세요.');
@@ -10969,8 +11190,9 @@ export class Store {
   /* ---------------- maintenance ---------------- */
 
   async resetDemo({ actor = null } = {}) {
-    // 이 기기의 모든 데이터를 샘플로 되돌립니다 — 직원 화면에서는 막습니다.
+    // 이 기기의 모든 데이터를 샘플로 되돌립니다 — 대표만.
     denyStaff(actor, '데모 데이터 초기화');
+    denyCustomerWrites(actor, '데모 데이터 초기화');
     await this.adapter.clear();
     await this._writeSeed();
     await this._migrateSiteLinks();

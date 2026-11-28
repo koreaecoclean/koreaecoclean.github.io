@@ -920,7 +920,19 @@
 | `js/store.js` | `syncAfterLogin()` · `applyServerEntry()`(서버 확정값을 조용히 기록) · 상담 · 코드 등록 RPC |
 | `js/app.js` | 부팅 시 `prepareAuth()` · 동기화 상태 `로그인 필요` |
 | `index.html` · `js/views/home.js` · `js/views/leader.js` · `js/app.js` | (v2.16.1) 하단 탭 이름 — 청소 확인 → **고객사** · 현장 보고 → **담당팀** · 관리 → **관리자** (화면 제목 · 홈 바로가기 · 안내 문구 포함) |
-| `sw.js` | `CACHE_VERSION = v2.16.1` |
+| `sw.js` | `CACHE_VERSION = v2.16.2` |
+
+### 6-B) 지정 업체 외 타 업체 정보 차단 (v2.16.2 · 2026-11-29)
+
+| 파일 | 변경 |
+| --- | --- |
+| `js/store.js` | **열람 범위 어댑터**(`SessionScopeAdapter`) — 고객 · 관리팀장은 지정 업장 밖 `sites` · `reports` · `quotes` · `contracts` · `staffContracts` · `attitudeLogs` · `inviteCodes` · 다른 계정을 **저장소 단계에서 0건**으로 돌려줍니다. 로그인 시 `pruneLocalScope()` 로 기기에서도 삭제(서버 연결 기기). 열람 범위가 정해진 기기에는 예시 업체 시드를 다시 넣지 않음. 1회용 코드 입장은 코드가 정한 1건만 확인 |
+| `js/auth.js` | `startSession` · `getSession` · `logout` 이 열람 범위를 저장소에 알림(`setSessionScope`) |
+| `js/views/home.js` | 홈 현장 사진을 역할별로 — 비로그인(사진 0장 · 로그인 안내) · 고객/팀장(내 업장 이름 · 최근 보고 · 내 사진) · 대표(전체 안내) |
+| `js/views/customer.js` | 로그인 화면의 ‘등록된 번호 · 미사용 코드 보기’, 코드 입력 화면의 ‘데모용 미사용 코드’ 삭제 · 팀장 미리보기는 `listSitesFor` 만(배정 없으면 ‘현장이 없습니다’) |
+| `js/views/leader.js` | 로그인 화면 ‘데모 계정 보기’ 삭제 · 수정 요청 보고는 배정 업장만 |
+| `js/views/quote-contract.js` | 도급계약서 별첨 이름은 계약서 `siteIds` 만 확인 |
+| 서버(Supabase) | **변경 없음** — v2.16.0 RLS(`kec_can_see` · 마스킹 뷰)가 이미 고객 · 팀장 · 본부장의 지정 업장 밖 행을 0행으로 돌려줍니다. `tests/rls_scope_proof.py`(실제 JWT 32검사)로 재검증 |
 
 ### 7) 검증 (2026-11-29)
 

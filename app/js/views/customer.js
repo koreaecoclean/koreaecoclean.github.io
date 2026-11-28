@@ -32,8 +32,6 @@ import {
   logout,
   hasRoomAccess,
   redeemRoomCode,
-  demoRoomCodes,
-  demoRegisteredCustomers,
 } from '../auth.js';
 import { openQuoteSheet, openAgreementSheet } from './quote-contract.js';
 import { openReportSheet } from './report-sheet.js';
@@ -90,38 +88,7 @@ export function createCustomerView(container) {
 
   /* ---------------- login ---------------- */
 
-  function demoPanelTemplate(registered) {
-    const rows = registered || [];
-    return `
-      <details class="demo-panel">
-        <summary>등록된 번호 · 미사용 코드 보기</summary>
-        <div class="demo-panel__body">
-          <p class="tiny muted">
-            이미 등록된 번호는 전화번호만 입력하면 바로 입장합니다. 새 번호는 아래 미사용 1회용 코드를 함께 입력하세요.
-          </p>
-          ${
-            rows.length
-              ? rows
-                  .map(
-                    (row) => `
-              <div class="demo-row">
-                <div>
-                  <strong>${esc(row.name)} ${esc(row.title || '')}</strong>
-                  <span>${esc(row.phone)} · ${esc(row.siteName)}${row.siteCode ? ` (${esc(row.siteCode)})` : ''}</span>
-                </div>
-                <button class="link-btn" type="button" data-fill-phone="${esc(row.phone)}">번호 입력</button>
-              </div>`,
-                  )
-                  .join('')
-              : '<p class="tiny muted">아직 등록된 번호가 없습니다.</p>'
-          }
-          <div id="demo-code-list"><p class="tiny muted">미사용 코드 불러오는 중…</p></div>
-        </div>
-      </details>
-    `;
-  }
-
-  function loginTemplate(registered) {
+  function loginTemplate() {
     const invite = peekPendingInvite();
     const inviteCode = invite && inviteKind(invite) !== 'staff' ? invite : '';
     return `
@@ -150,14 +117,14 @@ export function createCustomerView(container) {
             <div class="field">
               <label for="cust-code">1회용 청소코드 <span class="tiny muted">(처음 한 번만)</span></label>
               <input class="input" id="cust-code" type="text" inputmode="text" autocomplete="off" spellcheck="false"
-                     placeholder="예: C-7F3K9Q" maxlength="14" value="${esc(inviteCode)}">
+                     placeholder="예: C-XXXXXX" maxlength="14" value="${esc(inviteCode)}">
               <span class="field__hint">등록된 번호는 비워 두고 입장하세요.</span>
             </div>
           </div>
           <div class="field-row">
             <div class="field">
               <label for="cust-name">이름 <span class="tiny muted">(선택)</span></label>
-              <input class="input" id="cust-name" type="text" autocomplete="name" placeholder="예: 정하윤" maxlength="20">
+              <input class="input" id="cust-name" type="text" autocomplete="name" placeholder="예: 홍길동" maxlength="20">
             </div>
             <div class="field">
               <label for="cust-title">직함 <span class="tiny muted">(선택)</span></label>
@@ -172,7 +139,10 @@ export function createCustomerView(container) {
           ${state.loginError ? `<p class="field__error">${esc(state.loginError)}</p>` : ''}
           <button class="btn btn--primary btn--block" type="submit">입장</button>
         </form>
-        ${demoPanelTemplate(registered)}
+        <p class="hint" style="margin-top:12px">
+          등록된 번호 · 미사용 코드 목록은 <strong>개인정보 보호</strong>를 위해 표시하지 않습니다.
+          코드는 대표가 직접 전달합니다.
+        </p>
       </section>
 
       <section class="panel">
@@ -204,7 +174,7 @@ export function createCustomerView(container) {
         </div>
         <form class="code-form" id="room-code-form" style="margin-top:14px" novalidate>
           <input class="input" id="room-code" type="text" inputmode="text" autocomplete="off" spellcheck="false"
-                 placeholder="예: C-7F3K9Q" aria-label="1회용 청소코드" maxlength="12">
+                 placeholder="예: C-XXXXXX" aria-label="1회용 청소코드" maxlength="12">
           <button class="btn btn--primary" type="submit">입장</button>
         </form>
         ${state.codeError ? `<p class="field__error" style="margin-top:8px">${esc(state.codeError)}</p>` : ''}
@@ -216,56 +186,7 @@ export function createCustomerView(container) {
           <button class="btn btn--quiet btn--sm" type="button" data-action="logout">다른 계정으로 로그인</button>
         </div>
       </section>
-      ${demoCodesTemplate()}
     `;
-  }
-
-  function demoCodesTemplate() {
-    return `
-      <details class="demo-panel" id="demo-codes">
-        <summary>데모용 미사용 코드 보기</summary>
-        <div class="demo-panel__body">
-          <p class="tiny muted">아래 코드를 그대로 입력해 입장을 테스트할 수 있습니다.</p>
-          <div id="demo-code-list"><p class="tiny muted">불러오는 중…</p></div>
-        </div>
-      </details>
-    `;
-  }
-
-  async function fillDemoCodes() {
-    const box = $('#demo-code-list', container);
-    if (!box) return;
-    const groups = await demoRoomCodes();
-    const quotes = (await store.listQuotes()).filter((quote) => !quote.inviteUsedAt && quote.status !== 'draft');
-    if (!groups.length && !quotes.length) {
-      box.innerHTML = '<p class="tiny muted">발급된 코드가 없습니다. 관리자 화면에서 발급하세요.</p>';
-      return;
-    }
-    box.innerHTML =
-      quotes
-        .map(
-          (quote) => `
-          <div class="demo-row">
-            <div>
-              <strong>${esc(quote.clientCompany)} · 견적 초대</strong>
-              <span>${esc(quote.no)} · ${esc(quote.inviteCode)}</span>
-            </div>
-            <button class="link-btn" type="button" data-fill-code="${esc(quote.inviteCode)}">입력</button>
-          </div>`,
-        )
-        .join('') +
-      groups
-        .map(
-          (group) => `
-          <div class="demo-row">
-            <div>
-              <strong>${esc(group.siteName)}</strong>
-              <span>${esc(group.siteCode)} · ${group.codes.length ? group.codes.map((code) => esc(code)).join(', ') : '미사용 코드 없음'}</span>
-            </div>
-            ${group.codes.length ? `<button class="link-btn" type="button" data-fill-code="${esc(group.codes[0])}">입력</button>` : ''}
-          </div>`,
-        )
-        .join('');
   }
 
   /* ---------------- report markup ---------------- */
@@ -1195,7 +1116,8 @@ export function createCustomerView(container) {
     if (token !== renderToken) return;
 
     if (session && (session.role === 'leader' || session.role === 'admin')) {
-      const sites = await store.listSites();
+      // v2.16.2 — 관리팀장에게는 본인 배정 업장만 넘깁니다(타 업체 업장 · 사진 비노출).
+      const sites = await store.listSitesFor(session);
       if (token !== renderToken) return;
       await renderStaffPreview(session, sites);
       return;
@@ -1203,10 +1125,8 @@ export function createCustomerView(container) {
 
     if (!session || session.role !== 'customer') {
       state.session = null;
-      const registered = await demoRegisteredCustomers().catch(() => []);
       if (token !== renderToken) return;
-      container.innerHTML = loginTemplate(registered);
-      await fillDemoCodes();
+      container.innerHTML = loginTemplate();
       return;
     }
 
@@ -1239,7 +1159,6 @@ export function createCustomerView(container) {
     if (!access) {
       state.site = site;
       container.innerHTML = codeGateTemplate(session, site);
-      await fillDemoCodes();
       return;
     }
 
@@ -1297,11 +1216,9 @@ export function createCustomerView(container) {
   }
 
   async function renderStaffPreview(session, sites) {
-    const allowed =
-      session.role === 'admin' || !(session.assignedSiteIds || []).length
-        ? sites
-        : sites.filter((site) => session.assignedSiteIds.includes(site.id));
-    const pool = allowed.length ? allowed : sites;
+    // sites 는 이미 그 사람의 열람 범위(대표=전체, 관리팀장=배정 업장)만 담겨 있습니다.
+    // 배정 업장이 없으면 다른 업체 업장으로 대신 채우지 않습니다 (v2.16.2).
+    const pool = sites;
     if (!pool.length) {
       container.innerHTML = '<div class="empty"><strong>현장이 없습니다</strong><span>관리자 화면에서 현장을 확인해 주세요.</span></div>';
       return;
