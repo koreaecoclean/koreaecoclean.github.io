@@ -67,7 +67,7 @@ function workTableTemplate(report, site) {
   const category = (CATEGORY_META[site && site.category] || {}).label || '';
   return `
     <table class="doc-table doc-table--kv report-doc__meta">
-      <tr><th>보고서 번호</th><td data-report-no>${esc(reportNoOf(report))}</td><th>상태</th><td>${esc(status.label)}</td></tr>
+      <tr><th>보고서 번호</th><td data-report-no>${esc(reportNoOf(report))}</td><th>상태</th><td data-report-status>${esc(status.short || status.label)}</td></tr>
       <tr><th>업장</th><td>${esc(report.siteName || (site && site.name) || '')}${category ? `<span class="report-doc__sub"> · ${esc(category)}</span>` : ''}</td><th>업장 코드</th><td>${esc(report.siteCode || (site && site.code) || '-')}</td></tr>
       <tr><th>방문 날짜</th><td>${esc(fmtDateLong(report.date))}</td><th>완료 시간</th><td>${esc(fmtTime(report.time))}</td></tr>
       <tr><th>담당</th><td>${esc(report.leader || '-')} ${esc(report.leaderRole || '팀장')}</td><th>사진</th><td>${countReportPhotos(report)}장</td></tr>

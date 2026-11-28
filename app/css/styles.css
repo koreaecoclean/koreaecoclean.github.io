@@ -3784,6 +3784,8 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .report-doc__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .report-doc__logo { flex: none; border-radius: 10px; }
 .report-doc__meta { margin-top: 10px; }
+.report-doc__meta th { white-space: nowrap; }
+.report-doc__meta td { word-break: keep-all; }
 .report-doc__sub { color: var(--muted); font-size: 11px; font-weight: 600; }
 .report-doc__block { margin-top: 14px; break-inside: avoid; }
 .report-doc__block h3,
