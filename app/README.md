@@ -172,6 +172,10 @@
 
 **⑤ 바뀐 파일**
 
+| 특이사항 · 추가 영업 (대표) | 추가 견적 초안 · 금액 | 고객 추가 작업 견적 | 특이사항 (팀장) |
+| --- | --- | --- | --- |
+| ![대표](docs/screenshots/v2130-admin-issue.png) | ![초안](docs/screenshots/v2130-admin-draft.png) | ![고객](docs/screenshots/v2130-customer-extra.png) | ![팀장](docs/screenshots/v2130-leader-issues.png) |
+
 - `js/store.js` — `ISSUE_STATUS` · `normalizeIssue(s)` · `issueTitleOf` · `issueStats` · `listIssues` · `getIssue` · `addIssue` · `_syncReportIssue` · `setIssueStatus` · `createIssueQuoteDraft` · `updateIssueQuote` · `sendIssueQuote` · `completeIssue` · `decideExtraQuote` · `_migrateReportIssues` · `quotes.kind/issueId`.
 - `js/views/admin.js` — 「특이사항 · 추가 영업」 패널 · 초안/금액/발송 · 처리/보류 기록 · `js/views/leader.js` — 특이사항 목록 · 직접 등록 · `js/views/customer.js` — 추가 작업 견적 승인 · 추가 작업 안내 · `css/styles.css` · `sw.js` `CACHE_VERSION` **v2.13.0**.
 
