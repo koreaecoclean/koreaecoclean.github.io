@@ -14,9 +14,9 @@ import { createAdminView } from './views/admin.js';
 const TAB_NAMES = ['home', 'customer', 'leader', 'admin'];
 const TAB_TITLES = {
   home: '코리아 에코크린 · 현장 청소 기록',
-  customer: '청소 확인 · 코리아 에코크린',
-  leader: '현장 보고 · 코리아 에코크린',
-  admin: '관리 · 코리아 에코크린',
+  customer: '고객사 · 코리아 에코크린',
+  leader: '담당팀 · 코리아 에코크린',
+  admin: '관리자 · 코리아 에코크린',
 };
 
 const views = {

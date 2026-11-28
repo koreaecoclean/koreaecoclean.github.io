@@ -2749,7 +2749,7 @@ export function createAdminView(container) {  const state = {
   function staffLoginGuide(account) {
     return [
       `[코리아 에코크린] ${account.name} ${account.title || '직원'} 계정 안내`,
-      '현장 보고 앱 → [현장 보고] 탭에서 아래 값으로 입장합니다.',
+      '코리아 에코크린 앱 → [담당팀] 탭에서 아래 값으로 입장합니다.',
       `전화번호: ${account.phonePretty || account.phone}`,
       `비밀번호: ${account.password}`,
       `팀장 고유코드: ${account.leaderCode}`,

@@ -670,7 +670,7 @@ export function managerDashboardTemplate({ session, sites, lastBySite, myContrac
            </section>`
         : ''
     }
-    <p class="hint">현장 보고 · 사진 · 청소공정은 [현장 보고] 탭에서 확인하세요.</p>
+    <p class="hint">현장 보고 · 사진 · 청소공정은 [담당팀] 탭에서 확인하세요.</p>
   `;
 }
 

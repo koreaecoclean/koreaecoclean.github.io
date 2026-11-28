@@ -593,7 +593,7 @@ export function createLeaderView(container) {
   function gateTemplate() {
     return `
       <section class="gate">
-        <span class="hero__eyebrow">${icons.camera} 현장 보고 · 팀장용</span>
+        <span class="hero__eyebrow">${icons.camera} 담당팀 · 팀장용</span>
         <h2>팀장 로그인</h2>
         <p>전화번호 · 비밀번호 · <strong>팀장 고유코드</strong> 세 가지로 입장합니다. 고유코드는 대표가 발급·관리합니다.</p>
         <form class="gate__form" id="leader-login" novalidate>
