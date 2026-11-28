@@ -2327,13 +2327,15 @@ export function createLeaderView(container) {
     //  배정된 업장만 내려옵니다(store.listSchedule 이 권한별로 거릅니다).
     state.schedule = await store.listSchedule({}, { actor: state.session });
     // 6단계 — 수정 요청이 온 보고를 업장 목록에서 바로 알아볼 수 있게 셉니다.
-    state.revisionCounts = {};
+    //  (화면이 두 번 그려져도 숫자가 두 배가 되지 않도록 지역 변수로 세고 한 번에 넣습니다.)
+    const revisionCounts = {};
     if (!state.managerMode) {
       const returnedRows = await store.listReports({ status: 'returned' }, { actor: state.session }).catch(() => []);
       returnedRows.forEach((row) => {
-        state.revisionCounts[row.siteId] = (Number(state.revisionCounts[row.siteId]) || 0) + 1;
+        revisionCounts[row.siteId] = (Number(revisionCounts[row.siteId]) || 0) + 1;
       });
     }
+    state.revisionCounts = revisionCounts;
     const monthRange = monthRangeOf(state.scheduleMonth || monthKeyOf());
     state.scheduleMonthSchedule = await store.listSchedule(
       { from: monthRange.from, to: monthRange.to },
