@@ -3968,8 +3968,18 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
   border-radius: 10px;
   background: var(--surface-2, #f7f8f5);
 }
-.billing-month strong { font-size: 13px; font-weight: 800; color: var(--brand-800); }
-.billing-month .link-btn { font-size: 11.5px; }
+.billing-month strong { font-size: 13px; font-weight: 800; color: var(--brand-800); white-space: nowrap; }
+.billing-month__nav {
+  padding: 5px 8px;
+  border: 1px solid var(--line, #e3e7de);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--brand-700, #2f6b2a);
+  white-space: nowrap;
+}
+.billing-month__nav:active { background: var(--brand-50, #eef6ea); }
 .billing-totals {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4026,7 +4036,16 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .billing-card .tiny.muted { margin: 0 0 6px; }
 .billing-card .btn-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .billing-edit { margin-top: 6px; }
-.billing-edit .link-btn { font-size: 11px; }
+.billing-edit__toggle {
+  padding: 2px 0;
+  background: none;
+  border: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--brand-700, #2f6b2a);
+  text-decoration: underline;
+  cursor: pointer;
+}
 .billing-edit__box {
   display: grid;
   gap: 6px;
@@ -4065,8 +4084,8 @@ button.annex-ask__box:hover { border-color: var(--brand-600); }
 .payout-row__body { min-width: 0; flex: 1 1 auto; }
 .payout-row__body strong { display: block; font-size: 12px; font-weight: 800; }
 .payout-row__body span { display: block; margin-top: 2px; font-size: 10.5px; color: var(--muted); }
-.payout-row__right { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
-.payout-row__right strong { font-size: 12.5px; font-weight: 800; color: var(--brand-700); font-variant-numeric: tabular-nums; }
+.payout-row__right { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex: 0 0 auto; }
+.payout-row__right strong { font-size: 12.5px; font-weight: 800; color: var(--brand-700); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .payout-row__right .badge { white-space: nowrap; }
 
 /* 고객 — 청구 · 입금 */

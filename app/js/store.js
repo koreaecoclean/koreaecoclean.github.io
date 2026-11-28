@@ -5501,7 +5501,8 @@ export class Store {
       contractWithAmount: sites.filter((site) => normalizeContract(site.contract).contractAmount > 0).length,
       subcontractMonthly: sites.reduce((sum, site) => sum + normalizeContract(site.contract).subcontractAmount, 0),
       invoice: stats,
-      invoicedTotal: stats.sum.total - stats.sum.scheduled,
+      // 청구 합계는 그 달 청구서 전체(예정 포함)입니다 — 예정 · 입금 · 미수는 따로 셉니다.
+      invoicedTotal: stats.sum.total,
       paidTotal: stats.sum.paid,
       unpaidTotal: stats.sum.unpaid,
       overdueTotal: stats.sum.overdue,

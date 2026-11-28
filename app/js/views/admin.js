@@ -390,7 +390,7 @@ export function createAdminView(container) {  const state = {
                  <div class="rev-totals__unpaid"><span>미수금</span><strong data-revenue-billing="unpaid">${esc(fmtWon(bill.unpaidTotal))}</strong></div>
                </div>
                <p class="hint" style="margin-top:8px">
-                 계약 매출은 월 계약금, 청구 합계는 이 달 내보낸 청구서(예정 제외), 입금 완료는 실입금, 미수금은 납기 지난 금액과 아직 안 받은 금액입니다.
+                 계약 매출은 월 계약금, 청구 합계는 이 달 청구서(예정 포함), 입금 완료는 실입금, 미수금은 납기 지난 금액과 아직 안 받은 금액입니다.
                  건별 처리는 아래 <strong>「청구 · 입금 · 미수금」</strong>에서 합니다.
                </p>`
             : ''
@@ -1257,7 +1257,7 @@ export function createAdminView(container) {  const state = {
           key === 'paid'
             ? ''
             : `<div class="billing-edit">
-                 <button class="link-btn" type="button" data-billing-open="${esc(invoice.id)}">${open ? '닫기' : '금액 · 납기 수정'}</button>
+                 <button class="billing-edit__toggle" type="button" data-billing-open="${esc(invoice.id)}">${open ? '닫기' : '금액 · 납기 수정'}</button>
                  ${
                    open
                      ? `<div class="billing-edit__box" data-billing-edit="${esc(invoice.id)}">
@@ -1337,9 +1337,9 @@ export function createAdminView(container) {  const state = {
           <p>${esc(summary.monthLabel)}</p>
         </div>
         <div class="billing-month">
-          <button class="link-btn" type="button" data-billing-month="prev">‹ ${esc(billingMonthLabel(shiftBillingMonth(month, -1)))}</button>
+          <button class="billing-month__nav" type="button" data-billing-month="prev">‹ ${esc(billingMonthLabel(shiftBillingMonth(month, -1)))}</button>
           <strong>${esc(summary.monthLabel)}</strong>
-          <button class="link-btn" type="button" data-billing-month="next">${esc(billingMonthLabel(shiftBillingMonth(month, 1)))} ›</button>
+          <button class="billing-month__nav" type="button" data-billing-month="next">${esc(billingMonthLabel(shiftBillingMonth(month, 1)))} ›</button>
         </div>
         <div class="billing-totals">
           <div><span>계약 매출 (월)</span><strong data-billing-total="contract">${esc(fmtWon(summary.contractMonthly))}</strong></div>
@@ -1348,8 +1348,8 @@ export function createAdminView(container) {  const state = {
           <div class="billing-totals__unpaid"><span>미수금</span><strong data-billing-total="unpaid">${esc(fmtWon(summary.unpaidTotal))}</strong></div>
         </div>
         <p class="tiny muted" style="margin:-4px 0 10px">
-          계약 매출은 이 달 월 계약금(${withAmount}곳), 청구 합계는 실제 내보낸 청구서(예정 제외)입니다.
-          ${summary.scheduledTotal ? `아직 청구 전인 예정 ${fmtWon(summary.scheduledTotal)}은 따로 잡혀 있습니다.` : ''}
+          계약 매출은 이 달 월 계약금(${withAmount}곳), 청구 합계는 이 달 청구서 합계입니다.
+          ${summary.scheduledTotal ? `그중 아직 청구 전인 예정 ${fmtWon(summary.scheduledTotal)}.` : ''}
           ${summary.overdueTotal ? `납기가 지난 연체 ${fmtWon(summary.overdueTotal)}은 바로 아래에서 처리하세요.` : ''}
           ${summary.taxPending ? `세금계산서 미발행 ${summary.taxPending}건.` : ''}
         </p>
