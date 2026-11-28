@@ -1080,7 +1080,7 @@ export function createCustomerView(container) {
           <span class="badge" style="background:rgba(255,255,255,.14);color:#eaf4e4">${esc(meta.short || '')}</span>
         </div>
         <p class="site-head__meta">
-          ${esc(site.clientName)} · ${esc(site.area)}<br>
+          ${esc([site.clientName, site.area].filter(Boolean).join(' · '))}<br>
           ${esc(site.address)}<br>
           담당 ${esc(site.manager)} ${esc(site.managerRole || '팀장')} · ${esc(site.frequency)}
         </p>
